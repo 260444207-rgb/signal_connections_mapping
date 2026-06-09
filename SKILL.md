@@ -101,6 +101,7 @@ script/build_model_resolution_tasks.py
 script/merge_decisions.py
 script/validate_mapping.py
 script/render_template_sheets.py
+script/generate_net_name.py   ← 华为规范网络命名生成（独立模块）
 ```
 
 ## 阶段命令
@@ -156,3 +157,104 @@ python script/run_pipeline.py \
 ```
 
 注意：`all` 不会自动调用真实 subagent；它会把未解决项保留为 `unresolved`。需要模型语义分析时使用 `model_tasks` 阶段导出任务包。
+
+## 网络命名规范（华为原理图标准）
+
+网络命名在 `script/generate_net_name.py` 中实现，渲染阶段由 `render_template_sheets.py` 统一调用。
+
+### 字符集约束（强制）
+
+| 约束 | 说明 |
+|------|------|
+| SCREAMING_SNAKE_CASE | 全部大写，字符之间用下划线 `_` 分割 |
+| 以字母开头 | 数字开头会自动加前缀 `N` |
+| 长度 ≤ 31 字符 | 超出自动截断 |
+| 中划线 `-` | 自动替换为下划线 `_` |
+
+### 命名优先级
+
+**规则 1（最高优先级）：连线名称优先**
+
+`connection_name` 非空且不包含 `line`（不区分大小写）时，直接使用连线名称（清洗后），不再按规范生成。
+
+```text
+示例：
+  connection_name = "SW0007_SROC0_SP9T_FBV0_1M_LC18" → 网络名 = SW0007_SROC0_SP9T_FBV0_1M_LC18
+  connection_name = "HBF_PS0_CTRL_120V_BIT0_0001"     → 网络名 = HBF_PS0_CTRL_120V_BIT0_0001
+  connection_name = "VDD_5V0_PMU_PA0007_2431_VA_2A2"  → 网络名 = VDD_5V0_PMU_PA0007_2431_VA_2A2
+```
+
+**规则 2：按信号类型规范生成**
+
+`connection_name` 为空或包含 `line` 时，按信号类型执行对应格式：
+
+#### 射频信号（RF_CHAIN，6 部分）
+
+格式：`类型_源端_目的端_通道_频率_极性`
+
+```text
+TX_CH0_1M     → TX_SROC_TXVGA_CH0_1M
+RX_CH1_1M_P  → RX_SROC_PAM_CH1_1M_P
+FB_CH2_1M_N  → FB_HBF_FILTER_CH2_1M_N
+CAL_CH0      → CAL_SROC_TXCAL_CH0
+```
+
+#### 电源信号（POWER_ENABLE，6 部分）
+
+格式：`PWR_电压值_通道_负载_管脚`
+
+```text
+PWR_5V0_CH0_PA0_VDD_5V0    → 比邻星供电，电压5V0，通道0，负载PA0
+PWR_0V65_CH7_SIRIUS_HBF   → 天狼星0供电，电压0V65，通道7，负载HBF
+PWR_1V8_PULSAR_TX_AFE0    → 比邻星供电，电压1V8，负载TXA FE
+```
+
+#### 数字控制信号（SPI/I2C/GPIO，9 部分）
+
+格式：`总线_编号_发送端_接收端_信号_频率_电平_后缀`
+
+```text
+SPI0_SROC_AMC_ESPI0_SROC_  → SPI0总线，发送端SROC，接收端AMC
+I2C1_CPU_EEPROM_SCL_100K  → I2C1总线，发送端CPU，接收端EEPROM
+GPIO0_SROC_FPGA_PORT_      → GPIO控制
+```
+
+#### DAC / ADC
+
+```text
+DAC00_SROC_TXVGA_AFE_1M6    → DAC00，SROC→TXVGA，AFE链路
+ADC00_PAM_FB_SROC_1M6       → ADC00，PAM反馈→SROC
+```
+
+#### Block 简称规范
+
+| 原名称 | 简称 | 说明 |
+|--------|------|------|
+| SROC / SROC城堡板 | SROC | 核心控制芯片 |
+| TX VGA00_00-01 | TXVGA | TX VGA 器件 |
+| PA0 / PA1 / PA3 | PA0 / PA1 / PA3 | 功放 |
+| AMC7964_00-03 | AMC | ADC/DAC 多路复用 |
+| RF Filter0~7 | FILTER | 射频滤波器 |
+| 功放模组00_02-05 | PAM | 功放模组 |
+| HBF0811/1619/2427 | HBF | 混合滤波器 |
+| 比邻星0~7 | PULSAR | 电源管理IC |
+| 天狼星0 | SIRIUS | 电源管理IC |
+| 集成驱动0/1 | DRV0 / DRV1 | 集成驱动 |
+| 反馈九选一开关 | FB | 反馈开关 |
+| 633_9036_TXCAL_1 | TXCAL | TX 校准 |
+| 633_9029_RXCAL_1 | RXCAL | RX 校准 |
+
+### 模块接口
+
+```python
+from generate_net_name import generate_net_name, abbreviate_block
+
+# 生成单条网络名
+net_name = generate_net_name(normalized_connection_dict, selected_pin="")
+
+# 单独获取 block 简称
+abbr = abbreviate_block("SROC城堡板")  # → "SROC"
+
+# CLI 测试
+python script/generate_net_name.py intermediate/normalized_connections.jsonl
+```

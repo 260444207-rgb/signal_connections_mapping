@@ -45,7 +45,7 @@ def run_apply(task_dir: Path) -> None:
         intermediate / "needs_model_resolution.jsonl",
     )
 
-def run_model_tasks(task_dir: Path) -> None:
+def run_model_tasks(task_dir: Path, pins: str) -> None:
     intermediate = task_dir / "intermediate"
     run_apply(task_dir)
     build_analysis_context_groups(
@@ -58,6 +58,7 @@ def run_model_tasks(task_dir: Path) -> None:
         intermediate / "candidate_mappings.jsonl",
         intermediate / "needs_model_resolution.jsonl",
         intermediate / "model_resolution_tasks",
+        pins,
     )
 
 def run_finish(task_dir: Path, pins: str, template_excel: str | None, output_mode: str) -> None:
@@ -126,7 +127,7 @@ def main():
         run_apply(task_dir)
 
     if args.stage == "model_tasks":
-        run_model_tasks(task_dir)
+        run_model_tasks(task_dir, args.pins)
 
     if args.stage in {"finish", "all"}:
         template_excel = args.template_excel or (args.connections if Path(args.connections).suffix.lower() in {".xlsx", ".xlsm"} else "")

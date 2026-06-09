@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Dict, Any, List
 
 from common import iter_jsonl, ensure_dir, FINAL_HEADERS
+from generate_net_name import generate_net_name
 
 SKIP_SHEETS = {"BLOCK_INFO", "说明", "README", "INDEX", "目录"}
 
@@ -24,6 +25,12 @@ def build_final_rows_by_template_sheet(normalized_path: str | Path, decisions_pa
         if not sheet_name:
             raise ValueError(f"normalized row missing output_sheet_name/source_sheet_name: {n.get('line_id')}")
         d = decisions.get(n["line_id"], {})
+        connection_name = n.get("connection_name", "") or ""
+
+        # 网络命名：统一调用 generate_net_name 模块，按华为规范生成
+        # 规则：connection_name 非空且不含 'line' → 直接用连线名；其余按规范生成
+        net_name = generate_net_name(n, d.get("selected_pin", ""))
+
         row = {
             "源Block标识": n.get("source_block_id", ""),
             "源Block名称": n.get("source_block_name", ""),
@@ -32,12 +39,12 @@ def build_final_rows_by_template_sheet(normalized_path: str | Path, decisions_pa
             "目的Block名称": n.get("target_block_name", ""),
             "目的Port": n.get("target_port", ""),
             "连线ID": n.get("connection_id", ""),
-            "连线名称": n.get("connection_name", ""),
+            "连线名称": connection_name,
             "连线方向": n.get("direction", ""),
             "原理图Pin脚": d.get("selected_pin", ""),
             "分析说明": d.get("analysis", ""),
             "映射置信度": d.get("confidence", ""),
-            "网络命名": d.get("net_name", ""),
+            "网络命名": net_name,
         }
         grouped.setdefault(sheet_name, []).append(row)
 

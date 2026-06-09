@@ -83,10 +83,16 @@ def build_model_resolution_tasks(
     candidates_path: str | Path,
     needs_model_path: str | Path,
     output_dir: str | Path,
+    pins_path: str | Path | None = None,
 ) -> Dict[str, Any]:
     output_dir = ensure_dir(output_dir)
     normalized_by_id = load_by_line_id(normalized_path)
     candidates_by_id = load_by_line_id(candidates_path)
+
+    # 加载 block_info_pin.json，构建 code -> [pin_list] 映射
+    device_pins: Dict[str, List[str]] = {}
+    if pins_path and Path(pins_path).exists():
+        device_pins = read_json(pins_path, {})
     skill_root = Path(__file__).resolve().parents[1]
     rules_path = skill_root / "rules" / "natural_language_mapping_rules_template.md"
     natural_language_rules = split_natural_language_rules(rules_path.read_text(encoding="utf-8") if rules_path.exists() else "")
@@ -102,11 +108,20 @@ def build_model_resolution_tasks(
         if not line_ids:
             continue
         context_id = group.get("context_group_id") or f"CTX_{len(tasks)+1}"
+        # 收集本组所有 normalized_connections 中的 source_part_id -> 真实 pin 列表
+        group_nc = [normalized_by_id[lid] for lid in line_ids if lid in normalized_by_id]
+        source_pins_map: Dict[str, List[str]] = {}
+        for nc in group_nc:
+            code = nc.get("source_part_id", "")
+            if code and code not in source_pins_map:
+                source_pins_map[code] = device_pins.get(code, [])
+
         task_payload = {
             "context_group": group,
             "line_ids": line_ids,
-            "normalized_connections": [normalized_by_id[line_id] for line_id in line_ids if line_id in normalized_by_id],
+            "normalized_connections": group_nc,
             "candidate_mappings": [candidates_by_id.get(line_id, {"line_id": line_id, "candidates": []}) for line_id in line_ids],
+            "source_device_pins": source_pins_map,   # ← 关键修复：从 block_info_pin.json 读取
             "natural_language_rules": natural_language_rules,
             "needs_model_resolution": [needs_by_id[line_id] for line_id in line_ids],
             "required_output": {
@@ -148,6 +163,7 @@ def main() -> None:
     parser.add_argument("--candidates", required=True)
     parser.add_argument("--needs-model", required=True)
     parser.add_argument("--output-dir", required=True)
+    parser.add_argument("--pins", default=None, help="block_info_pin.json 路径，用于注入源器件真实 pin 列表")
     args = parser.parse_args()
     result = build_model_resolution_tasks(
         args.context_groups,
@@ -155,6 +171,7 @@ def main() -> None:
         args.candidates,
         args.needs_model,
         args.output_dir,
+        args.pins,
     )
     print(f"[OK] model resolution tasks: {result['task_count']} groups, {result['line_count']} lines -> {args.output_dir}")
 
