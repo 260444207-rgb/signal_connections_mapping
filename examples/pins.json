@@ -1,0 +1,7 @@
+[
+  {"block_id":"B_PA_CTRL","pin":"PA_IN0","function":"PA input channel 0"},
+  {"block_id":"B_PA_CTRL","pin":"PA_IN1","function":"PA input channel 1"},
+  {"block_id":"B_PA_CTRL","pin":"GPIO_EN","function":"PA enable control"},
+  {"block_id":"B_CLK","pin":"REFCLK_P","function":"Reference clock positive output"},
+  {"block_id":"B_CLK","pin":"REFCLK_N","function":"Reference clock negative output"}
+]

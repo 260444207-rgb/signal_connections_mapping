@@ -1,0 +1,37 @@
+{
+  "type": "object",
+  "required": [
+    "line_id",
+    "candidates"
+  ],
+  "properties": {
+    "line_id": {
+      "type": "string"
+    },
+    "candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "pin",
+          "score",
+          "basis"
+        ],
+        "properties": {
+          "pin": {
+            "type": "string"
+          },
+          "score": {
+            "type": "number"
+          },
+          "basis": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

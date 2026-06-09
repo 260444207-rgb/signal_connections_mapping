@@ -1,0 +1,70 @@
+{
+  "type": "object",
+  "required": [
+    "context_groups"
+  ],
+  "properties": {
+    "context_groups": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "context_group_id",
+          "device_category",
+          "mapping_family",
+          "isolation_level",
+          "source_sheets",
+          "source_block_ids",
+          "line_ids",
+          "recommended_subagent",
+          "prompt_file"
+        ],
+        "properties": {
+          "context_group_id": {
+            "type": "string"
+          },
+          "device_category": {
+            "type": "string"
+          },
+          "mapping_family": {
+            "type": "string"
+          },
+          "isolation_level": {
+            "type": "string"
+          },
+          "source_sheets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "source_block_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "line_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "recommended_subagent": {
+            "enum": [
+              "runtime-template-subagent",
+              "candidate-resolver-subagent",
+              "hard-case-subagent"
+            ]
+          },
+          "prompt_file": {
+            "type": "string"
+          },
+          "notes": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

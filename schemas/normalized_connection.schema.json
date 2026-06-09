@@ -1,0 +1,63 @@
+{
+  "type": "object",
+  "required": [
+    "line_id",
+    "analysis_unit",
+    "source_sheet_name",
+    "output_sheet_name",
+    "source_block_id",
+    "source_block_name",
+    "source_port",
+    "target_block_id",
+    "target_block_name",
+    "target_port",
+    "connection_id",
+    "connection_name",
+    "direction"
+  ],
+  "properties": {
+    "line_id": {
+      "type": "string"
+    },
+    "analysis_unit": {
+      "const": "device"
+    },
+    "source_sheet_name": {
+      "type": "string"
+    },
+    "output_sheet_name": {
+      "type": "string"
+    },
+    "source_block_id": {
+      "type": "string"
+    },
+    "source_block_name": {
+      "type": "string"
+    },
+    "source_port": {
+      "type": "string"
+    },
+    "target_block_id": {
+      "type": "string"
+    },
+    "target_block_name": {
+      "type": "string"
+    },
+    "target_port": {
+      "type": "string"
+    },
+    "connection_id": {
+      "type": "string"
+    },
+    "connection_name": {
+      "type": "string"
+    },
+    "direction": {
+      "enum": [
+        "INPUT",
+        "OUTPUT",
+        ""
+      ]
+    }
+  }
+}

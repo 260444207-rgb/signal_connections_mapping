@@ -1,0 +1,46 @@
+{
+  "type": "object",
+  "required": [
+    "line_id",
+    "selected_pin",
+    "decision_type",
+    "confidence",
+    "analysis",
+    "net_name"
+  ],
+  "properties": {
+    "line_id": {
+      "type": "string"
+    },
+    "selected_pin": {
+      "type": "string"
+    },
+    "decision_type": {
+      "enum": [
+        "template_applied",
+        "model_resolved",
+        "hard_case_resolved",
+        "user_override",
+        "project_rule_applied",
+        "unresolved"
+      ]
+    },
+    "confidence": {
+      "enum": [
+        "High",
+        "Medium",
+        "Low",
+        ""
+      ]
+    },
+    "analysis": {
+      "type": "string"
+    },
+    "net_name": {
+      "type": "string"
+    },
+    "needs_human_review": {
+      "type": "boolean"
+    }
+  }
+}

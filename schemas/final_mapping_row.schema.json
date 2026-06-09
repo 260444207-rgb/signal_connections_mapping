@@ -1,0 +1,29 @@
+{
+  "type": "object",
+  "required": [
+    "源Block标识",
+    "源Block名称",
+    "源Port",
+    "目的Block标识",
+    "目的Block名称",
+    "目的Port",
+    "连线ID",
+    "连线名称",
+    "连线方向",
+    "原理图Pin脚",
+    "分析说明",
+    "映射置信度",
+    "网络命名"
+  ],
+  "properties": {
+    "source_sheet_name": {
+      "type": "string"
+    },
+    "output_sheet_name": {
+      "type": "string"
+    },
+    "line_id": {
+      "type": "string"
+    }
+  }
+}

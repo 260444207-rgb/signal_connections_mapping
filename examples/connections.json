@@ -1,0 +1,4 @@
+[
+  {"source_block_id":"B_PA_CTRL","source_block_name":"PA_CTRL","source_port":"TX_PA[1:0]","target_block_id":"B_PA","target_block_name":"PA","target_port":"IN[1:0]","connection_id":"C100","connection_name":"","direction":"OUTPUT"},
+  {"source_block_id":"B_CLK","source_block_name":"CLOCK_GEN","source_port":"REFCLK_P","target_block_id":"B_ADC","target_block_name":"ADC","target_port":"CLK_P","connection_id":"C200","connection_name":"refclk_p","direction":"OUTPUT"}
+]
