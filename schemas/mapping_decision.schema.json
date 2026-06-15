@@ -15,11 +15,15 @@
     "selected_pin": {
       "type": "string"
     },
+    "selected_pins": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
     "decision_type": {
       "enum": [
-        "template_applied",
         "model_resolved",
-        "hard_case_resolved",
         "user_override",
         "project_rule_applied",
         "unresolved"
@@ -38,6 +42,24 @@
     },
     "net_name": {
       "type": "string"
+    },
+    "net_names": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "analyses": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "confidences": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
     },
     "needs_human_review": {
       "type": "boolean"

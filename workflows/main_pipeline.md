@@ -46,8 +46,9 @@ render_template_sheets
 ```text
 1. 保留 source_sheet_name / output_sheet_name
 2. 保留前 9 列连接事实
-3. 读取 block_info 中的 sheet -> 器件 code/料号
-4. 只展开显式总线格式，如 XXX[7:0] 或 XXX*4
+3. 读取 block_info 中的框图标识 -> 器件信息，并建立 block_id/block_name 别名
+4. 读取可选 link_info / 链路信息 sheet，注入 link_family_id、link_instance_id、user_link_info；没有该 sheet 时保持字段为空，后续按器件上下文兜底
+5. 只展开显式总线格式，如 XXX[7:0] 或 XXX*4
 ```
 
 不得根据器件语义修改端口名，不得把端口改成 default，不得用模型推断覆盖前 9 列。
@@ -60,7 +61,20 @@ render_template_sheets
 
 ### build_analysis_context_groups
 
-按器件类别、映射族、hard-case 状态隔离模型上下文，生成 `analysis_context_groups.json`。
+按 `link_family_id`、`link_family_source`、源端 `source_part_id`、目的端 `target_part_id`、映射族、hard-case 状态隔离模型上下文，生成 `analysis_context_groups.json`。
+
+`link_family_source` 用于标识当前组的链路来源：
+
+```text
+explicit_link_info: 来自 link_info / 链路信息 sheet
+inferred_from_connection: 从连接文本推断出链路族
+fallback_mapping_family: 没有链路族，按 RF/SPI/POWER/CLOCK 等映射族兜底
+fallback_device_context: 没有链路族和明确映射族，按器件上下文兜底
+```
+
+器件类型签名只使用 block_info 的器件信息；源Block名称和 Port 仅用于模型语义判断。
+
+对重复主链路，subagent 必须先按链路族理解全局功能、方向、上下游和索引关系，再在该链路语义约束下复用器件类型局部 pin 规则。
 
 该分组只决定模型分析边界，不决定输出 sheet。
 
@@ -79,6 +93,8 @@ render_template_sheets
 ```text
 intermediate/model_resolution_tasks/
 ├── index.json
+├── global_subagent_plan.md
+├── global_subagent_plan.json
 ├── CTX_xxx.json
 └── CTX_xxx.prompt.md
 ```
@@ -87,11 +103,14 @@ intermediate/model_resolution_tasks/
 
 ```text
 1. 当前 context_group
-2. 当前组 normalized_connections
-3. 当前组 candidate_mappings 和 available_pins
-4. natural_language_mapping_rules_template.md 内容
-5. needs_model_resolution 原因
+2. 当前 link_family_summary
+3. 当前组 normalized_connections
+4. 当前组 candidate_mappings 和 available_pins
+5. natural_language_mapping_rules_template.md 内容
+6. needs_model_resolution 原因
 ```
+
+在真正启动 subagent 前，应先阅读 `global_subagent_plan.md`，确认每个 subagent/context group 的任务目标、链路族、源/目的器件上下文和 line 数量。
 
 ### semantic subagent resolution
 
@@ -137,7 +156,7 @@ output/signal_interface.xlsx
 
 前 9 列是连接事实字段，模型不得修改。
 
-如果未来模型阶段需要把一条逻辑连接展开为多条物理 pin，必须先形成明确的展开计划，再生成 `主连线ID#数字` 的 normalized row；不得在最终渲染阶段临时新增行。
+如果模型阶段判断一条逻辑连接对应多个物理 pin，应在同一个 mapping decision 中输出 `selected_pins` 数组。渲染阶段会复制原始连接事实并把连线ID改为 `主连线ID#数字`，除连线ID和后 4 列外，前置字段不得变化。
 
 ## 5. 规则入口
 

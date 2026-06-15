@@ -41,7 +41,7 @@ def run_apply(task_dir: Path) -> None:
     pre_resolve_candidates(
         intermediate / "normalized_connections.jsonl",
         intermediate / "candidate_mappings.jsonl",
-        intermediate / "template_applied_decisions.jsonl",
+        intermediate / "pre_resolved_decisions.jsonl",
         intermediate / "needs_model_resolution.jsonl",
     )
 
@@ -51,6 +51,7 @@ def run_model_tasks(task_dir: Path, pins: str) -> None:
     build_analysis_context_groups(
         intermediate / "normalized_connections.jsonl",
         intermediate / "analysis_context_groups.json",
+        intermediate / "needs_model_resolution.jsonl",
     )
     build_model_resolution_tasks(
         intermediate / "analysis_context_groups.json",
@@ -70,7 +71,7 @@ def run_finish(task_dir: Path, pins: str, template_excel: str | None, output_mod
     merge_decisions(
         intermediate / "mapping_decisions.jsonl",
         [
-            str(intermediate / "template_applied_decisions.jsonl"),
+            str(intermediate / "pre_resolved_decisions.jsonl"),
             str(intermediate / "model_resolved_decisions.jsonl"),
             str(intermediate / "manual_override_decisions.jsonl"),
         ],

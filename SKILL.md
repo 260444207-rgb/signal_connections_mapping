@@ -44,18 +44,25 @@ render_template_sheets
 
 脚本负责事实整理、候选生成、任务隔离、校验和渲染。
 
-模型负责根据自然语言规则和 pin 列表做语义判断。
+模型负责根据自然语言规则和 pin 列表做语义判断。重复主链路采用 link-family-first：先理解链路族全局语义，再在链路约束下复用器件类型局部 pin 规则。没有 `link_info` / `链路信息` 或没有显式 `link_family` 时，仍按 block_info 器件信息、源/目的 Block、端口名和 mapping_family 启动 subagent。
 
 ## 必须遵守
 
 1. 不得根据模型、group、context_group 新建输出 sheet。
 2. 最终输出 sheet 只能来自输入 Excel。
-3. `block_info` 原样保留。
+3. `block_info`、`link_info` / `链路信息` 原样保留。
 4. 连接 sheet 输出标准 13 列。
 5. 前 9 列是原始连接事实，模型不得修改。
 6. 信息不足时输出 `unresolved`，不得硬猜。
+7. 一条逻辑连接对应多个物理 pin 时，模型输出 `selected_pins` 数组，渲染阶段按 `主连线ID#数字` 展开。
 
 ## 关键文件
+
+结构说明：
+
+```text
+STRUCTURE.md
+```
 
 主流程：
 
@@ -69,9 +76,19 @@ workflows/main_pipeline.md
 rules/natural_language_mapping_rules_template.md
 ```
 
+可选链路信息入口：
+
+```text
+输入 Excel 中的 link_info / 链路信息 sheet
+推荐列：链路类型 / 链路编号 / 器件Sheet / 用户标识的链路信息 / 器件角色说明 / 相关连线ID
+```
+
+该 sheet 是可选增强信息，不是必填输入。没有链路级数据时，context_group 会使用 `link_family_source=fallback_device_context` 或 `fallback_mapping_family`，subagent 按器件类型和映射族继续分析。
+
 自然语言规则分为：
 
 ```text
+链路族规则：重复主链路的整体功能、方向、器件角色、索引和 P/N 传播
 链路级规则：跨器件业务链路拓扑、方向、索引关系
 器件级规则：单个器件 code/料号下的 pin 功能
 通用信号规则：SPI、差分、电源、总线等通用语义
@@ -82,6 +99,15 @@ rules/natural_language_mapping_rules_template.md
 ```text
 prompts/semantic_mapping_resolver.md
 ```
+
+启动 subagent 前的全局规划输出：
+
+```text
+intermediate/model_resolution_tasks/global_subagent_plan.md
+intermediate/model_resolution_tasks/global_subagent_plan.json
+```
+
+全局规划会展示 `link_family_source`，用于区分显式链路表、连接文本推断、mapping_family 兜底和器件上下文兜底。
 
 规则层级：
 

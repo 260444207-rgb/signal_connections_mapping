@@ -2,6 +2,12 @@
 
 基于框图连接表、`pin_info.json`、自然语言硬件规则，生成标准 13 列信号接口列表。
 
+详细目录和数据结构说明见：
+
+```text
+STRUCTURE.md
+```
+
 ## 主流程
 
 ```text
@@ -12,7 +18,8 @@
    按 block_info 中的器件 code/料号，从 pin_info.json 取源端 pin 列表并生成候选。
 
 3. build_analysis_context_groups
-   按器件类别、映射族、hard-case 状态隔离模型上下文。
+   按链路族来源、block_info 器件信息、对端器件信息、映射族、hard-case 状态隔离模型上下文。
+   没有链路级数据时，自动按器件类型和映射族兜底启动 subagent。
 
 4. pre_resolve_candidates
    仅做轻量预裁决：候选分数高且明显领先时自动输出，其余进入模型分析。
@@ -35,12 +42,13 @@
 rules/natural_language_mapping_rules_template.md
 ```
 
-规则分三层：
+规则分四层：
 
 ```text
-1. 链路级规则：描述业务链路拓扑、方向、索引关系，例如 TX 控制链路中 SROC 的 SW0/TX_SW0 控制 TXVGA0。
-2. 器件级规则：描述某个器件 code/料号下各 pin 的功能。
-3. 通用信号规则：描述 SPI、差分、电源、总线等通用语义。
+0. 链路族规则：重复主链路的整体功能、方向、器件角色、索引和 P/N 传播。
+1. 链路级规则：业务链路拓扑、方向、索引关系，例如 TX 控制链路中 SROC 的 SW0/TX_SW0 控制 TXVGA0。
+2. 器件级规则：某个器件 code/料号下各 pin 的功能。
+3. 通用信号规则：SPI、差分、电源、总线等通用语义。
 ```
 
 模型语义分析使用：
@@ -50,6 +58,45 @@ prompts/semantic_mapping_resolver.md
 ```
 
 不要把复杂硬件语义强行写成脚本正则。脚本只负责流程与数据约束；信号作用判断交给隔离模型上下文。
+
+subagent 分析优先级：
+
+```text
+用户当前明确说明
+  > 链路族/链路级语义
+  > 当前器件上下游
+  > 器件级局部规则
+  > 通用信号规则
+  > pin 名称相似度
+```
+
+## 可选链路信息 Sheet
+
+输入 Excel 可以新增一个 `link_info` 或 `链路信息` sheet，用于手工标注链路族和链路实例。推荐表头：
+
+```text
+链路类型
+链路编号
+器件Sheet
+用户标识的链路信息
+器件角色说明
+相关连线ID
+```
+
+其中 `链路类型` 相同表示同一个 link family，`链路编号` 表示一条具体链路，`器件Sheet` 写这条链路涉及的器件 sheet 名，`器件角色说明` 用自然语言描述同一个 sheet 在不同链路里的角色。`相关连线ID` 是可选列，只在需要精确约束时填写；多个值可用逗号、分号或顿号分隔，连线 ID 也可以写成 `sheet:连线ID`。
+
+该 sheet 会被原样保留，不参与最终 13 列重建。
+
+不提供 `link_info` / `链路信息` 时流程仍然正常工作：系统会根据 block_info 的器件信息、源/目的 Block、端口名、连线名推断 mapping_family，并按器件上下文生成 subagent 任务。
+
+导出 `model_tasks` 时会先生成全局任务规划：
+
+```text
+intermediate/model_resolution_tasks/global_subagent_plan.md
+intermediate/model_resolution_tasks/global_subagent_plan.json
+```
+
+这里会列出每个 subagent/context group 要处理的 link family、link_family_source、器件上下文、line 数量和任务目标。`link_family_source=fallback_device_context` 或 `fallback_mapping_family` 表示没有显式链路级数据，当前任务按器件/映射族兜底分析。
 
 ## 输出约束
 
@@ -67,6 +114,7 @@ output/signal_interface.xlsx
 3. 其他连接 sheet 重建为标准 13 列。
 4. 前 9 列是原始连接事实，模型不得修改。
 5. 信息不足时输出 unresolved。
+6. 一条逻辑连接对应多个物理 pin 时，模型输出 `selected_pins` 数组，渲染阶段按 `主连线ID#数字` 展开。
 ```
 
 标准 13 列：

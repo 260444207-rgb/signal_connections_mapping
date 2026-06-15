@@ -1,1 +1,0 @@
-{"rules":[{"rule_id":"PROJECT_PA_001","scope":"PA","priority":90,"condition":"source_port matches TX_PA[n]","decision":"prefer PA_IN[n]","reason":"本项目中 TX_PA[n] 表示送入 PA 的输入链路"}]}

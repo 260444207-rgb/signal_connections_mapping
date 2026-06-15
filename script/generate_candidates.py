@@ -1,27 +1,105 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+
+from __future__ import annotations
+
 import argparse
-from common import iter_jsonl,write_jsonl,simple_similarity,extract_index,normalize_text,load_pin_catalog,pins_for_part,resolve_catalog_key
-def score_candidate(row,pin_name):
-    pin_name=normalize_text(pin_name); pin_desc=''; sp=row.get('source_port',''); tp=row.get('target_port',''); tb=row.get('target_block_name','')
-    score=0.0; basis=[]; ns=max(simple_similarity(sp,pin_name),simple_similarity(sp,pin_desc))
-    if ns>0: score+=ns*.45; basis.append('name_or_description_similarity')
-    si,pi=extract_index(sp),extract_index(pin_name)
-    if si is not None and pi is not None and si==pi: score+=.25; basis.append('index_match')
-    if simple_similarity(tp,pin_name)>0: score+=.15; basis.append('target_port_similarity')
-    if simple_similarity(tb,pin_desc)>0: score+=.10; basis.append('target_block_semantic_similarity')
-    if row.get('direction') in {'INPUT','OUTPUT'}: score+=.05; basis.append('direction_available')
-    return {'pin':pin_name,'score':round(min(score,1.0),4),'basis':basis,'pin_description':pin_desc}
-def generate_candidates(normalized_path,pin_path,output_path,top_k=5):
-    catalog=load_pin_catalog(pin_path); out=[]
+from pathlib import Path
+from typing import Any, Dict, List
+
+from common import (
+    extract_index,
+    iter_jsonl,
+    load_pin_catalog,
+    normalize_text,
+    pins_for_part,
+    resolve_catalog_key,
+    simple_similarity,
+    write_jsonl,
+)
+
+
+def score_candidate(row: Dict[str, Any], pin_name: str) -> Dict[str, Any]:
+    pin_name = normalize_text(pin_name)
+    source_port = normalize_text(row.get("source_port", ""))
+    target_port = normalize_text(row.get("target_port", ""))
+
+    score = 0.0
+    basis: List[str] = []
+
+    name_score = simple_similarity(source_port, pin_name)
+    if name_score > 0:
+        score += name_score * 0.45
+        basis.append("source_port_pin_name_similarity")
+
+    source_index = extract_index(source_port)
+    pin_index = extract_index(pin_name)
+    if source_index is not None and pin_index is not None and source_index == pin_index:
+        score += 0.25
+        basis.append("index_match")
+
+    target_score = simple_similarity(target_port, pin_name)
+    if target_score > 0:
+        score += target_score * 0.15
+        basis.append("target_port_similarity")
+
+    if row.get("direction") in {"INPUT", "OUTPUT"}:
+        score += 0.05
+        basis.append("direction_available")
+
+    return {
+        "pin": pin_name,
+        "score": round(min(score, 1.0), 4),
+        "basis": basis,
+    }
+
+
+def generate_candidates(
+    normalized_path: str | Path,
+    pin_path: str | Path,
+    output_path: str | Path,
+    top_k: int = 5,
+) -> List[Dict[str, Any]]:
+    catalog = load_pin_catalog(pin_path)
+    output_rows: List[Dict[str, Any]] = []
+
     for row in iter_jsonl(normalized_path):
-        part=row.get('source_part_id') or row.get('source_block_id')
-        resolved=resolve_catalog_key(catalog,part)
-        available_pins=pins_for_part(catalog,part)
-        c=[score_candidate(row,p) for p in available_pins]
-        c.sort(key=lambda x:x['score'],reverse=True)
-        out.append({'line_id':row['line_id'],'source_part_id':part,'resolved_part_id':resolved,'source_block_id':row['source_block_id'],'source_port':row['source_port'],'target_block_name':row['target_block_name'],'target_port':row['target_port'],'direction':row['direction'],'expansion_index':row.get('expansion_index',1),'expansion_count':row.get('expansion_count',1),'available_pins':available_pins,'candidates':c[:top_k]})
-    write_jsonl(output_path,out); return out
-def main():
-    p=argparse.ArgumentParser(); p.add_argument('--normalized',required=True); p.add_argument('--pins',required=True); p.add_argument('--output',required=True); p.add_argument('--top-k',type=int,default=5); a=p.parse_args(); rows=generate_candidates(a.normalized,a.pins,a.output,a.top_k); print(f'[OK] candidate mappings: {len(rows)} -> {a.output}')
-if __name__=='__main__': main()
+        part_id = row.get("source_part_id", "")
+        resolved_part_id = resolve_catalog_key(catalog, part_id)
+        available_pins = pins_for_part(catalog, part_id)
+        candidates = [score_candidate(row, pin) for pin in available_pins]
+        candidates.sort(key=lambda item: item["score"], reverse=True)
+
+        output_rows.append({
+            "line_id": row["line_id"],
+            "source_part_id": part_id,
+            "resolved_part_id": resolved_part_id,
+            "source_block_id": row.get("source_block_id", ""),
+            "source_port": row.get("source_port", ""),
+            "target_block_name": row.get("target_block_name", ""),
+            "target_port": row.get("target_port", ""),
+            "direction": row.get("direction", ""),
+            "expansion_index": row.get("expansion_index", 1),
+            "expansion_count": row.get("expansion_count", 1),
+            "available_pins": available_pins,
+            "candidates": candidates[:top_k],
+        })
+
+    write_jsonl(output_path, output_rows)
+    return output_rows
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--normalized", required=True)
+    parser.add_argument("--pins", required=True)
+    parser.add_argument("--output", required=True)
+    parser.add_argument("--top-k", type=int, default=5)
+    args = parser.parse_args()
+
+    rows = generate_candidates(args.normalized, args.pins, args.output, args.top_k)
+    print(f"[OK] candidate mappings: {len(rows)} -> {args.output}")
+
+
+if __name__ == "__main__":
+    main()

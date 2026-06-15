@@ -15,26 +15,37 @@ from typing import Dict, Any, List
 
 from common import iter_jsonl, write_jsonl, ensure_dir, FINAL_HEADERS
 
+def decision_selected_pins(decision):
+    pins = decision.get("selected_pins")
+    if isinstance(pins, list) and pins:
+        return [str(pin).strip() for pin in pins if str(pin).strip()]
+    pin = str(decision.get("selected_pin", "") or "").strip()
+    return [pin] if pin else []
+
 def build_final_rows(normalized_path: str | Path, decisions_path: str | Path) -> List[Dict[str, Any]]:
     decisions = {d["line_id"]: d for d in iter_jsonl(decisions_path)}
     rows = []
     for n in iter_jsonl(normalized_path):
         d = decisions.get(n["line_id"], {})
-        rows.append({
-            "源Block标识": n.get("source_block_id", ""),
-            "源Block名称": n.get("source_block_name", ""),
-            "源Port": n.get("source_port", ""),
-            "目的Block标识": n.get("target_block_id", ""),
-            "目的Block名称": n.get("target_block_name", ""),
-            "目的Port": n.get("target_port", ""),
-            "连线ID": n.get("connection_id", ""),
-            "连线名称": n.get("connection_name", ""),
-            "连线方向": n.get("direction", ""),
-            "原理图Pin脚": d.get("selected_pin", ""),
-            "分析说明": d.get("analysis", ""),
-            "映射置信度": d.get("confidence", ""),
-            "网络命名": d.get("net_name", ""),
-        })
+        selected_pins = decision_selected_pins(d) or [""]
+        should_expand = len(selected_pins) > 1
+        base_connection_id = n.get("base_connection_id") or n.get("connection_id", "")
+        for idx, selected_pin in enumerate(selected_pins):
+            rows.append({
+                "源Block标识": n.get("source_block_id", ""),
+                "源Block名称": n.get("source_block_name", ""),
+                "源Port": n.get("source_port", ""),
+                "目的Block标识": n.get("target_block_id", ""),
+                "目的Block名称": n.get("target_block_name", ""),
+                "目的Port": n.get("target_port", ""),
+                "连线ID": f"{base_connection_id}#{idx + 1}" if should_expand else n.get("connection_id", ""),
+                "连线名称": n.get("connection_name", ""),
+                "连线方向": n.get("direction", ""),
+                "原理图Pin脚": selected_pin,
+                "分析说明": d.get("analysis", ""),
+                "映射置信度": d.get("confidence", ""),
+                "网络命名": d.get("net_name", ""),
+            })
     return rows
 
 def render_outputs(normalized_path: str | Path, decisions_path: str | Path, output_dir: str | Path) -> None:

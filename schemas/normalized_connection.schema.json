@@ -2,6 +2,7 @@
   "type": "object",
   "required": [
     "line_id",
+    "base_line_id",
     "analysis_unit",
     "source_sheet_name",
     "output_sheet_name",
@@ -12,12 +13,26 @@
     "target_block_name",
     "target_port",
     "connection_id",
+    "base_connection_id",
     "connection_name",
     "direction"
   ],
   "properties": {
     "line_id": {
-      "type": "string"
+      "type": "string",
+      "description": "内部唯一行标识，格式通常为 sheet:row:connection_id。"
+    },
+    "base_line_id": {
+      "type": "string",
+      "description": "总线展开前的主 line_id。"
+    },
+    "expansion_index": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "expansion_count": {
+      "type": "integer",
+      "minimum": 1
     },
     "analysis_unit": {
       "const": "device"
@@ -27,6 +42,14 @@
     },
     "output_sheet_name": {
       "type": "string"
+    },
+    "source_part_id": {
+      "type": "string",
+      "description": "从 block_info.器件信息 查出的源端器件料号/code。"
+    },
+    "target_part_id": {
+      "type": "string",
+      "description": "目标端如能从 block_info 中查到，则写入对应器件料号/code。"
     },
     "source_block_id": {
       "type": "string"
@@ -47,6 +70,10 @@
       "type": "string"
     },
     "connection_id": {
+      "type": "string",
+      "description": "输出表中的连线ID；显式总线展开时可为 主ID#数字。"
+    },
+    "base_connection_id": {
       "type": "string"
     },
     "connection_name": {
@@ -58,6 +85,34 @@
         "OUTPUT",
         ""
       ]
+    },
+    "link_family_id": {
+      "type": "string"
+    },
+    "link_instance_id": {
+      "type": "string"
+    },
+    "link_member_sheets": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "user_link_info": {
+      "type": "string"
+    },
+    "device_role_info": {
+      "type": "string"
+    },
+    "link_contexts": {
+      "type": "array",
+      "description": "当一个 sheet 可能属于多条链路时，保留所有可用链路上下文供 subagent 判断。"
+    },
+    "raw_source_port": {
+      "type": "string"
+    },
+    "raw_target_port": {
+      "type": "string"
     }
   }
 }

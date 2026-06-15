@@ -22,13 +22,39 @@ FIELD_ALIASES = {
     "direction": ["direction", "连线方向"],
 }
 
-SKIP_SHEETS = {"BLOCK_INFO", "说明", "README", "INDEX", "目录"}
+SKIP_SHEETS = {"BLOCK_INFO", "LINK_INFO", "链路信息", "说明", "README", "INDEX", "目录"}
+
+LINK_INFO_SHEET_NAMES = {"link_info", "链路信息"}
+
+LINK_INFO_ALIASES = {
+    "link_family_id": ["link_family_id", "link_type", "链路类型", "链路族", "链路族ID"],
+    "link_instance_id": ["link_instance_id", "link_id", "链路编号", "链路ID", "链路标识"],
+    "member_sheets": ["member_sheets", "sheet_names", "成员Sheet", "相关Sheet", "器件Sheet", "器件Sheet名字", "相关器件Sheet"],
+    "member_connection_ids": ["member_connection_ids", "connection_ids", "成员连线ID", "相关连线ID", "连线ID"],
+    "user_link_info": ["user_link_info", "link_description", "description", "用户标识的链路信息", "链路信息", "用户链路说明", "说明"],
+    "device_role_info": ["device_role_info", "role_info", "器件角色说明", "器件角色", "角色说明"],
+}
 
 def pick(row: Dict[str, Any], canonical: str) -> str:
     for k in FIELD_ALIASES[canonical]:
         if k in row and row[k] is not None:
             return normalize_text(row[k])
     return ""
+
+def pick_alias(row: Dict[str, Any], aliases: list[str]) -> str:
+    for key in aliases:
+        if key in row and row[key] is not None:
+            return normalize_text(row[key])
+    return ""
+
+def split_tokens(value: Any) -> list[str]:
+    text = normalize_text(value)
+    if not text:
+        return []
+    return [x.strip() for x in re.split(r"[\n,，;；、]+", text) if x.strip()]
+
+def normalize_meta_key(value: Any) -> str:
+    return normalize_text(value).lower()
 
 def expansion_count(port: str) -> int:
     port = normalize_text(port)
@@ -73,6 +99,164 @@ def read_block_info(path: str | Path) -> Dict[str, str]:
         return result
     finally:
         wb.close()
+
+def read_link_info(input_path: str | Path) -> Dict[tuple[str, str], List[Dict[str, Any]]]:
+    """
+    读取可选的 link_info / 链路信息 sheet。
+
+    推荐表头：
+    链路类型 | 链路编号 | 器件Sheet | 用户标识的链路信息 | 器件角色说明 | 相关连线ID
+
+    - 链路类型相同表示同一个 link_family。
+    - 链路编号表示一条具体链路实例。
+    - 器件Sheet 可用逗号/分号/顿号分隔。
+    - 相关连线ID 可写裸 ID，也可写 sheet:连线ID；为空时表示这些 sheet 参与该链路，但具体连接归属由 subagent 结合角色说明判断。
+    """
+    p = Path(input_path)
+    if p.suffix.lower() not in {".xlsx", ".xlsm"}:
+        return {}
+
+    from openpyxl import load_workbook
+
+    wb = load_workbook(p, data_only=True)
+    try:
+        ws = None
+        for candidate in wb.worksheets:
+            if candidate.title.strip().lower() in LINK_INFO_SHEET_NAMES:
+                ws = candidate
+                break
+        if ws is None:
+            return {}
+
+        rows = list(ws.iter_rows(values_only=True))
+        if not rows:
+            return {}
+
+        header_idx = None
+        headers = None
+        for i, raw in enumerate(rows):
+            values = [normalize_text(v) for v in raw]
+            if any(values):
+                header_idx = i
+                headers = values
+                break
+        if header_idx is None or not headers:
+            return {}
+
+        result: Dict[tuple[str, str], List[Dict[str, Any]]] = {}
+        for raw in rows[header_idx + 1:]:
+            values = [normalize_text(v) for v in raw]
+            if not any(values):
+                continue
+            row = {h: v for h, v in zip(headers, values) if h}
+
+            link_family_id = pick_alias(row, LINK_INFO_ALIASES["link_family_id"])
+            link_instance_id = pick_alias(row, LINK_INFO_ALIASES["link_instance_id"])
+            member_sheets = split_tokens(pick_alias(row, LINK_INFO_ALIASES["member_sheets"]))
+            member_connection_ids = split_tokens(pick_alias(row, LINK_INFO_ALIASES["member_connection_ids"]))
+            user_link_info = pick_alias(row, LINK_INFO_ALIASES["user_link_info"])
+            device_role_info = pick_alias(row, LINK_INFO_ALIASES["device_role_info"])
+
+            if not link_family_id and not link_instance_id:
+                continue
+
+            meta = {
+                "link_family_id": link_family_id,
+                "link_instance_id": link_instance_id,
+                "link_member_sheets": member_sheets,
+                "user_link_info": user_link_info,
+                "device_role_info": device_role_info,
+            }
+
+            if not member_connection_ids:
+                for sheet in member_sheets:
+                    result.setdefault((normalize_meta_key(sheet), ""), []).append(meta)
+                continue
+
+            for item in member_connection_ids:
+                if ":" in item:
+                    sheet, connection_id = item.split(":", 1)
+                    result.setdefault((normalize_meta_key(sheet), normalize_meta_key(connection_id)), []).append(meta)
+                else:
+                    for sheet in member_sheets:
+                        result.setdefault((normalize_meta_key(sheet), normalize_meta_key(item)), []).append(meta)
+        return result
+    finally:
+        wb.close()
+
+def lookup_link_meta(
+    link_info: Dict[tuple[str, str], List[Dict[str, Any]]],
+    sheet_name: str,
+    connection_id: str,
+) -> Dict[str, Any]:
+    sheet_key = normalize_meta_key(sheet_name)
+    connection_key = normalize_meta_key(connection_id)
+    exact_contexts = link_info.get((sheet_key, connection_key), [])
+    sheet_contexts = link_info.get((sheet_key, ""), [])
+    contexts = exact_contexts or sheet_contexts
+    if not contexts:
+        return {}
+    if len(contexts) == 1:
+        meta = dict(contexts[0])
+        meta["link_contexts"] = contexts
+        return meta
+    return {
+        "link_family_id": "",
+        "link_instance_id": "",
+        "link_member_sheets": sorted({sheet for ctx in contexts for sheet in ctx.get("link_member_sheets", [])}),
+        "user_link_info": "",
+        "device_role_info": "",
+        "link_contexts": contexts,
+    }
+
+def lookup_block_part(block_parts: Dict[str, str], *keys: Any) -> str:
+    """
+    框图标识 / block 名称只用于在 block_info 中查出器件信息。
+    后续器件类型判断使用查出的器件信息，不再从框图标识本身推断。
+    """
+    for key in keys:
+        normalized = normalize_text(key).lower()
+        if normalized and normalized in block_parts:
+            return block_parts[normalized]
+    for key in keys:
+        normalized = normalize_text(key).lower()
+        if not normalized:
+            continue
+        compact = re.sub(r"[^a-z0-9]+", "", normalized)
+        if not re.search(r"[a-z]", compact):
+            continue
+        for known_key, part in block_parts.items():
+            known_compact = re.sub(r"[^a-z0-9]+", "", known_key.lower())
+            if not re.search(r"[a-z]", known_compact):
+                continue
+            if known_compact and (known_compact in compact or compact in known_compact):
+                return part
+    return ""
+
+def add_block_part_alias(block_parts: Dict[str, str], key: Any, part: str) -> None:
+    normalized = normalize_text(key).lower()
+    if normalized and part:
+        block_parts.setdefault(normalized, part)
+
+def build_block_part_aliases(
+    sheet_parts: Dict[str, str],
+    sheet_rows: list[tuple[str, list[dict[str, Any]]]],
+) -> Dict[str, str]:
+    """
+    block_info 给出的是 框图标识 -> 器件信息。
+    连接行里真正出现的是 block_id/block_name，因此先用每个 sheet 的器件信息
+    反向登记该 sheet 内源端 block_id/block_name 的别名。
+    """
+    aliases = dict(sheet_parts)
+    for sheet_name, rows in sheet_rows:
+        part = lookup_block_part(sheet_parts, sheet_name)
+        if not part:
+            continue
+        add_block_part_alias(aliases, sheet_name, part)
+        for row in rows:
+            add_block_part_alias(aliases, pick(row, "source_block_id"), part)
+            add_block_part_alias(aliases, pick(row, "source_block_name"), part)
+    return aliases
 
 def read_excel_sheets(path: str | Path) -> Iterable[tuple[str, list[dict[str, Any]]]]:
     """
@@ -131,8 +315,11 @@ def read_connections_with_sheet(input_path: str | Path) -> Iterable[tuple[str, l
 def normalize_connections(input_path: str | Path, output_path: str | Path) -> List[Dict[str, Any]]:
     out = []
     sheet_parts = read_block_info(input_path)
+    link_info = read_link_info(input_path)
+    sheet_rows = list(read_connections_with_sheet(input_path))
+    block_part_aliases = build_block_part_aliases(sheet_parts, sheet_rows)
 
-    for sheet_name, rows in read_connections_with_sheet(input_path):
+    for sheet_name, rows in sheet_rows:
         for idx, row in enumerate(rows, start=1):
             source_port = pick(row, "source_port")
             if not source_port:
@@ -142,11 +329,16 @@ def normalize_connections(input_path: str | Path, output_path: str | Path) -> Li
             target_port_raw = pick(row, "target_port")
             source_block_id = pick(row, "source_block_id") or sheet_name
             source_block_name = pick(row, "source_block_name")
+            target_block_id = pick(row, "target_block_id")
+            target_block_name = pick(row, "target_block_name")
+            source_part_id = lookup_block_part(block_part_aliases, source_block_id, source_block_name, sheet_name)
+            target_part_id = lookup_block_part(block_part_aliases, target_block_id, target_block_name)
             count = expansion_count(source_port)
 
             for bit_idx in range(1, count + 1):
                 connection_id_raw = pick(row, "connection_id") or f"{sheet_name}_{idx}"
                 display_connection_id = connection_id_raw if count == 1 else f"{connection_id_raw}#{bit_idx}"
+                link_meta = lookup_link_meta(link_info, sheet_name, connection_id_raw)
 
                 normalized = {
                     "line_id": f"{sheet_name}:{idx}:{display_connection_id}",
@@ -156,17 +348,24 @@ def normalize_connections(input_path: str | Path, output_path: str | Path) -> Li
                     "analysis_unit": "device",
                     "source_sheet_name": sheet_name,
                     "output_sheet_name": sheet_name,
-                    "source_part_id": sheet_parts.get(sheet_name.lower(), ""),
+                    "source_part_id": source_part_id,
+                    "target_part_id": target_part_id,
                     "source_block_id": source_block_id,
                     "source_block_name": source_block_name,
                     "source_port": source_port,
-                    "target_block_id": pick(row, "target_block_id"),
-                    "target_block_name": pick(row, "target_block_name"),
+                    "target_block_id": target_block_id,
+                    "target_block_name": target_block_name,
                     "target_port": target_port_raw,
                     "connection_id": display_connection_id,
                     "base_connection_id": connection_id_raw,
                     "connection_name": pick(row, "connection_name"),
                     "direction": normalize_direction(pick(row, "direction")),
+                    "link_family_id": link_meta.get("link_family_id", ""),
+                    "link_instance_id": link_meta.get("link_instance_id", ""),
+                    "link_member_sheets": link_meta.get("link_member_sheets", []),
+                    "user_link_info": link_meta.get("user_link_info", ""),
+                    "device_role_info": link_meta.get("device_role_info", ""),
+                    "link_contexts": link_meta.get("link_contexts", []),
                     "raw_source_port": source_port,
                     "raw_target_port": target_port_raw,
                 }

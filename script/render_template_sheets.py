@@ -10,7 +10,20 @@ from typing import Dict, Any, List
 from common import iter_jsonl, ensure_dir, FINAL_HEADERS
 from generate_net_name import generate_net_name
 
-SKIP_SHEETS = {"BLOCK_INFO", "说明", "README", "INDEX", "目录"}
+SKIP_SHEETS = {"BLOCK_INFO", "LINK_INFO", "链路信息", "说明", "README", "INDEX", "目录"}
+
+def decision_selected_pins(decision: Dict[str, Any]) -> List[str]:
+    pins = decision.get("selected_pins")
+    if isinstance(pins, list) and pins:
+        return [str(pin).strip() for pin in pins if str(pin).strip()]
+    pin = str(decision.get("selected_pin", "") or "").strip()
+    return [pin] if pin else []
+
+def decision_list_value(decision: Dict[str, Any], key: str, index: int, default: str = "") -> str:
+    values = decision.get(key)
+    if isinstance(values, list) and index < len(values):
+        return str(values[index] or "")
+    return str(decision.get(key[:-1] if key.endswith("s") else key, default) or default)
 
 def build_final_rows_by_template_sheet(normalized_path: str | Path, decisions_path: str | Path) -> Dict[str, List[Dict[str, Any]]]:
     """
@@ -26,27 +39,31 @@ def build_final_rows_by_template_sheet(normalized_path: str | Path, decisions_pa
             raise ValueError(f"normalized row missing output_sheet_name/source_sheet_name: {n.get('line_id')}")
         d = decisions.get(n["line_id"], {})
         connection_name = n.get("connection_name", "") or ""
+        selected_pins = decision_selected_pins(d) or [""]
+        should_expand = len(selected_pins) > 1
+        base_connection_id = n.get("base_connection_id") or n.get("connection_id", "")
 
-        # 网络命名：统一调用 generate_net_name 模块，按华为规范生成
-        # 规则：connection_name 非空且不含 'line' → 直接用连线名；其余按规范生成
-        net_name = generate_net_name(n, d.get("selected_pin", ""))
+        for idx, selected_pin in enumerate(selected_pins):
+            # 网络命名：统一调用 generate_net_name 模块，按华为规范生成。
+            net_name = decision_list_value(d, "net_names", idx) or generate_net_name(n, selected_pin)
+            connection_id = f"{base_connection_id}#{idx + 1}" if should_expand else n.get("connection_id", "")
 
-        row = {
-            "源Block标识": n.get("source_block_id", ""),
-            "源Block名称": n.get("source_block_name", ""),
-            "源Port": n.get("source_port", ""),
-            "目的Block标识": n.get("target_block_id", ""),
-            "目的Block名称": n.get("target_block_name", ""),
-            "目的Port": n.get("target_port", ""),
-            "连线ID": n.get("connection_id", ""),
-            "连线名称": connection_name,
-            "连线方向": n.get("direction", ""),
-            "原理图Pin脚": d.get("selected_pin", ""),
-            "分析说明": d.get("analysis", ""),
-            "映射置信度": d.get("confidence", ""),
-            "网络命名": net_name,
-        }
-        grouped.setdefault(sheet_name, []).append(row)
+            row = {
+                "源Block标识": n.get("source_block_id", ""),
+                "源Block名称": n.get("source_block_name", ""),
+                "源Port": n.get("source_port", ""),
+                "目的Block标识": n.get("target_block_id", ""),
+                "目的Block名称": n.get("target_block_name", ""),
+                "目的Port": n.get("target_port", ""),
+                "连线ID": connection_id,
+                "连线名称": connection_name,
+                "连线方向": n.get("direction", ""),
+                "原理图Pin脚": selected_pin,
+                "分析说明": decision_list_value(d, "analyses", idx, d.get("analysis", "")),
+                "映射置信度": decision_list_value(d, "confidences", idx, d.get("confidence", "")),
+                "网络命名": net_name,
+            }
+            grouped.setdefault(sheet_name, []).append(row)
 
     return grouped
 

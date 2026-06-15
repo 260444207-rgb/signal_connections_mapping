@@ -11,6 +11,13 @@
         "required": [
           "context_group_id",
           "device_category",
+          "link_family_id",
+          "link_family_source",
+          "analysis_strategy",
+          "source_device_signature",
+          "target_device_signature",
+          "source_device_instances",
+          "target_device_instances",
           "mapping_family",
           "isolation_level",
           "source_sheets",
@@ -25,6 +32,65 @@
           },
           "device_category": {
             "type": "string"
+          },
+          "link_family_id": {
+            "type": "string"
+          },
+          "link_family_source": {
+            "enum": [
+              "explicit_link_info",
+              "inferred_from_connection",
+              "fallback_mapping_family",
+              "fallback_device_context"
+            ]
+          },
+          "analysis_strategy": {
+            "type": "string"
+          },
+          "source_device_signature": {
+            "type": "string"
+          },
+          "target_device_signature": {
+            "type": "string"
+          },
+          "source_device_instances": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "target_device_instances": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "link_instance_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "link_member_sheets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "user_link_infos": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "device_role_infos": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "link_contexts": {
+            "type": "array"
           },
           "mapping_family": {
             "type": "string"
@@ -52,9 +118,8 @@
           },
           "recommended_subagent": {
             "enum": [
-              "runtime-template-subagent",
-              "candidate-resolver-subagent",
-              "hard-case-subagent"
+              "semantic-mapping-subagent",
+              "semantic-hard-case-subagent"
             ]
           },
           "prompt_file": {

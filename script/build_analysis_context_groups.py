@@ -4,29 +4,12 @@
 from __future__ import annotations
 
 import argparse
-import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
 
-from common import iter_jsonl, write_json, read_json, stable_hash, normalize_text
+from common import iter_jsonl, write_json, stable_hash, normalize_text
 
-
-DEVICE_KEYWORDS = [
-    ("PA", ["PA", "POWER_AMPLIFIER", "功放"]),
-    ("LNA", ["LNA", "LOW_NOISE_AMPLIFIER", "低噪声"]),
-    ("ADC", ["ADC", "ANALOG_DIGITAL", "模数"]),
-    ("DAC", ["DAC", "DIGITAL_ANALOG", "数模"]),
-    ("PLL", ["PLL"]),
-    ("CLOCK", ["CLK", "CLOCK", "REFCLK", "时钟"]),
-    ("MCU", ["MCU", "CPU", "PROCESSOR", "控制器"]),
-    ("FPGA", ["FPGA", "CPLD"]),
-    ("SWITCH", ["SW", "SWITCH", "开关"]),
-    ("FILTER", ["FILTER", "滤波"]),
-    ("POWER", ["PWR", "POWER", "VCC", "VDD", "电源"]),
-    ("GPIO", ["GPIO"]),
-    ("CTRL", ["CTRL", "CONTROL", "EN", "ENABLE", "RESET", "RST", "控制"]),
-]
 
 FAMILY_KEYWORDS = [
     ("RF_CHAIN", ["RF", "ANT", "TX", "RX", "PA", "LNA"]),
@@ -41,25 +24,31 @@ FAMILY_KEYWORDS = [
     ("DATA_BUS", ["DATA", "D[", "BUS"]),
 ]
 
+LINK_FAMILY_KEYWORDS = [
+    ("RF_TX_CHAIN", ["TXVGA", "TX VGA", "DAC", "RFIN", "RFOUT", "TX_AFE", "TX_SW"]),
+    ("FEEDBACK_CHAIN", ["SP9T", "FBV", "ADC_FB", "反馈", "FBSW", "FB00", "FB01", "FB02", "FB03", "FB04", "FB05", "FB06", "FB07"]),
+    ("PA_CONTROL_CHAIN", ["PA_SW", "PAPD", "PA_PD", "功放", "PA_SW_AB"]),
+    ("SROC_DRIVER_CONTROL_CHAIN", ["集成驱动", "HBF", "PWRSAVE", "ALERT", "SIO", "IN_A-D"]),
+    ("CAL_SWITCH_CHAIN", ["TXCAL", "RXCAL", "SW-SROC", "CAL_SW"]),
+    ("SPI_CONTROL_CHAIN", ["SPI", "HAC_SPI", "AMC7964"]),
+    ("POWER_CHAIN", ["VDD", "VCC", "PWR", "PMU", "比邻星", "天狼星", "VOUT"]),
+    ("CLOCK_CHAIN", ["CLK", "CLOCK", "REFCLK", "XO", "TCXO"]),
+]
 
-def contains_any(text: str, words: List[str]) -> bool:
-    upper = text.upper()
-    return any(w.upper() in upper for w in words)
+
+def device_signature(part_id: Any, missing_label: str) -> str:
+    part = normalize_text(part_id)
+    if part:
+        return f"DEVICE_INFO:{part.upper()}"
+    return missing_label
 
 
-def infer_device_category(row: Dict[str, Any]) -> str:
-    text = " ".join([
-        normalize_text(row.get("source_block_name")),
-        normalize_text(row.get("source_block_id")),
-        normalize_text(row.get("target_block_name")),
-        normalize_text(row.get("target_block_id")),
-        normalize_text(row.get("source_port")),
-        normalize_text(row.get("target_port")),
-    ])
-    for category, words in DEVICE_KEYWORDS:
-        if contains_any(text, words):
-            return category
-    return "UNKNOWN"
+def context_signature(prefix: str, *values: Any) -> str:
+    for value in values:
+        text = normalize_text(value)
+        if text:
+            return f"{prefix}:{text.upper()}"
+    return f"{prefix}:UNKNOWN"
 
 
 def infer_mapping_family(row: Dict[str, Any]) -> str:
@@ -71,9 +60,53 @@ def infer_mapping_family(row: Dict[str, Any]) -> str:
         normalize_text(row.get("target_block_name")),
     ])
     for family, words in FAMILY_KEYWORDS:
-        if contains_any(text, words):
+        upper = text.upper()
+        if any(w.upper() in upper for w in words):
             return family
     return "UNKNOWN"
+
+
+def row_text(row: Dict[str, Any]) -> str:
+    return " ".join([
+        normalize_text(row.get("source_block_name")),
+        normalize_text(row.get("source_block_id")),
+        normalize_text(row.get("source_port")),
+        normalize_text(row.get("target_block_name")),
+        normalize_text(row.get("target_block_id")),
+        normalize_text(row.get("target_port")),
+        normalize_text(row.get("connection_name")),
+    ]).upper()
+
+
+def infer_link_family(row: Dict[str, Any], mapping_family: str) -> str:
+    explicit = normalize_text(row.get("link_family_id"))
+    if explicit:
+        return explicit
+    text = row_text(row)
+    for family, words in LINK_FAMILY_KEYWORDS:
+        if any(word.upper() in text for word in words):
+            return family
+    if mapping_family in {"RF_CHAIN", "SPI_CTRL", "POWER_ENABLE", "CLOCK_TREE"}:
+        return mapping_family
+    return "LOCAL_DEVICE_MAPPING"
+
+
+def link_family_source(row: Dict[str, Any], link_family_id: str, mapping_family: str) -> str:
+    if normalize_text(row.get("link_family_id")):
+        return "explicit_link_info"
+    if link_family_id == "LOCAL_DEVICE_MAPPING":
+        return "fallback_device_context"
+    if link_family_id == mapping_family:
+        return "fallback_mapping_family"
+    return "inferred_from_connection"
+
+
+def analysis_strategy_for(link_family_id: str, mapping_family: str) -> str:
+    if link_family_id in {"RF_TX_CHAIN", "FEEDBACK_CHAIN", "PA_CONTROL_CHAIN", "CAL_SWITCH_CHAIN"}:
+        return "link_family_first_then_device_template_reuse"
+    if mapping_family in {"SPI_CTRL", "POWER_ENABLE", "CLOCK_TREE", "GPIO_CTRL"}:
+        return "mapping_family_first"
+    return "device_type_pair_with_link_context"
 
 
 def choose_subagent(mapping_family: str, line_ids: List[str], hard_case: bool = False) -> tuple[str, str]:
@@ -88,7 +121,19 @@ def load_hard_case_line_ids(needs_model_path: str | Path | None) -> set[str]:
     p = Path(needs_model_path)
     if not p.exists():
         return set()
-    return {row.get("line_id", "") for row in iter_jsonl(p) if row.get("line_id")}
+    hard_reasons = {
+        "hard_case",
+        "candidate_conflict",
+        "validation_failed",
+        "user_rule_conflict",
+        "no_available_pins",
+    }
+    result = set()
+    for row in iter_jsonl(p):
+        reason = normalize_text(row.get("reason")).lower()
+        if row.get("line_id") and reason in hard_reasons:
+            result.add(row["line_id"])
+    return result
 
 
 def build_analysis_context_groups(
@@ -99,21 +144,61 @@ def build_analysis_context_groups(
     rows = list(iter_jsonl(normalized_path))
     hard_cases = load_hard_case_line_ids(needs_model_path)
 
-    buckets: Dict[Tuple[str, str, str], List[Dict[str, Any]]] = defaultdict(list)
+    buckets: Dict[Tuple[str, str, str, str, str, str], List[Dict[str, Any]]] = defaultdict(list)
 
     for row in rows:
-        device_category = infer_device_category(row)
+        source_device_signature = device_signature(
+            row.get("source_part_id"),
+            "UNKNOWN_SOURCE_DEVICE_INFO",
+        )
+        target_device_signature = device_signature(
+            row.get("target_part_id"),
+            context_signature("TARGET_CONTEXT", row.get("target_block_name"), row.get("target_block_id")),
+        )
         mapping_family = infer_mapping_family(row)
+        link_family_id = infer_link_family(row, mapping_family)
+        source = link_family_source(row, link_family_id, mapping_family)
         is_hard = row.get("line_id") in hard_cases
-        isolation_level = "hard_case" if is_hard else "device_category_and_mapping_family"
-        key = (device_category, mapping_family, isolation_level)
+        isolation_level = "hard_case" if is_hard else "device_type_pair_and_mapping_family"
+        key = (link_family_id, source, source_device_signature, target_device_signature, mapping_family, isolation_level)
         buckets[key].append(row)
 
     context_groups = []
-    for (device_category, mapping_family, isolation_level), group_rows in buckets.items():
+    for (link_family_id, source, source_device_signature, target_device_signature, mapping_family, isolation_level), group_rows in buckets.items():
+        device_category = source_device_signature
         line_ids = [r["line_id"] for r in group_rows]
         source_sheets = sorted({r.get("source_sheet_name") or r.get("output_sheet_name") or "" for r in group_rows if r.get("source_sheet_name") or r.get("output_sheet_name")})
         source_block_ids = sorted({r.get("source_block_id", "") for r in group_rows if r.get("source_block_id")})
+        link_instance_ids = sorted({r.get("link_instance_id", "") for r in group_rows if r.get("link_instance_id")})
+        user_link_infos = sorted({r.get("user_link_info", "") for r in group_rows if r.get("user_link_info")})
+        device_role_infos = sorted({r.get("device_role_info", "") for r in group_rows if r.get("device_role_info")})
+        link_member_sheets = sorted({
+            sheet
+            for r in group_rows
+            for sheet in (r.get("link_member_sheets") or [])
+            if sheet
+        })
+        link_contexts = []
+        seen_contexts = set()
+        for row in group_rows:
+            for ctx in row.get("link_contexts") or []:
+                key = (
+                    ctx.get("link_family_id", ""),
+                    ctx.get("link_instance_id", ""),
+                    ctx.get("user_link_info", ""),
+                    ctx.get("device_role_info", ""),
+                )
+                if key not in seen_contexts:
+                    seen_contexts.add(key)
+                    link_contexts.append(ctx)
+        source_device_instances = sorted({
+            normalize_text(r.get("source_block_name")) or normalize_text(r.get("source_block_id")) or normalize_text(r.get("source_sheet_name"))
+            for r in group_rows
+        })
+        target_device_instances = sorted({
+            normalize_text(r.get("target_block_name")) or normalize_text(r.get("target_block_id"))
+            for r in group_rows
+        })
 
         subagent, prompt_file = choose_subagent(
             mapping_family,
@@ -121,16 +206,30 @@ def build_analysis_context_groups(
             hard_case=(isolation_level == "hard_case")
         )
         context_group_id = "CTX_" + stable_hash({
-            "device_category": device_category,
+            "link_family_id": link_family_id,
+            "link_family_source": source,
+            "source_device_signature": source_device_signature,
+            "target_device_signature": target_device_signature,
             "mapping_family": mapping_family,
             "isolation_level": isolation_level,
-            "source_sheets": source_sheets,
             "line_ids": line_ids[:20],
         })
 
         context_groups.append({
             "context_group_id": context_group_id,
             "device_category": device_category,
+            "link_family_id": link_family_id,
+            "link_family_source": source,
+            "analysis_strategy": analysis_strategy_for(link_family_id, mapping_family),
+            "source_device_signature": source_device_signature,
+            "target_device_signature": target_device_signature,
+            "source_device_instances": source_device_instances,
+            "target_device_instances": target_device_instances,
+            "link_instance_ids": link_instance_ids,
+            "link_member_sheets": link_member_sheets,
+            "user_link_infos": user_link_infos,
+            "device_role_infos": device_role_infos,
+            "link_contexts": link_contexts,
             "mapping_family": mapping_family,
             "isolation_level": isolation_level,
             "source_sheets": source_sheets,
@@ -138,7 +237,7 @@ def build_analysis_context_groups(
             "line_ids": line_ids,
             "recommended_subagent": subagent,
             "prompt_file": prompt_file,
-            "notes": "context_group 仅用于模型上下文隔离，不用于最终输出分页。"
+            "notes": "context_group 按链路族来源、器件类型签名和信号族隔离；没有显式链路信息时按器件上下文和映射族兜底启动 subagent，不影响最终输出分页。"
         })
 
     result = {"context_groups": context_groups}
