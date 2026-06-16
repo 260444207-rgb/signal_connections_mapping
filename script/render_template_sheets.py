@@ -11,6 +11,7 @@ from common import iter_jsonl, ensure_dir, FINAL_HEADERS
 from generate_net_name import generate_net_name
 
 SKIP_SHEETS = {"BLOCK_INFO", "LINK_INFO", "链路信息", "说明", "README", "INDEX", "目录"}
+MULTI_RESULT_CONNECTION_ID_SEPARATOR = "#"
 
 def decision_selected_pins(decision: Dict[str, Any]) -> List[str]:
     pins = decision.get("selected_pins")
@@ -24,6 +25,31 @@ def decision_list_value(decision: Dict[str, Any], key: str, index: int, default:
     if isinstance(values, list) and index < len(values):
         return str(values[index] or "")
     return str(decision.get(key[:-1] if key.endswith("s") else key, default) or default)
+
+def is_placeholder_net_name(value: str) -> bool:
+    """LINE/line 类名称是画图工具默认连线名，不能作为有效网络名。"""
+    text = str(value or "").strip()
+    return bool(text) and "line" in text.lower()
+
+def final_net_name(decision: Dict[str, Any], normalized: Dict[str, Any], index: int, selected_pin: str) -> str:
+    """
+    生成最终网络名。
+    硬约束：没有原理图 pin 时网络名必须为空；LINE 类默认连线名不能覆盖网络命名。
+    """
+    if not str(selected_pin or "").strip():
+        return ""
+
+    decision_net_name = decision_list_value(decision, "net_names", index)
+    if decision_net_name and not is_placeholder_net_name(decision_net_name):
+        return decision_net_name
+
+    return generate_net_name(normalized, selected_pin)
+
+def expanded_connection_id(base_connection_id: str, original_connection_id: str, should_expand: bool, index: int) -> str:
+    if not should_expand:
+        return original_connection_id
+    base = str(base_connection_id or original_connection_id or "").strip()
+    return f"{base}{MULTI_RESULT_CONNECTION_ID_SEPARATOR}{index + 1}" if base else str(index + 1)
 
 def build_final_rows_by_template_sheet(normalized_path: str | Path, decisions_path: str | Path) -> Dict[str, List[Dict[str, Any]]]:
     """
@@ -44,9 +70,14 @@ def build_final_rows_by_template_sheet(normalized_path: str | Path, decisions_pa
         base_connection_id = n.get("base_connection_id") or n.get("connection_id", "")
 
         for idx, selected_pin in enumerate(selected_pins):
-            # 网络命名：统一调用 generate_net_name 模块，按华为规范生成。
-            net_name = decision_list_value(d, "net_names", idx) or generate_net_name(n, selected_pin)
-            connection_id = f"{base_connection_id}#{idx + 1}" if should_expand else n.get("connection_id", "")
+            # 网络命名：统一调用 generate_net_name 模块兜底；无 pin 时强制为空。
+            net_name = final_net_name(d, n, idx, selected_pin)
+            connection_id = expanded_connection_id(
+                base_connection_id,
+                n.get("connection_id", ""),
+                should_expand,
+                idx,
+            )
 
             row = {
                 "源Block标识": n.get("source_block_id", ""),

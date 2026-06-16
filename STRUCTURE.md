@@ -420,6 +420,16 @@ selected_pins: ["PIN_P", "PIN_N"]
 
 调试用平铺输出。正式信号接口列表应使用 `render_template_sheets.py`。
 
+### script/infer_signal_shapes.py
+
+语义映射前的信号形态判断阶段。读取 `normalized_connections.jsonl`、`candidate_mappings.jsonl`、`pin_info.json` 和本地自然语言规则，输出：
+
+```text
+intermediate/signal_shape_inference.jsonl
+```
+
+同时把 `signal_shape`、`expected_physical_pin_count`、`signal_shape_info` 写回 normalized connection。该阶段只判断 scalar / bus / differential 和预计物理 pin 数，不选择具体 pin。
+
 ### script/generate_net_name.py
 
 网络命名生成器。渲染阶段用于补齐或规范化网络命名。

@@ -154,6 +154,8 @@ output/signal_interface.xlsx
 5. 信息不足时输出 unresolved。
 6. 一条逻辑连接对应多个物理 pin 时，模型输出 `selected_pins` 数组，渲染阶段按 `主连线ID#数字` 展开。
 7. `原理图Pin脚` 必须逐字来自入参 `pin_info.json` 中该源端器件编码对应的 pin 列表；不得改写、翻译、补全、大小写规范化或使用其他器件 pin。
+8. 没有 `原理图Pin脚` 时，`网络命名` 必须为空。
+9. `LINE_xxx`、`line`、包含 `line` 的连线名称是默认连线名，不得直接作为网络名。
 ```
 
 标准 13 列：
@@ -180,11 +182,12 @@ output/signal_interface.xlsx
 
 ```text
 1. 运行 model_tasks，生成 subagent_task_plan 和 TASK_xxx.json。
-2. 阅读 subagent_task_plan.md/json，按 context_group 规划 subagent 批次。
-3. 让 subagent 分别读取分配到的 TASK_xxx.json，先看 diagram_link_context、sheet_device_context、pin_allocation_context 和 link_family_profiles，再输出 batch JSONL。
-4. 合并 batch JSONL 为 intermediate/model_resolved_decisions.jsonl。
-5. 运行 finish，输出 output/signal_interface.xlsx。
-6. 检查 validation_report.json 和 unresolved 列表。
+2. 检查 intermediate/signal_shape_inference.jsonl，确认 bus/differential 的前置判断是否合理。
+3. 阅读 subagent_task_plan.md/json，按 context_group 规划 subagent 批次。
+4. 让 subagent 分别读取分配到的 TASK_xxx.json，先看 signal_shape_info、diagram_link_context、sheet_device_context、pin_allocation_context 和 link_family_profiles，再输出 batch JSONL。
+5. 合并 batch JSONL 为 intermediate/model_resolved_decisions.jsonl。
+6. 运行 finish，输出 output/signal_interface.xlsx。
+7. 检查 validation_report.json 和 unresolved 列表。
 ```
 
 准备中间数据：

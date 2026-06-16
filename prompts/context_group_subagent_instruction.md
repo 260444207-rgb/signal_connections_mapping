@@ -38,7 +38,7 @@ prompts/semantic_mapping_resolver.md
 4. 再阅读 matched_rule_sections。它是脚本召回的候选自然语言规则块，只能辅助阅读，不能直接替代逐行判断。
 5. 必须阅读 link_family_profiles。它是同一 link_family 跨多个 source_device subagent 共享的链路级上下文，用来借鉴拓扑、方向、实例索引、差分/总线展开规律和用户说明。
 6. 必须阅读 sheet_device_context。同一个 source_sheet_name 表示同一个物理器件实例；sheet 内多个 block_id/block_name 是该器件的逻辑块/端口视图。
-7. 必须阅读 pin_allocation_context。同一个 physical_device_instance_id 内共享同一个 pin 空间；必须先判断每条连接是 scalar、bus 还是 differential；普通 scalar pin 默认不可被不同语义 line_id 重复使用。
+7. 必须阅读 pin_allocation_context。同一个 physical_device_instance_id 内共享同一个 pin 空间；每条连接的 scalar/bus/differential 已在映射前写入 signal_shape_info；普通 scalar pin 默认不可被不同语义 line_id 重复使用。
 8. 再阅读 context_group.link_family_ids、mapping_families、target_device_signatures、link_contexts。
 9. 链路级数据、目标上下文和信号族只作为组内上下文，不作为重新拆 subagent 的理由。
 10. 同类型不同实例、不同链路可以共享源端 pin 功能理解；同一 link_family 下不同 subagent 可以共享链路级语义，但不能复制其他 line_id 或其他源端器件的 selected_pin。
@@ -58,6 +58,9 @@ prompts/semantic_mapping_resolver.md
 7. subagent 最终回复只能摘要输出条数、unresolved 条数和原因；真正结果以 JSONL 文件为准。
 8. 如果 source_device_pins 没有当前源端器件编码，必须输出 unresolved，并在 analysis 中说明入参 pin_info 缺少该器件 pin 信息。
 9. 输出前必须自检：同一个 physical_device_instance_id 内，除同一源端口扇出到多个目标端口、同一网络/同一 base_connection_id/多端口别名/用户规则明确允许外，不得让多个不同语义 scalar line_id 选择同一个 selected_pin。
+10. 如果 selected_pin/selected_pins 为空，net_name/net_names 必须为空；没有原理图 pin 时不得生成网络名。
+11. `LINE_xxx`、`line`、包含 `line` 的连线名称是默认连线名，不是有效网络名，不得直接复制到 net_name/net_names。
+12. signal_shape_info 是进入映射分析前生成的形态判断结果，来源包括自动总线宽度识别、源端 pin 列表 P/N 对识别和本地自然语言规则提示。只有 needs_model_shape_review=true、证据冲突或明显不符合连接语义时，才修正该判断，并在 analysis 中说明。
 ```
 
 ## 输出格式
@@ -80,4 +83,4 @@ prompts/semantic_mapping_resolver.md
 ]
 ```
 
-一条逻辑连接对应多个物理 pin 时，使用 `selected_pins`、`net_names`、`analyses`、`confidences` 数组；不要在模型输出里新增 `line_id`。
+一条逻辑连接对应多个物理 pin 时，使用 `selected_pins`、`net_names`、`analyses`、`confidences` 数组；不要在模型输出里新增 `line_id`。渲染阶段会按 `主连线ID#数字` 展开输出行。

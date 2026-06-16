@@ -1,0 +1,343 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+from __future__ import annotations
+
+import argparse
+import re
+from pathlib import Path
+from typing import Any, Dict, List
+
+from common import (
+    iter_jsonl,
+    load_pin_catalog,
+    normalize_text,
+    pins_for_part,
+    write_jsonl,
+)
+
+
+def load_candidate_map(path: str | Path) -> Dict[str, Dict[str, Any]]:
+    return {row["line_id"]: row for row in iter_jsonl(path)}
+
+
+def read_rule_text(path: str | Path | None) -> str:
+    if not path:
+        return ""
+    p = Path(path)
+    if not p.exists():
+        return ""
+    return p.read_text(encoding="utf-8")
+
+
+def text_blob(row: Dict[str, Any]) -> str:
+    return " ".join([
+        normalize_text(row.get("source_part_id", "")),
+        normalize_text(row.get("source_block_id", "")),
+        normalize_text(row.get("source_block_name", "")),
+        normalize_text(row.get("source_port", "")),
+        normalize_text(row.get("target_block_id", "")),
+        normalize_text(row.get("target_block_name", "")),
+        normalize_text(row.get("target_port", "")),
+        normalize_text(row.get("connection_id", "")),
+        normalize_text(row.get("connection_name", "")),
+        normalize_text(row.get("user_link_info", "")),
+        normalize_text(row.get("device_role_info", "")),
+    ])
+
+
+def bus_width_from_text(text: str) -> int:
+    text = normalize_text(text)
+    widths: List[int] = []
+    for m in re.finditer(r"\[(\d+)\s*:\s*(\d+)\]", text):
+        widths.append(abs(int(m.group(1)) - int(m.group(2))) + 1)
+    for m in re.finditer(r"(?:^|[^A-Z0-9])\*(\d+)(?:$|[^A-Z0-9])", text, re.I):
+        widths.append(int(m.group(1)))
+    for m in re.finditer(r"\b(?:BUS|DATA|GPIO)\s*\[?(\d+)\s*[-_~:]\s*(\d+)\]?\b", text, re.I):
+        widths.append(abs(int(m.group(1)) - int(m.group(2))) + 1)
+    return max(widths) if widths else 1
+
+
+def explicit_bus_reason(row: Dict[str, Any]) -> tuple[int, List[str]]:
+    blob = " ".join([
+        normalize_text(row.get("source_port", "")),
+        normalize_text(row.get("target_port", "")),
+        normalize_text(row.get("connection_name", "")),
+    ])
+    width = max(
+        int(row.get("expansion_count", 1) or 1),
+        bus_width_from_text(blob),
+    )
+    reasons: List[str] = []
+    if int(row.get("expansion_count", 1) or 1) > 1:
+        reasons.append("normalized expansion_count > 1")
+    if bus_width_from_text(blob) > 1:
+        reasons.append("bus width notation in connection text")
+    return width, reasons
+
+
+def normalize_pin_base(pin: str) -> str:
+    text = normalize_text(pin).upper()
+    text = re.sub(r"([_\-])(?:P|N|POS|NEG|PLUS|MINUS)$", "", text)
+    text = re.sub(r"(?:_P|_N)$", "", text)
+    return text
+
+
+def pin_polarity(pin: str) -> str:
+    text = normalize_text(pin).upper()
+    if re.search(r"([_\-]|^)(P|POS|PLUS)$", text):
+        return "P"
+    if re.search(r"([_\-]|^)(N|NEG|MINUS)$", text):
+        return "N"
+    return ""
+
+
+def differential_pin_pairs(pins: List[str]) -> Dict[str, Dict[str, str]]:
+    pairs: Dict[str, Dict[str, str]] = {}
+    for pin in pins:
+        aliases = [alias for alias in re.split(r"[/,，;；]+", normalize_text(pin)) if alias]
+        for alias in aliases:
+            polarity = pin_polarity(alias)
+            if not polarity:
+                continue
+            base = normalize_pin_base(alias)
+            if not base:
+                continue
+            pairs.setdefault(base, {})[polarity] = pin
+    return {base: pair for base, pair in pairs.items() if "P" in pair and "N" in pair}
+
+
+def token_set(value: str) -> set[str]:
+    text = normalize_text(value).upper()
+    extras: List[str] = []
+    if "RFIN" in text or "RF_IN" in text:
+        extras.extend(["RF", "IN"])
+    if "RFOUT" in text or "RF_OUT" in text:
+        extras.extend(["RF", "OUT"])
+    if "DAC" in text:
+        extras.append("DAC")
+    if "ADC" in text:
+        extras.append("ADC")
+    tokens = [x for x in re.split(r"[^A-Z0-9]+", text) if x]
+    return {x for x in tokens + extras if not x.isdigit() and len(x) >= 2}
+
+
+def best_matching_diff_pair(row: Dict[str, Any], pins: List[str]) -> Dict[str, Any]:
+    pairs = differential_pin_pairs(pins)
+    if not pairs:
+        return {}
+    row_tokens = token_set(" ".join([
+        str(row.get("source_port", "")),
+        str(row.get("target_port", "")),
+        str(row.get("connection_name", "")),
+    ]))
+    best: Dict[str, Any] = {}
+    best_score = 0
+    for base, pair in pairs.items():
+        base_tokens = token_set(base)
+        score = len(row_tokens & base_tokens)
+        if score > best_score:
+            best_score = score
+            best = {
+                "pin_pair_base": base,
+                "pins": [pair["P"], pair["N"]],
+                "score": score,
+            }
+    return best if best_score >= 2 else {}
+
+
+def has_explicit_differential_marker(row: Dict[str, Any]) -> bool:
+    blob = text_blob(row).upper()
+    return bool(re.search(r"(^|[_\-\s])(P|N)([_\-\s]|$)|\bDP\b|\bDN\b|DIFF|差分|P/N", blob))
+
+
+def looks_like_differential_function(row: Dict[str, Any]) -> bool:
+    blob = text_blob(row).upper()
+    return bool(re.search(r"\b(RFIN|RFOUT|RF_IN|RF_OUT|DAC|ADC|AFE|IQ|CLK)\d*", blob))
+
+
+def matching_rule_hint(row: Dict[str, Any], rule_text: str) -> Dict[str, Any]:
+    """
+    自然语言规则只用于前置形态提示，不在脚本里做 pin 裁决。
+    如果规则文本中同时出现当前连接关键词和“差分/总线”等描述，则返回提示。
+    """
+    if not rule_text:
+        return {}
+    sections = re.split(r"(?=^### RULE:\s*)", rule_text, flags=re.MULTILINE)
+    row_terms = [
+        normalize_text(row.get("source_part_id", "")),
+        normalize_text(row.get("source_port", "")),
+        normalize_text(row.get("target_port", "")),
+        normalize_text(row.get("connection_name", "")),
+        normalize_text(row.get("link_family_id", "")),
+    ]
+    row_terms = [x.upper() for x in row_terms if len(x) >= 3]
+    matched_terms: List[str] = []
+    hints: List[str] = []
+    matched_rule_titles: List[str] = []
+    for section in sections:
+        if not section.lstrip().startswith("### RULE:"):
+            continue
+        upper_section = section.upper()
+        section_terms = [term for term in row_terms if term and term in upper_section]
+        if not section_terms:
+            continue
+        section_hints = []
+        if re.search(r"差分|P/N|_P|_N|DIFFERENTIAL", upper_section):
+            section_hints.append("differential")
+        if re.search(r"总线|BUS|拆分|位宽|BIT|BITS", upper_section):
+            section_hints.append("bus")
+        if not section_hints:
+            continue
+        matched_terms.extend(section_terms)
+        hints.extend(section_hints)
+        title = section.splitlines()[0].strip() if section.splitlines() else ""
+        if title:
+            matched_rule_titles.append(title)
+    if not hints:
+        return {}
+    return {
+        "matched_terms": sorted(set(matched_terms))[:8],
+        "matched_rule_titles": matched_rule_titles[:5],
+        "shape_hints": sorted(set(hints)),
+        "basis": "matched_natural_language_rule_block_contains_shape_hint",
+    }
+
+
+def infer_signal_shape_for_row(
+    row: Dict[str, Any],
+    candidate_mapping: Dict[str, Any],
+    source_pins: List[str],
+    rule_text: str,
+) -> Dict[str, Any]:
+    bus_width, bus_reasons = explicit_bus_reason(row)
+    diff_pair = best_matching_diff_pair(row, source_pins)
+    rule_hint = matching_rule_hint(row, rule_text)
+
+    reasons: List[str] = []
+    evidence: Dict[str, Any] = {}
+    shape = "scalar"
+    expected_count = 1
+    confidence = "auto_high"
+    needs_model_shape_review = False
+
+    if bus_width > 1:
+        shape = "bus"
+        expected_count = bus_width
+        reasons.extend(bus_reasons)
+    elif has_explicit_differential_marker(row):
+        shape = "differential"
+        expected_count = 2
+        reasons.append("explicit differential marker in connection text")
+    elif looks_like_differential_function(row) and diff_pair:
+        shape = "differential"
+        expected_count = 2
+        reasons.append("RF/DAC/ADC-like connection and source pin list has matching P/N pair")
+        evidence["matched_differential_pin_pair"] = diff_pair
+    elif "differential" in rule_hint.get("shape_hints", []) and diff_pair:
+        shape = "differential"
+        expected_count = 2
+        confidence = "rule_hint"
+        reasons.append("natural language rule suggests differential and source pin list has matching P/N pair")
+        evidence["matched_differential_pin_pair"] = diff_pair
+
+    if rule_hint:
+        evidence["matched_rule_shape_hint"] = rule_hint
+    if not source_pins:
+        evidence["source_pins_available"] = False
+        if shape in {"bus", "differential"}:
+            confidence = "model_hint"
+            needs_model_shape_review = True
+    else:
+        evidence["source_pins_available"] = True
+
+    if shape == "scalar" and rule_hint.get("shape_hints"):
+        confidence = "model_hint"
+        needs_model_shape_review = True
+        reasons.append("natural language rule has shape hint but automatic evidence is insufficient")
+
+    expected_connection_ids = []
+    base_connection_id = row.get("base_connection_id") or row.get("connection_id", "")
+    if expected_count and expected_count > 1:
+        expected_connection_ids = [f"{base_connection_id}#{idx}" for idx in range(1, expected_count + 1)]
+
+    return {
+        "shape": shape,
+        "expected_physical_pin_count": expected_count,
+        "line_id_expansion_policy": "selected_pins_array_then_render_connection_id_suffix" if expected_count > 1 else "single_output_row",
+        "connection_id_suffix_separator": "#" if expected_count > 1 else "",
+        "expected_output_connection_ids": expected_connection_ids,
+        "confidence": confidence,
+        "needs_model_shape_review": needs_model_shape_review,
+        "reasons": reasons,
+        "evidence": evidence,
+    }
+
+
+def infer_signal_shapes(
+    normalized_path: str | Path,
+    candidates_path: str | Path,
+    pins_path: str | Path,
+    output_normalized_path: str | Path,
+    report_path: str | Path,
+    rules_path: str | Path | None = None,
+) -> List[Dict[str, Any]]:
+    catalog = load_pin_catalog(pins_path)
+    candidates_by_id = load_candidate_map(candidates_path)
+    rule_text = read_rule_text(rules_path)
+    rows = list(iter_jsonl(normalized_path))
+    enriched: List[Dict[str, Any]] = []
+    reports: List[Dict[str, Any]] = []
+
+    for row in rows:
+        part_id = row.get("source_part_id", "")
+        source_pins = pins_for_part(catalog, part_id)
+        candidate_mapping = candidates_by_id.get(row.get("line_id", ""), {})
+        signal_shape_info = infer_signal_shape_for_row(row, candidate_mapping, source_pins, rule_text)
+        updated = dict(row)
+        updated["signal_shape"] = signal_shape_info["shape"]
+        updated["expected_physical_pin_count"] = signal_shape_info["expected_physical_pin_count"]
+        updated["signal_shape_info"] = signal_shape_info
+        enriched.append(updated)
+        reports.append({
+            "line_id": row.get("line_id", ""),
+            "source_part_id": part_id,
+            "source_port": row.get("source_port", ""),
+            "target_port": row.get("target_port", ""),
+            "connection_id": row.get("connection_id", ""),
+            "base_connection_id": row.get("base_connection_id", ""),
+            "connection_name": row.get("connection_name", ""),
+            "signal_shape_info": signal_shape_info,
+        })
+
+    write_jsonl(output_normalized_path, enriched)
+    write_jsonl(report_path, reports)
+    return enriched
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Infer scalar/bus/differential shape before semantic pin mapping.")
+    parser.add_argument("--normalized", required=True)
+    parser.add_argument("--candidates", required=True)
+    parser.add_argument("--pins", required=True)
+    parser.add_argument("--output-normalized", required=True)
+    parser.add_argument("--report", required=True)
+    parser.add_argument("--rules", default="")
+    args = parser.parse_args()
+
+    rows = infer_signal_shapes(
+        args.normalized,
+        args.candidates,
+        args.pins,
+        args.output_normalized,
+        args.report,
+        args.rules or None,
+    )
+    counts: Dict[str, int] = {}
+    for row in rows:
+        counts[row.get("signal_shape", "scalar")] = counts.get(row.get("signal_shape", "scalar"), 0) + 1
+    print(f"[OK] inferred signal shapes: {counts} -> {args.output_normalized}")
+
+
+if __name__ == "__main__":
+    main()

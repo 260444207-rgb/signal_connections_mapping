@@ -14,6 +14,9 @@ from pathlib import Path
 from typing import Dict, Any, List
 
 from common import iter_jsonl, write_jsonl, ensure_dir, FINAL_HEADERS
+from generate_net_name import generate_net_name
+
+MULTI_RESULT_CONNECTION_ID_SEPARATOR = "#"
 
 def decision_selected_pins(decision):
     pins = decision.get("selected_pins")
@@ -21,6 +24,30 @@ def decision_selected_pins(decision):
         return [str(pin).strip() for pin in pins if str(pin).strip()]
     pin = str(decision.get("selected_pin", "") or "").strip()
     return [pin] if pin else []
+
+def decision_list_value(decision: Dict[str, Any], key: str, index: int, default: str = "") -> str:
+    values = decision.get(key)
+    if isinstance(values, list) and index < len(values):
+        return str(values[index] or "")
+    return str(decision.get(key[:-1] if key.endswith("s") else key, default) or default)
+
+def is_placeholder_net_name(value: str) -> bool:
+    text = str(value or "").strip()
+    return bool(text) and "line" in text.lower()
+
+def final_net_name(decision: Dict[str, Any], normalized: Dict[str, Any], index: int, selected_pin: str) -> str:
+    if not str(selected_pin or "").strip():
+        return ""
+    decision_net_name = decision_list_value(decision, "net_names", index)
+    if decision_net_name and not is_placeholder_net_name(decision_net_name):
+        return decision_net_name
+    return generate_net_name(normalized, selected_pin)
+
+def expanded_connection_id(base_connection_id: str, original_connection_id: str, should_expand: bool, index: int) -> str:
+    if not should_expand:
+        return original_connection_id
+    base = str(base_connection_id or original_connection_id or "").strip()
+    return f"{base}{MULTI_RESULT_CONNECTION_ID_SEPARATOR}{index + 1}" if base else str(index + 1)
 
 def build_final_rows(normalized_path: str | Path, decisions_path: str | Path) -> List[Dict[str, Any]]:
     decisions = {d["line_id"]: d for d in iter_jsonl(decisions_path)}
@@ -38,13 +65,13 @@ def build_final_rows(normalized_path: str | Path, decisions_path: str | Path) ->
                 "目的Block标识": n.get("target_block_id", ""),
                 "目的Block名称": n.get("target_block_name", ""),
                 "目的Port": n.get("target_port", ""),
-                "连线ID": f"{base_connection_id}#{idx + 1}" if should_expand else n.get("connection_id", ""),
+                "连线ID": expanded_connection_id(base_connection_id, n.get("connection_id", ""), should_expand, idx),
                 "连线名称": n.get("connection_name", ""),
                 "连线方向": n.get("direction", ""),
                 "原理图Pin脚": selected_pin,
                 "分析说明": d.get("analysis", ""),
                 "映射置信度": d.get("confidence", ""),
-                "网络命名": d.get("net_name", ""),
+                "网络命名": final_net_name(d, n, idx, selected_pin),
             })
     return rows
 

@@ -7,6 +7,13 @@ def selected_pins(decision):
     if isinstance(pins,list) and pins: return [str(p).strip() for p in pins if str(p).strip()]
     pin=str(decision.get('selected_pin','') or '').strip()
     return [pin] if pin else []
+def selected_net_names(decision):
+    names=decision.get('net_names')
+    result=[]
+    if isinstance(names,list): result.extend([str(n).strip() for n in names if str(n).strip()])
+    name=str(decision.get('net_name','') or '').strip()
+    if name: result.append(name)
+    return result
 def physical_instance_key(row):
     return f"SHEET:{row.get('source_sheet_name') or row.get('output_sheet_name') or 'UNKNOWN_SHEET'}|PART:{row.get('source_part_id') or 'UNKNOWN_PART'}"
 def source_endpoint_key(row):
@@ -26,7 +33,7 @@ def validate_mapping(normalized_path,decisions_path,pins_path,report_path):
     for x in sorted(dset-nids): errors.append({'severity':'ERROR','line_id':x,'message':'decision line_id not in normalized connections'})
     for x in sorted({x for x in dids if dids.count(x)>1}): errors.append({'severity':'ERROR','line_id':x,'message':'duplicate mapping decision'})
     for d in decisions:
-        line=d.get('line_id',''); conf=d.get('confidence',''); pins=selected_pins(d); net=d.get('net_name','')
+        line=d.get('line_id',''); conf=d.get('confidence',''); pins=selected_pins(d); net_names=selected_net_names(d)
         if conf not in VALID_CONFIDENCE: errors.append({'severity':'ERROR','line_id':line,'message':f'invalid confidence: {conf}'})
         row=normalized_by_id.get(line,{})
         source_part_id=row.get('source_part_id','')
@@ -38,6 +45,7 @@ def validate_mapping(normalized_path,decisions_path,pins_path,report_path):
                 key=(physical_instance_key(row),pin)
                 pin_usage.setdefault(key,[]).append({'line_id':line,'shared_signal_key':shared_signal_key(row),'source_endpoint_key':source_endpoint_key(row)})
         if not pins and conf=='High': errors.append({'severity':'ERROR','line_id':line,'message':'empty selected_pin cannot be High confidence'})
+        if not pins and net_names: errors.append({'severity':'ERROR','line_id':line,'message':'empty selected_pin requires empty net_name/net_names'})
     for (instance_key,pin),uses in sorted(pin_usage.items()):
         line_ids=sorted({u['line_id'] for u in uses})
         if len(line_ids)<=1: continue

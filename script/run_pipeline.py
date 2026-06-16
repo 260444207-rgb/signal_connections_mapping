@@ -10,6 +10,7 @@ from init_task import init_task
 from normalize_connections import normalize_connections
 from build_analysis_context_groups import build_analysis_context_groups
 from generate_candidates import generate_candidates
+from infer_signal_shapes import infer_signal_shapes
 from pre_resolve_candidates import pre_resolve_candidates
 from build_model_resolution_tasks import build_model_resolution_tasks
 from merge_decisions import merge_decisions
@@ -20,19 +21,29 @@ from render_template_sheets import render_template_sheets
 def run_prepare(task_dir: Path, connections: str, pins: str) -> None:
     init_task(task_dir)
     intermediate = task_dir / "intermediate"
+    skill_root = Path(__file__).resolve().parents[1]
+    rules_path = skill_root / "rules" / "natural_language_mapping_rules_template.md"
 
     normalize_connections(
         connections,
         intermediate / "normalized_connections.jsonl"
     )
-    build_analysis_context_groups(
-        intermediate / "normalized_connections.jsonl",
-        intermediate / "analysis_context_groups.json"
-    )
     generate_candidates(
         intermediate / "normalized_connections.jsonl",
         pins,
         intermediate / "candidate_mappings.jsonl"
+    )
+    infer_signal_shapes(
+        intermediate / "normalized_connections.jsonl",
+        intermediate / "candidate_mappings.jsonl",
+        pins,
+        intermediate / "normalized_connections.jsonl",
+        intermediate / "signal_shape_inference.jsonl",
+        rules_path,
+    )
+    build_analysis_context_groups(
+        intermediate / "normalized_connections.jsonl",
+        intermediate / "analysis_context_groups.json"
     )
 
 def run_apply(task_dir: Path) -> None:

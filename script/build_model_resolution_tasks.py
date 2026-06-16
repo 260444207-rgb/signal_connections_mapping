@@ -415,6 +415,21 @@ def endpoint_key(row: Dict[str, Any]) -> str:
 
 
 def classify_signal_shape(row: Dict[str, Any], candidate_mapping: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    precomputed = row.get("signal_shape_info")
+    if isinstance(precomputed, dict) and precomputed.get("shape"):
+        return {
+            "shape": precomputed.get("shape", "scalar"),
+            "is_bus_or_differential": precomputed.get("shape") in {"bus", "differential"},
+            "expected_physical_pin_count": precomputed.get("expected_physical_pin_count", 1),
+            "line_id_expansion_policy": precomputed.get("line_id_expansion_policy", ""),
+            "expected_output_connection_ids": precomputed.get("expected_output_connection_ids", []),
+            "confidence": precomputed.get("confidence", ""),
+            "needs_model_shape_review": precomputed.get("needs_model_shape_review", False),
+            "reasons": precomputed.get("reasons", []),
+            "evidence": precomputed.get("evidence", {}),
+            "source": "pre_mapping_signal_shape_inference",
+        }
+
     text = " ".join([
         str(row.get("source_port", "")),
         str(row.get("target_port", "")),
@@ -441,7 +456,14 @@ def classify_signal_shape(row: Dict[str, Any], candidate_mapping: Dict[str, Any]
     return {
         "shape": shape,
         "is_bus_or_differential": shape in {"bus", "differential"},
+        "expected_physical_pin_count": int(row.get("expansion_count", 1) or 1) if shape == "bus" else 2 if shape == "differential" else 1,
+        "line_id_expansion_policy": "selected_pins_array_then_render_connection_id_suffix" if shape in {"bus", "differential"} else "single_output_row",
+        "expected_output_connection_ids": [],
+        "confidence": "legacy_fallback",
+        "needs_model_shape_review": False,
         "reasons": reasons,
+        "evidence": {},
+        "source": "task_stage_fallback",
     }
 
 
@@ -777,6 +799,10 @@ def render_shared_prompt() -> str:
         "17. 输出前自检：同一个 physical_device_instance_id 内，除 pin_allocation_context.potential_shared_pin_groups 或用户规则允许外，不得让多个不同语义 line_id 选择同一个 selected_pin。",
         "18. selected_pin/selected_pins 必须逐字来自入参 pin_info.json 中当前源端器件编码对应的 task_json.source_device_pins；不能编造、改写、翻译、补全 pin，也不能使用其他器件的 pin。candidate_mappings 只保留 top candidates，不承载完整 pin 列表。",
         "19. 如果 task_json.source_device_pins 没有当前源端器件编码，或 source_device_pins 中没有可用 pin，必须输出 unresolved，并说明入参 pin_info 缺少该器件 pin 信息。",
+        "20. 如果 selected_pin/selected_pins 为空，net_name/net_names 必须为空；没有原理图 pin 时不得生成网络名。",
+        "21. LINE_xxx、line、包含 line 的连线名称是画图工具默认连线名，不是有效网络名；不得直接复制到 net_name/net_names，需要网络名时必须结合信号语义生成。",
+        "22. 一条逻辑连接对应多个物理 pin 时只输出 selected_pins/net_names 数组；渲染阶段会按 主连线ID#数字 展开输出行。",
+        "23. signal_shape / signal_shape_info 是进入映射分析前的前置形态判断结果，来自自动规则、pin 列表 P/N 对识别和本地自然语言规则提示。必须先读取它；只有 needs_model_shape_review=true、证据冲突或明显不符合连接语义时，才在 analysis 中说明并修正判断。",
         "",
         "## 输出格式",
         "",

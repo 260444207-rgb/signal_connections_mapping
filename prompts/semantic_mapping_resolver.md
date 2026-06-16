@@ -50,7 +50,7 @@ context_group 表示同一个源端器件 pin 体系；链路族、信号族、�
 3. 再查看 matched_rule_sections。它是脚本按源端器件、链路族、信号族、目标、端口关键词召回的候选自然语言规则块；只能作为阅读重点，不能直接当作脚本裁决结果。
 4. 必须查看 link_family_profiles。它是同一 link_family 跨多个 source_device subagent 共享的链路级上下文，用来借鉴链路拓扑、上下游角色、实例索引、差分/总线展开规律和用户链路说明。
 5. 必须查看 sheet_device_context。它说明输入 Excel 的 sheet 语义：同一个 source_sheet_name 表示同一个物理器件实例；sheet 内多个 source_block_id/source_block_name 是这个器件的逻辑块、功能块或端口视图，不是多个独立器件。
-6. 必须查看 pin_allocation_context。它说明同一物理器件实例内哪些 line_id 共享同一个 pin 空间、每条连接是 scalar/bus/differential，以及 pin 复用约束。
+6. 必须查看 pin_allocation_context。它说明同一物理器件实例内哪些 line_id 共享同一个 pin 空间、每条连接的前置 signal_shape_info，以及 pin 复用约束。
 7. 再查看 context_group.link_family_ids、mapping_families、target_device_signatures、link_contexts 和 link_family_summaries，把链路信息作为当前源端器件的组内上下文。
 8. 在逐行裁决前，先对同一个 physical_device_instance_id 内的所有 line_id 做一次整体 pin 分配计划，识别可能竞争同一个 pin 的连接。
 9. 对每条 line_id，判断它属于哪条业务链路或信号族，例如 TX 控制链路、TX RF 链路、反馈链路、SPI 控制链路。
@@ -101,7 +101,10 @@ TX 控制链路规定 SROC 的 TX_SW0 控制 TXVGA0 的 EN_CHA/EN_CHB。
 9. 如果 task_json.source_device_pins 中没有当前源端器件编码，必须跳过该器件/该行的 pin 选择，输出 unresolved，不得凭器件知识或自然语言规则生成 pin 名。
 10. 在同一个 physical_device_instance_id 内，同一个 selected_pin 默认只能用于一个不同语义的 scalar line_id；只有 `pin_allocation_context.potential_shared_pin_groups`、相同源端口扇出到多个目标端口、相同网络/同一 base_connection_id、多端口别名或用户规则明确说明时，才允许复用。
 11. 如果两个不同语义 line_id 竞争同一个 pin，不能两个都输出 High；应给出最合理分配，无法区分时输出 unresolved 并说明 pin 冲突。
-12. 对每条连接必须先判断 signal_shape：bus/differential 可以通过 selected_pins 表示多个物理 pin；普通 scalar 连接不能因为候选相似就重复使用别的端口已经占用的 pin。
+12. 对每条连接必须先读取前置 signal_shape_info：bus/differential 可以通过 selected_pins 表示多个物理 pin；普通 scalar 连接不能因为候选相似就重复使用别的端口已经占用的 pin。
+13. 如果 selected_pin/selected_pins 为空，net_name/net_names 必须为空；没有原理图 pin 时不得生成网络名。
+14. `LINE_xxx`、`line`、包含 `line` 的连线名称是画图工具默认连线名，不是有效网络名；需要网络名时应结合信号语义生成，不得直接复制这类默认名称。
+15. signal_shape_info 是进入映射分析前生成的形态判断结果，来源包括自动总线宽度识别、源端 pin 列表中的 P/N 对识别，以及本地自然语言规则中的“差分/总线”提示。只有 needs_model_shape_review=true、证据冲突或明显不符合连接语义时，才修正该判断，并必须在 analysis 中说明原因。
 
 ## 输出
 

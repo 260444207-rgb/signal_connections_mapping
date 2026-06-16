@@ -40,6 +40,8 @@ def pre_resolve_candidates(normalized_path, candidate_path, decisions_out, needs
         available_pins = candidate_mapping.get("available_pins", [])
         source_part_id = candidate_mapping.get("source_part_id") or row.get("source_part_id", "")
         resolved_part_id = candidate_mapping.get("resolved_part_id") or source_part_id
+        signal_shape_info = row.get("signal_shape_info", {}) if isinstance(row.get("signal_shape_info", {}), dict) else {}
+        signal_shape = signal_shape_info.get("shape", row.get("signal_shape", "scalar"))
         if not available_pins:
             decisions.append({
                 "line_id": line_id,
@@ -49,6 +51,25 @@ def pre_resolve_candidates(normalized_path, candidate_path, decisions_out, needs
                 "analysis": f"入参 pin_info.json 中未找到源端器件编码 {source_part_id} / {resolved_part_id} 的 pin 列表，跳过该器件的语义模型分析。",
                 "net_name": "",
                 "needs_human_review": True,
+            })
+            continue
+        if signal_shape in {"bus", "differential"} or signal_shape_info.get("needs_model_shape_review"):
+            decisions.append({
+                "line_id": line_id,
+                "selected_pin": "",
+                "selected_pins": [],
+                "decision_type": "unresolved",
+                "confidence": "Low",
+                "analysis": f"前置形态判断为 {signal_shape}，需要模型结合本地规则和 pin 列表输出 selected_pins。",
+                "net_name": "",
+                "net_names": [],
+                "needs_human_review": True,
+            })
+            needs_model.append({
+                "line_id": line_id,
+                "reason": f"needs_semantic_model_resolution_for_{signal_shape}_signal_shape",
+                "normalized_connection": row,
+                "candidate_mapping": candidate_mapping,
             })
             continue
         pin = choose_high_confidence_candidate(candidate_mapping)

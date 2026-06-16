@@ -127,7 +127,9 @@ intermediate/model_resolution_tasks/
 
 `link_family_profiles` 会把同一 link_family 的共享链路语义注入到所有相关 source_device subagent 中。它用于借鉴链路拓扑、方向、实例索引和用户说明，不用于脚本裁决 pin。
 
-`sheet_device_context` 会告诉 subagent：一个连接 sheet 表示一个物理器件实例，sheet 内不同 block_id/block_name 只是该器件的逻辑块/端口视图。`pin_allocation_context` 会告诉 subagent：先判断连接是 scalar、bus 还是 differential；同一物理器件实例内普通 scalar 的 pin 默认不可被不同语义 line_id 重复使用，除非同一源端口扇出到多个目标端口、同网、同 base_connection、多端口别名或用户规则明确允许。
+`infer_signal_shapes` 在语义映射前输出 `intermediate/signal_shape_inference.jsonl`，并把每条连接的 `signal_shape_info` 写回 `normalized_connections.jsonl`。它会用自动总线宽度识别、源端 pin 列表 P/N 对和本地自然语言规则提示，先判断连接是 scalar、bus 还是 differential。
+
+`sheet_device_context` 会告诉 subagent：一个连接 sheet 表示一个物理器件实例，sheet 内不同 block_id/block_name 只是该器件的逻辑块/端口视图。`pin_allocation_context` 会告诉 subagent：前置 signal_shape_info、同一 pin 空间、以及普通 scalar 的 pin 默认不可被不同语义 line_id 重复使用，除非同一源端口扇出到多个目标端口、同网、同 base_connection、多端口别名或用户规则明确允许。
 
 在真正启动 subagent 前，应先阅读本地持久化的 `subagent_task_plan.md`，确认每个 subagent/context group 的源端器件、组内链路族、目标上下文、line 数量和任务文件名。不要再因为同一个源端器件内部的链路族或目标不同而拆分 subagent。
 

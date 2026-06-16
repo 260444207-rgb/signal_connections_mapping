@@ -53,6 +53,8 @@ normalize_connections
   ↓
 generate_candidates
   ↓
+infer_signal_shapes
+  ↓
 build_analysis_context_groups
   ↓
 pre_resolve_candidates
@@ -68,9 +70,9 @@ validate_mapping
 render_template_sheets
 ```
 
-脚本负责事实整理、候选生成、任务隔离、校验和渲染。
+脚本负责事实整理、候选生成、信号形态前置判断、任务隔离、校验和渲染。
 
-模型负责根据框图表链路上下文、自然语言规则和 pin 列表做语义判断。context_group 按源端器件 pin 体系分组；链路族、信号族、目标上下文作为组内分析上下文传给 subagent，并显式写入任务包的 `diagram_link_context`。重复主链路采用 link-family-first：先理解链路族全局语义，再在链路约束下复用器件类型局部 pin 规则。脚本还会生成 `link_family_profiles`，把同一 link_family 跨 source_device subagent 的链路拓扑、实例、用户说明和角色信息共享给相关 TASK；它只用于借鉴链路语义，不做 pin 裁决。`sheet_device_context` 表达同一 sheet 是一个物理器件实例，sheet 内不同 block 是该器件的逻辑块/端口视图；`pin_allocation_context` 表达同一物理器件实例内 pin 默认不可被不同语义连接重复使用。没有 `link_info` / `链路信息` 或没有显式 `link_family` 时，仍按 block_info 器件信息、源/目的 Block、端口名和 mapping_family 在同一个源端器件组内分析。
+模型负责根据框图表链路上下文、自然语言规则和 pin 列表做语义判断。context_group 按源端器件 pin 体系分组；链路族、信号族、目标上下文作为组内分析上下文传给 subagent，并显式写入任务包的 `diagram_link_context`。重复主链路采用 link-family-first：先理解链路族全局语义，再在链路约束下复用器件类型局部 pin 规则。脚本还会生成 `link_family_profiles`，把同一 link_family 跨 source_device subagent 的链路拓扑、实例、用户说明和角色信息共享给相关 TASK；它只用于借鉴链路语义，不做 pin 裁决。`infer_signal_shapes` 会在语义映射前根据总线写法、pin 列表 P/N 对和自然语言规则提示生成 `signal_shape_info`，让 subagent 先知道当前连接是 scalar / bus / differential、预计几个物理 pin，以及输出连线ID应如何展开。`sheet_device_context` 表达同一 sheet 是一个物理器件实例，sheet 内不同 block 是该器件的逻辑块/端口视图；`pin_allocation_context` 表达同一物理器件实例内 pin 默认不可被不同语义连接重复使用。没有 `link_info` / `链路信息` 或没有显式 `link_family` 时，仍按 block_info 器件信息、源/目的 Block、端口名和 mapping_family 在同一个源端器件组内分析。
 
 ## 必须遵守
 
@@ -83,6 +85,8 @@ render_template_sheets
 7. 一条逻辑连接对应多个物理 pin 时，模型输出 `selected_pins` 数组，渲染阶段按 `主连线ID#数字` 展开。
 8. `原理图Pin脚` / `selected_pin` / `selected_pins` 必须逐字来自入参 `pin_info.json` 中该源端器件编码对应的 pin 列表；不得翻译、补全、改写、大小写规范化或输出其他器件的 pin。
 9. 如果入参 `pin_info.json` 中没有当前源端器件编码对应的 pin 列表，则跳过该器件的语义模型分析；该器件相关连接保持 `unresolved`，等待用户补充 pin 信息。
+10. 没有 `selected_pin` / `selected_pins` 时，最终 `网络命名` 必须为空。
+11. `LINE_xxx`、`line`、包含 `line` 的连线名称是画图工具默认名，不是有效网络名，不能直接复制到 `net_name` / `net_names`。
 
 ## 关键文件
 
@@ -264,6 +268,8 @@ python script/run_pipeline.py \
 **规则 1（最高优先级）：连线名称优先**
 
 `connection_name` 非空且不包含 `line`（不区分大小写）时，直接使用连线名称（清洗后），不再按规范生成。
+
+如果没有选中原理图 pin，渲染阶段强制输出空网络名；如果 `connection_name` 包含 `line`，视为默认连线名，必须按信号语义生成或由模型输出有效网络名。
 
 ```text
 示例：
