@@ -16,13 +16,13 @@ description: 基于输入框图 Excel、pin_info.json 和自然语言硬件规�
 2. 如果 stage=all 后大部分 decision 是 unresolved，不能宣称最终结果已完成。
 3. 完整语义输出必须执行：
    prepare/model_tasks
-     -> 阅读 global_subagent_plan.md/json
+     -> 阅读 subagent_task_plan.md/json
      -> 按 context_group 启动或等价执行隔离语义分析
      -> 写入 intermediate/model_resolved_decisions.jsonl
      -> stage=finish
      -> 检查 validation_report.json。
-4. 如果环境允许并且当前用户请求允许使用 subagent，必须按 global_subagent_plan 启动隔离 subagent；一个 context_group 代表一个源端器件 pin 体系，不要再按链路族/信号族/目标上下文重新拆 subagent。
-5. 如果环境不能启动 subagent，执行模型必须自己逐个处理 CTX_xxx.json，并明确说明没有使用外部 subagent。
+4. 如果环境允许并且当前用户请求允许使用 subagent，必须按 subagent_task_plan 启动隔离 subagent；一个 context_group 代表一个源端器件 pin 体系，不要再按链路族/信号族/目标上下文重新拆 subagent。
+5. 如果环境不能启动 subagent，执行模型必须自己逐个处理 TASK_xxx.json，并明确说明没有使用外部 subagent。
 ```
 
 完整步骤见：
@@ -81,6 +81,8 @@ render_template_sheets
 5. 前 9 列是原始连接事实，模型不得修改。
 6. 信息不足时输出 `unresolved`，不得硬猜。
 7. 一条逻辑连接对应多个物理 pin 时，模型输出 `selected_pins` 数组，渲染阶段按 `主连线ID#数字` 展开。
+8. `原理图Pin脚` / `selected_pin` / `selected_pins` 必须逐字来自入参 `pin_info.json` 中该源端器件编码对应的 pin 列表；不得翻译、补全、改写、大小写规范化或输出其他器件的 pin。
+9. 如果入参 `pin_info.json` 中没有当前源端器件编码对应的 pin 列表，则跳过该器件的语义模型分析；该器件相关连接保持 `unresolved`，等待用户补充 pin 信息。
 
 ## 关键文件
 
@@ -117,7 +119,7 @@ rules/natural_language_mapping_rules_template.md
 
 该 sheet 是可选增强信息，不是必填输入。它只作为对应源端器件 subagent 的上下文，不会单独触发新的 context_group。没有链路级数据时，context_group 会使用 `link_family_source=fallback_device_context` 或 `fallback_mapping_family` 作为组内上下文，subagent 按器件类型和映射族继续分析。
 
-导出的每个 `CTX_xxx.json` 必须包含：
+导出的每个 `TASK_xxx.json` 必须包含：
 
 ```text
 diagram_link_context
@@ -159,11 +161,11 @@ prompts/semantic_mapping_resolver.md
 启动 subagent 前的全局规划输出：
 
 ```text
-intermediate/model_resolution_tasks/global_subagent_plan.md
-intermediate/model_resolution_tasks/global_subagent_plan.json
+intermediate/model_resolution_tasks/subagent_task_plan.md
+intermediate/model_resolution_tasks/subagent_task_plan.json
 ```
 
-全局规划会展示 `link_family_source`，用于区分显式链路表、连接文本推断、mapping_family 兜底和器件上下文兜底。
+模型任务计划会持久化到本地，展示每个任务的可读文件名、器件类型、源端器件编码、context_group、link family、line 数量和任务目标。任务 JSON/prompt 位于 `intermediate/model_resolution_tasks/tasks/`，文件名格式为 `TASK_序号_器件类型_器件编码_链路范围_hash`，便于用户检查。
 
 规则层级：
 

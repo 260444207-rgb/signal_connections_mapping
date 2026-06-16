@@ -16,6 +16,87 @@ def load_by_line_id(path: str | Path) -> Dict[str, Dict[str, Any]]:
     return {row["line_id"]: row for row in iter_jsonl(path)}
 
 
+def cleanup_model_task_output_dir(output_dir: Path) -> None:
+    """清理本脚本的旧任务产物，避免 CTX_xxx 和新 TASK_xxx 混在一起。"""
+    for pattern in [
+        "CTX_*.json",
+        "CTX_*.prompt.md",
+        "TASK_*.json",
+        "TASK_*.prompt.md",
+        "global_subagent_plan.json",
+        "global_subagent_plan.md",
+        "subagent_task_plan.json",
+        "subagent_task_plan.md",
+        "index.json",
+        "manifest.json",
+    ]:
+        for path in output_dir.glob(pattern):
+            if path.is_file():
+                path.unlink()
+    tasks_dir = output_dir / "tasks"
+    if tasks_dir.exists():
+        for pattern in ["TASK_*.json", "TASK_*.prompt.md"]:
+            for path in tasks_dir.glob(pattern):
+                if path.is_file():
+                    path.unlink()
+
+
+def source_part_label(group: Dict[str, Any]) -> str:
+    signature = str(group.get("source_device_signature", ""))
+    if signature.startswith("DEVICE_INFO:"):
+        return signature.split(":", 1)[1]
+    return "UNKNOWN_PART"
+
+
+def filename_slug(value: Any, default: str = "UNKNOWN", max_len: int = 48) -> str:
+    text = str(value or "").strip()
+    if not text:
+        text = default
+    text = re.sub(r"[\\/:*?\"<>|\s]+", "_", text)
+    text = re.sub(r"_+", "_", text).strip("._")
+    if not text:
+        text = default
+    return text[:max_len]
+
+
+def readable_device_type(group: Dict[str, Any]) -> str:
+    values = []
+    values.extend(group.get("source_sheets", []) or [])
+    values.extend(group.get("source_device_instances", []) or [])
+    values.append(group.get("source_device_signature", ""))
+    text = " ".join(str(v) for v in values).upper()
+    keyword_labels = [
+        ("SROC", ["SROC"]),
+        ("TXVGA", ["TXVGA", "TX VGA"]),
+        ("91FBSW", ["91FBSW", "FBSW", "反馈九选一"]),
+        ("AMC7964", ["AMC7964"]),
+        ("HBF", ["HBF"]),
+        ("PA", ["功放", " PA", "PAM"]),
+    ]
+    for label, keywords in keyword_labels:
+        if any(keyword.upper() in text for keyword in keywords):
+            return label
+    for value in group.get("source_sheets", []) or []:
+        if value:
+            return filename_slug(value)
+    return filename_slug(group.get("source_device_signature", ""), "SOURCE_DEVICE")
+
+
+def readable_family_scope(group: Dict[str, Any]) -> str:
+    families = group.get("link_family_ids") or [group.get("link_family_id") or "LOCAL_DEVICE_MAPPING"]
+    if len(families) == 1:
+        return filename_slug(families[0], "LOCAL_DEVICE_MAPPING", 36)
+    return "MULTI_LINK"
+
+
+def task_file_stem(task_index: int, group: Dict[str, Any], context_id: str) -> str:
+    device = filename_slug(readable_device_type(group), "DEVICE", 32)
+    part = filename_slug(source_part_label(group), "UNKNOWN_PART", 32)
+    family = readable_family_scope(group)
+    context_hash = context_id.replace("CTX_", "")
+    return f"TASK_{task_index:02d}_{device}_{part}_{family}_{context_hash}"
+
+
 def build_link_family_summary(groups: List[Dict[str, Any]]) -> Dict[str, Any]:
     families: Dict[str, Dict[str, Any]] = {}
     for group in groups:
@@ -261,32 +342,53 @@ def build_diagram_link_context(group: Dict[str, Any], normalized_connections: Li
     }
 
 
-def render_global_subagent_plan(tasks: List[Dict[str, Any]]) -> str:
+def render_subagent_task_plan(tasks: List[Dict[str, Any]], skipped_tasks: List[Dict[str, Any]] | None = None) -> str:
+    skipped_tasks = skipped_tasks or []
     lines = [
-        "# Global Subagent Task Plan",
+        "# Subagent Task Plan",
         "",
-        "在启动语义 subagent 前，先按全局 context group 汇总任务。每个 subagent 只处理自己的 task_json 中列出的 line_id。",
+        "在启动语义 subagent 前，先按本计划检查每个任务包。每个 subagent 只处理自己的 task_json 中列出的 line_id。",
         "",
-        "| # | context_group | subagent | link_family | source | strategy | source -> target | lines | task | 要做什么 |",
-        "|---|---|---|---|---|---|---|---:|---|---|",
+        "| # | task | 器件类型 | 源端器件编码 | context_group | link_family | lines | task_json | prompt | 要做什么 |",
+        "|---|---|---|---|---|---|---:|---|---|---|",
     ]
     for i, task in enumerate(tasks, start=1):
-        source_target = f"{task.get('source_device_signature', '')} -> {', '.join(task.get('target_device_signatures', [])[:3]) or task.get('target_device_signature', '')}"
         family_label = ", ".join(task.get("link_family_ids", [])[:4]) or task.get("link_family_id", "")
+        task_json = Path(task.get("task_json", ""))
+        prompt_file = Path(task.get("prompt_file", ""))
         lines.append(
-            "| {i} | {context} | {subagent} | {family} | {family_source} | {strategy} | {source_target} | {lines_count} | {task_json} | {goal} |".format(
+            "| {i} | {task_name} | {device} | {part} | {context} | {family} | {lines_count} | {task_json} | {prompt} | {goal} |".format(
                 i=i,
+                task_name=task.get("task_display_name", ""),
+                device=task.get("readable_device_type", ""),
+                part=task.get("source_part_id", ""),
                 context=task.get("context_group_id", ""),
-                subagent=task.get("recommended_subagent", ""),
                 family=family_label,
-                family_source=task.get("link_family_source", ""),
-                strategy=task.get("analysis_strategy", ""),
-                source_target=source_target,
                 lines_count=task.get("line_count", 0),
-                task_json=Path(task.get("task_json", "")).name,
+                task_json=f"{task_json.parent.name}/{task_json.name}" if task_json.parent.name else task_json.name,
+                prompt=f"{prompt_file.parent.name}/{prompt_file.name}" if prompt_file.parent.name else prompt_file.name,
                 goal=str(task.get("task_goal", "")).replace("|", "/"),
             )
         )
+    if skipped_tasks:
+        lines.extend([
+            "",
+            "## Skipped Context Groups",
+            "",
+            "以下 context_group 因为入参 pin_info.json 中没有对应源端器件编码的 pin 列表，不生成 CTX 语义分析任务；最终保留 pre_resolve 的 unresolved 结果。",
+            "",
+            "| context_group | source | lines | reason |",
+            "|---|---|---:|---|",
+        ])
+        for item in skipped_tasks:
+            lines.append(
+                "| {context} | {source} | {count} | {reason} |".format(
+                    context=item.get("context_group_id", ""),
+                    source=", ".join(item.get("source_part_ids", [])) or item.get("source_device_signature", ""),
+                    count=item.get("line_count", 0),
+                    reason=item.get("reason", ""),
+                )
+            )
     return "\n".join(lines) + "\n"
 
 
@@ -443,7 +545,8 @@ def render_prompt(task: Dict[str, Any]) -> str:
         "12. 如果 task_json 中存在 link_family_summary/link_family_summaries，先用它们理解组内链路族、控制族、总线族和局部映射，再做单行 pin 选择。",
         "13. 如果没有显式 link_info/link_family 数据，必须按 context_group 的源/目的器件类型、源Block名称、源Port 和 mapping_family 继续分析，不得要求用户必须补充链路表。",
         "14. 输出前自检：输出 line_id 集合必须等于 task_json.line_ids；不得遗漏、重复或额外输出。",
-        "15. selected_pin/selected_pins 必须来自 task_json.source_device_pins 或 candidate_mappings.available_pins；不能编造 pin。",
+        "15. selected_pin/selected_pins 必须逐字来自入参 pin_info.json 中当前源端器件编码对应的 task_json.source_device_pins 或 candidate_mappings.available_pins；不能编造、改写、翻译、补全 pin，也不能使用其他器件的 pin。",
+        "16. 如果 task_json.source_device_pins 没有当前源端器件编码，或当前 line_id 的 available_pins 为空，必须输出 unresolved，并说明入参 pin_info 缺少该器件 pin 信息。",
         "",
         "## 输出格式",
         "",
@@ -478,6 +581,8 @@ def build_model_resolution_tasks(
     pins_path: str | Path | None = None,
 ) -> Dict[str, Any]:
     output_dir = ensure_dir(output_dir)
+    cleanup_model_task_output_dir(output_dir)
+    tasks_dir = ensure_dir(output_dir / "tasks")
     normalized_by_id = load_by_line_id(normalized_path)
     candidates_by_id = load_by_line_id(candidates_path)
 
@@ -499,12 +604,15 @@ def build_model_resolution_tasks(
     link_family_summaries = build_link_family_summary(context_groups)
     link_family_profiles = build_link_family_profiles(context_groups, normalized_by_id)
     tasks: List[Dict[str, Any]] = []
+    skipped_tasks: List[Dict[str, Any]] = []
 
     for group in context_groups:
         line_ids = [line_id for line_id in group.get("line_ids", []) if line_id in needed_ids]
         if not line_ids:
             continue
         context_id = group.get("context_group_id") or f"CTX_{len(tasks)+1}"
+        task_number = len(tasks) + 1
+        file_stem = task_file_stem(task_number, group, context_id)
         # 收集本组所有 normalized_connections 中的 source_part_id -> 真实 pin 列表
         group_nc = [normalized_by_id[lid] for lid in line_ids if lid in normalized_by_id]
         source_pins_map: Dict[str, List[str]] = {}
@@ -516,7 +624,22 @@ def build_model_resolution_tasks(
                 if resolved_code != code:
                     source_pins_map[resolved_code] = source_pins_map[code]
 
+        if not any(source_pins_map.values()):
+            skipped_tasks.append({
+                "context_group_id": context_id,
+                "line_ids": line_ids,
+                "line_count": len(line_ids),
+                "source_device_signature": group.get("source_device_signature", ""),
+                "source_part_ids": sorted({nc.get("source_part_id", "") for nc in group_nc if nc.get("source_part_id")}),
+                "reason": "pin_info_missing_for_source_device",
+                "message": "入参 pin_info.json 中没有对应源端器件编码的 pin 列表，按约束跳过该器件的语义模型分析；最终保留 pre_resolve 的 unresolved 结果。",
+            })
+            continue
+
+        task_display_name = f"{readable_device_type(group)} / {source_part_label(group)} / {readable_family_scope(group)}"
         task_payload = {
+            "task_id": file_stem,
+            "task_display_name": task_display_name,
             "context_group": group,
             "diagram_link_context": build_diagram_link_context(group, group_nc),
             "link_family_summary": {
@@ -544,16 +667,20 @@ def build_model_resolution_tasks(
                 "one_decision_per_line_id": True,
             },
         }
-        task_json = output_dir / f"{context_id}.json"
+        task_json = tasks_dir / f"{file_stem}.json"
         write_json(task_json, task_payload)
 
         task_info = {
+            "task_id": file_stem,
+            "task_display_name": task_display_name,
             "context_group_id": context_id,
             "line_ids": line_ids,
             "line_count": len(line_ids),
             "task_json": str(task_json),
-            "prompt_file": str(output_dir / f"{context_id}.prompt.md"),
+            "prompt_file": str(tasks_dir / f"{file_stem}.prompt.md"),
             "recommended_subagent": group.get("recommended_subagent", "semantic-mapping-subagent"),
+            "readable_device_type": readable_device_type(group),
+            "source_part_id": source_part_label(group),
             "device_category": group.get("device_category", ""),
             "link_family_id": group.get("link_family_id", ""),
             "link_family_source": group.get("link_family_source", ""),
@@ -573,26 +700,47 @@ def build_model_resolution_tasks(
             "link_family_profile_ids": list((group.get("link_family_ids") or [group.get("link_family_id") or "LOCAL_DEVICE_MAPPING"])),
         }
         task_info["task_goal"] = describe_subagent_task(task_info, group)
-        (output_dir / f"{context_id}.prompt.md").write_text(render_prompt(task_info), encoding="utf-8")
+        (tasks_dir / f"{file_stem}.prompt.md").write_text(render_prompt(task_info), encoding="utf-8")
         tasks.append(task_info)
 
-    global_plan = {
+    subagent_plan = {
         "task_count": len(tasks),
         "line_count": sum(t["line_count"] for t in tasks),
+        "skipped_task_count": len(skipped_tasks),
+        "skipped_line_count": sum(t["line_count"] for t in skipped_tasks),
+        "tasks_dir": str(tasks_dir),
+        "skipped_tasks": skipped_tasks,
         "tasks": tasks,
     }
-    write_json(output_dir / "global_subagent_plan.json", global_plan)
-    (output_dir / "global_subagent_plan.md").write_text(render_global_subagent_plan(tasks), encoding="utf-8")
+    plan_json = output_dir / "subagent_task_plan.json"
+    plan_md = output_dir / "subagent_task_plan.md"
+    write_json(plan_json, subagent_plan)
+    plan_md.write_text(render_subagent_task_plan(tasks, skipped_tasks), encoding="utf-8")
 
-    index = {
+    manifest = {
         "task_count": len(tasks),
         "line_count": sum(t["line_count"] for t in tasks),
-        "global_subagent_plan_json": str(output_dir / "global_subagent_plan.json"),
-        "global_subagent_plan_md": str(output_dir / "global_subagent_plan.md"),
-        "tasks": tasks,
+        "skipped_task_count": len(skipped_tasks),
+        "skipped_line_count": sum(t["line_count"] for t in skipped_tasks),
+        "subagent_task_plan_json": str(plan_json),
+        "subagent_task_plan_md": str(plan_md),
+        "tasks_dir": str(tasks_dir),
+        "tasks": [
+            {
+                "task_id": task.get("task_id", ""),
+                "task_display_name": task.get("task_display_name", ""),
+                "context_group_id": task.get("context_group_id", ""),
+                "readable_device_type": task.get("readable_device_type", ""),
+                "source_part_id": task.get("source_part_id", ""),
+                "line_count": task.get("line_count", 0),
+                "task_json": task.get("task_json", ""),
+                "prompt_file": task.get("prompt_file", ""),
+            }
+            for task in tasks
+        ],
     }
-    write_json(output_dir / "index.json", index)
-    return index
+    write_json(output_dir / "manifest.json", manifest)
+    return manifest
 
 
 def main() -> None:

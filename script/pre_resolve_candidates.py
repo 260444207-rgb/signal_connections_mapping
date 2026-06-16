@@ -37,6 +37,20 @@ def pre_resolve_candidates(normalized_path, candidate_path, decisions_out, needs
     for row in iter_jsonl(normalized_path):
         line_id = row["line_id"]
         candidate_mapping = candidates_by_id.get(line_id, {"line_id": line_id, "candidates": []})
+        available_pins = candidate_mapping.get("available_pins", [])
+        source_part_id = candidate_mapping.get("source_part_id") or row.get("source_part_id", "")
+        resolved_part_id = candidate_mapping.get("resolved_part_id") or source_part_id
+        if not available_pins:
+            decisions.append({
+                "line_id": line_id,
+                "selected_pin": "",
+                "decision_type": "unresolved",
+                "confidence": "Low",
+                "analysis": f"入参 pin_info.json 中未找到源端器件编码 {source_part_id} / {resolved_part_id} 的 pin 列表，跳过该器件的语义模型分析。",
+                "net_name": "",
+                "needs_human_review": True,
+            })
+            continue
         pin = choose_high_confidence_candidate(candidate_mapping)
         if pin:
             decisions.append({

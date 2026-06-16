@@ -1,6 +1,6 @@
 # Context Group Subagent 指令
 
-这是 `script/build_model_resolution_tasks.py` 生成的 `CTX_xxx.prompt.md` 的说明性版本。真实任务执行时，以任务包中的 `CTX_xxx.json` 和同目录生成的 `CTX_xxx.prompt.md` 为准。
+这是 `script/build_model_resolution_tasks.py` 生成的 `TASK_xxx.prompt.md` 的说明性版本。真实任务执行时，以任务包中的 `TASK_xxx.json` 和同目录生成的 `TASK_xxx.prompt.md` 为准。
 
 subagent 的核心语义方法见：
 
@@ -50,13 +50,14 @@ prompts/semantic_mapping_resolver.md
 ## 执行要求
 
 ```text
-1. subagent 必须读取分配给自己的所有 CTX_xxx.json。
+1. subagent 必须读取分配给自己的所有 TASK_xxx.json。
 2. subagent 必须把结果写入调用方指定的 batch JSONL 文件。
 3. JSONL 每行一个 mapping_decision object，不要 Markdown 包裹。
 4. 输出前必须自检：assigned_line_ids == output_line_ids。
 5. 输出前必须自检：没有重复 line_id，没有额外 line_id。
-6. 输出前必须自检：非空 selected_pin / selected_pins 都来自 source_device_pins 或 candidate_mappings.available_pins。
+6. 输出前必须自检：非空 selected_pin / selected_pins 都逐字来自入参 pin_info.json 中当前源端器件编码对应的 source_device_pins 或 candidate_mappings.available_pins；不得改写 pin 名、大小写、下划线或使用其他器件的 pin。
 7. subagent 最终回复只能摘要输出条数、unresolved 条数和原因；真正结果以 JSONL 文件为准。
+8. 如果 source_device_pins 没有当前源端器件编码，或当前 line_id 的 available_pins 为空，必须输出 unresolved，并在 analysis 中说明入参 pin_info 缺少该器件 pin 信息。
 ```
 
 ## 输出格式

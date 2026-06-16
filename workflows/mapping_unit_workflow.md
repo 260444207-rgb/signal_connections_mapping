@@ -1,6 +1,6 @@
 # 单条连接语义分析流程
 
-本文件说明 subagent 在一个 `context_group` 内如何分析单条连接。它不是独立脚本入口；真实执行入口是 `script/build_model_resolution_tasks.py` 导出的 `CTX_xxx.json` 任务包。
+本文件说明 subagent 在一个 `context_group` 内如何分析单条连接。它不是独立脚本入口；真实执行入口是 `script/build_model_resolution_tasks.py` 导出的 `TASK_器件类型_器件编码_链路范围_hash.json` 任务包。
 
 ## 输入范围
 
@@ -49,6 +49,8 @@
 ```
 
 `link_family_profiles` 只提供共享语义，不提供最终 pin 结论。subagent 可以借鉴同一 link_family 下其他器件或实例的分析方式，但必须回到当前 source_device_pins 和当前 line_id 独立选择 pin。
+
+selected_pin / selected_pins 必须逐字来自当前 source_part_id 对应的 source_device_pins。没有该 source_part_id 的 pin 列表时，不分析该器件 pin，直接 unresolved。
 
 ## 输出
 

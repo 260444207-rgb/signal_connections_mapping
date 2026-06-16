@@ -59,6 +59,8 @@ render_template_sheets
 
 候选分数只用于辅助，不代表最终语义判断。
 
+`available_pins` 必须来自入参 `pin_info.json` 中当前源端器件编码对应的 pin 列表。如果找不到该编码，`available_pins` 为空，该器件后续跳过语义模型分析，相关连接保持 unresolved。
+
 ### build_analysis_context_groups
 
 按源端 `source_part_id` 对应的器件 pin 体系和 hard-case 状态隔离模型上下文，生成 `analysis_context_groups.json`。
@@ -99,11 +101,12 @@ link_contexts / link_instance_ids / user_link_infos / device_role_infos
 
 ```text
 intermediate/model_resolution_tasks/
-├── index.json
-├── global_subagent_plan.md
-├── global_subagent_plan.json
-├── CTX_xxx.json
-└── CTX_xxx.prompt.md
+├── manifest.json
+├── subagent_task_plan.md
+├── subagent_task_plan.json
+└── tasks/
+    ├── TASK_器件类型_器件编码_链路范围_hash.json
+    └── TASK_器件类型_器件编码_链路范围_hash.prompt.md
 ```
 
 任务包包含：
@@ -122,7 +125,7 @@ intermediate/model_resolution_tasks/
 
 `link_family_profiles` 会把同一 link_family 的共享链路语义注入到所有相关 source_device subagent 中。它用于借鉴链路拓扑、方向、实例索引和用户说明，不用于脚本裁决 pin。
 
-在真正启动 subagent 前，应先阅读 `global_subagent_plan.md`，确认每个 subagent/context group 的源端器件、组内链路族、目标上下文和 line 数量。不要再因为同一个源端器件内部的链路族或目标不同而拆分 subagent。
+在真正启动 subagent 前，应先阅读本地持久化的 `subagent_task_plan.md`，确认每个 subagent/context group 的源端器件、组内链路族、目标上下文、line 数量和任务文件名。不要再因为同一个源端器件内部的链路族或目标不同而拆分 subagent。
 
 ### semantic subagent resolution
 
@@ -169,6 +172,8 @@ output/signal_interface.xlsx
 前 9 列是连接事实字段，模型不得修改。
 
 如果模型阶段判断一条逻辑连接对应多个物理 pin，应在同一个 mapping decision 中输出 `selected_pins` 数组。渲染阶段会复制原始连接事实并把连线ID改为 `主连线ID#数字`，除连线ID和后 4 列外，前置字段不得变化。
+
+`原理图Pin脚` 只能逐字使用入参 `pin_info.json` 中当前源端器件编码对应的 pin 字符串。模型不得补全、改写、翻译、调整大小写或使用其他器件的 pin。
 
 ## 5. 规则入口
 

@@ -15,6 +15,7 @@
 4. 其他连接 sheet 重建为标准 13 列。
 5. 前 9 列连接事实来自输入框图，除多物理 pin 展开时连线ID追加 #数字外，不得被模型或脚本改写。
 6. 后 4 列由脚本预裁决、模型语义分析、人工覆盖结果合并得到。
+7. `原理图Pin脚` 必须逐字来自入参 `pin_info.json` 中当前源端器件编码对应的 pin 列表；不得改写 pin 字符串。入参没有该器件编码时，跳过该器件语义分析并保持 unresolved。
 ```
 
 标准 13 列：
@@ -124,7 +125,7 @@ render_template_sheets
 ```text
 prepare:     生成 normalized_connections、analysis_context_groups、candidate_mappings
 apply:       生成 pre_resolved_decisions 和 needs_model_resolution
-model_tasks: 生成按源端器件 pin 体系隔离的 subagent 任务包和 global_subagent_plan
+model_tasks: 生成按源端器件 pin 体系隔离的 subagent 任务包和 subagent_task_plan
 finish:      合并模型/人工结果，校验并渲染 Excel
 all:         只走脚本路径，不会自动调用真实 subagent；只适合冒烟验证，未解决项保持 unresolved
 ```
@@ -247,6 +248,7 @@ fallback_device_context: 无显式链路族和明确映射族，按器件上下�
 2. 兼容前导零料号，例如 302078562 匹配 0302078562。
 3. 基于 source_port、target_port、索引、方向生成轻量候选分数。
 4. 输出 available_pins 和 top_k candidates。
+5. 如果 source_part_id 在 pin_info.json 中没有对应 pin 列表，则 available_pins 为空；后续 pre_resolve 会保持 unresolved，并跳过该器件的语义模型分析。
 ```
 
 候选分数只用于辅助，不代表最终语义判断。
@@ -259,17 +261,20 @@ fallback_device_context: 无显式链路族和明确映射族，按器件上下�
 
 该脚本不得承载器件特殊语义，不得固化 TXVGA、SROC、SPI 等规则。
 
+如果入参 `pin_info.json` 没有当前源端器件编码对应的 pin 列表，该脚本直接输出 unresolved，不写入 `needs_model_resolution.jsonl`，避免模型凭经验生成不存在的 pin。
+
 ### script/build_model_resolution_tasks.py
 
 根据 `analysis_context_groups.json` 和 `needs_model_resolution.jsonl` 生成隔离 subagent 任务包：
 
 ```text
 intermediate/model_resolution_tasks/
-├── index.json
-├── global_subagent_plan.md
-├── global_subagent_plan.json
-├── CTX_xxx.json
-└── CTX_xxx.prompt.md
+├── manifest.json
+├── subagent_task_plan.md
+├── subagent_task_plan.json
+└── tasks/
+    ├── TASK_01_SROC_302078562_MULTI_LINK_61889c68782d.json
+    └── TASK_01_SROC_302078562_MULTI_LINK_61889c68782d.prompt.md
 ```
 
 任务包包含：
@@ -321,7 +326,21 @@ shared_semantic_hints
 
 `matched_rule_sections` 是从 `rules/natural_language_mapping_rules_template.md` 的 `### RULE:` 块中召回的候选规则文本。召回只基于源端器件、链路族、信号族、目标上下文、端口关键词等做相关性筛选，不做 pin 裁决。
 
-启动 subagent 前应先读 `global_subagent_plan.md`，确认每个 context group 的源端器件、组内链路族、目标上下文和 line 数量。不要再按链路族/信号族/目标上下文把同一个源端器件任务拆开。
+启动 subagent 前应先读 `subagent_task_plan.md`，确认每个 context group 的源端器件、组内链路族、目标上下文和 line 数量。不要再按链路族/信号族/目标上下文把同一个源端器件任务拆开。
+
+任务 JSON/prompt 使用可读文件名，而不是裸 `CTX_xxx`：
+
+```text
+TASK_序号_器件类型_源端器件编码_链路范围_contextHash.json
+```
+
+例如：
+
+```text
+TASK_01_91FBSW_47140609-001_FEEDBACK_CHAIN_d15a7250e9f7.json
+TASK_02_SROC_302078562_MULTI_LINK_61889c68782d.json
+TASK_03_TXVGA_47151290_RF_TX_CHAIN_98e63e8c1e3a.json
+```
 
 ### script/merge_decisions.py
 
@@ -346,9 +365,10 @@ shared_semantic_hints
 2. 不存在多余 line_id。
 3. line_id 不重复。
 4. selected_pin / selected_pins 必须存在于源端 pin 列表。
-5. confidence 合法。
-6. 有 pin 时应有 net_name 或可生成网络名。
-7. 无 pin 时不得 High。
+5. selected_pin / selected_pins 必须属于当前 line_id 的源端器件编码对应的 pin 列表，而不是仅仅存在于任意器件 pin 列表。
+6. confidence 合法。
+7. 有 pin 时应有 net_name 或可生成网络名。
+8. 无 pin 时不得 High。
 ```
 
 ### script/render_template_sheets.py
@@ -403,7 +423,7 @@ selected_pins: ["PIN_P", "PIN_N"]
 
 ### prompts/context_group_subagent_instruction.md
 
-说明性 prompt，描述 `CTX_xxx.prompt.md` 的结构和 subagent 任务输入输出。真实任务以自动生成的 prompt 为准。
+说明性 prompt，描述 `TASK_xxx.prompt.md` 的结构和 subagent 任务输入输出。真实任务以自动生成的 prompt 为准。
 
 ## 6. rules 目录
 
@@ -522,11 +542,12 @@ task_dir/
 │   ├── mapping_decisions.jsonl
 │   ├── validation_report.json
 │   └── model_resolution_tasks/
-│       ├── index.json
-│       ├── global_subagent_plan.md
-│       ├── global_subagent_plan.json
-│       ├── CTX_xxx.json
-│       └── CTX_xxx.prompt.md
+│       ├── manifest.json
+│       ├── subagent_task_plan.md
+│       ├── subagent_task_plan.json
+│       └── tasks/
+│           ├── TASK_xxx.json
+│           └── TASK_xxx.prompt.md
 └── output/
     └── signal_interface.xlsx
 ```

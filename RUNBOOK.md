@@ -45,18 +45,18 @@ python script/run_pipeline.py \
 
 ```text
 <task_dir>/intermediate/needs_model_resolution.jsonl
-<task_dir>/intermediate/model_resolution_tasks/index.json
-<task_dir>/intermediate/model_resolution_tasks/global_subagent_plan.md
-<task_dir>/intermediate/model_resolution_tasks/global_subagent_plan.json
-<task_dir>/intermediate/model_resolution_tasks/CTX_xxx.json
-<task_dir>/intermediate/model_resolution_tasks/CTX_xxx.prompt.md
+<task_dir>/intermediate/model_resolution_tasks/manifest.json
+<task_dir>/intermediate/model_resolution_tasks/subagent_task_plan.md
+<task_dir>/intermediate/model_resolution_tasks/subagent_task_plan.json
+<task_dir>/intermediate/model_resolution_tasks/tasks/TASK_器件类型_器件编码_链路范围_hash.json
+<task_dir>/intermediate/model_resolution_tasks/tasks/TASK_器件类型_器件编码_链路范围_hash.prompt.md
 ```
 
-必须先阅读 `global_subagent_plan.md/json`，再启动语义分析。
+必须先阅读持久化到本地的 `subagent_task_plan.md/json`，再启动语义分析。`subagent_task_plan.md` 是给用户审阅的任务表；`subagent_task_plan.json` 是给脚本或模型读取的结构化任务计划。
 
 ### 3. 规划 subagent 批次
 
-按 `global_subagent_plan.json` 中的任务分组。当前设计下，一个 context_group 就是一个源端器件 pin 体系的 subagent 分析单元。推荐优先按以下维度检查任务：
+按 `subagent_task_plan.json` 中的任务分组。当前设计下，一个 context_group 就是一个源端器件 pin 体系的 subagent 分析单元。推荐优先按以下维度检查任务：
 
 ```text
 1. source_device_signature
@@ -69,18 +69,18 @@ python script/run_pipeline.py \
 
 不要再因为 link_family、mapping_family 或 target_device_signature 不同而拆新的 subagent；这些信息已经在同一个源端器件 context_group 内作为上下文提供。只有 hard_case 或未知源端器件需要额外隔离。
 
-每个 subagent 必须拥有互不重叠的 `CTX_xxx.json` 列表。不要让两个 subagent 处理同一个 `line_id`。
+每个 subagent 必须拥有互不重叠的 `TASK_xxx.json` 列表。不要让两个 subagent 处理同一个 `line_id`。
 
-如果环境允许并且当前用户请求允许使用 subagent，应启动隔离 subagent。若当前环境不能启动 subagent，则执行模型必须自己逐个读取 `CTX_xxx.json` 完成同等语义分析，并在最终说明“未使用外部 subagent”。
+如果环境允许并且当前用户请求允许使用 subagent，应启动隔离 subagent。若当前环境不能启动 subagent，则执行模型必须自己逐个读取 `TASK_xxx.json` 完成同等语义分析，并在最终说明“未使用外部 subagent”。
 
 ### 4. 给 subagent 的任务必须包含这些约束
 
 每个 subagent prompt 至少要写清楚：
 
 ```text
-1. 只处理分配给自己的 CTX_xxx.json。
+1. 只处理分配给自己的 TASK_xxx.json。
 2. 只输出这些任务包内的 line_id。
-3. selected_pin / selected_pins 必须来自任务包里的 source_device_pins 或 candidate_mappings.available_pins。
+3. selected_pin / selected_pins 必须逐字来自入参 pin_info.json 中当前源端器件编码对应的 source_device_pins 或 candidate_mappings.available_pins。
 4. 不得修改 normalized_connection。
 5. 不得输出 output_sheet_name/source_sheet_name。
 6. 多物理 pin 使用 selected_pins，不要新增 line_id。
@@ -91,6 +91,8 @@ python script/run_pipeline.py \
 11. 必须阅读 task_json.matched_rule_sections；这里是脚本召回的候选自然语言规则块，但不能替代逐行语义判断。
 12. 必须阅读 task_json.link_family_profiles；这里是同一 link_family 跨 source_device subagent 共享的链路级语义上下文。
 13. link_family_profiles 只能用于借鉴拓扑、方向、实例索引、差分/总线展开规律和用户说明；不得复制其他 line_id 或其他源端器件的 selected_pin。
+14. 不得翻译、补全、改写、大小写规范化 pin 名；`原理图Pin脚` 必须保持 pin_info.json 中的原始 pin 字符串。
+15. 如果 pin_info.json 没有当前源端器件编码对应的 pin 列表，该器件不启动语义分析，相关行保持 unresolved，等待用户补充 pin 信息。
 ```
 
 推荐输出目录：
@@ -115,7 +117,7 @@ batch_c.jsonl
 1. assigned_line_ids == output_line_ids
 2. 没有重复 line_id
 3. 没有额外 line_id
-4. 非空 selected_pin / selected_pins 都来自该 line_id 的可用 pin 列表
+4. 非空 selected_pin / selected_pins 都逐字来自该 line_id 源端器件编码对应的可用 pin 列表
 5. 输出字段符合 schemas/mapping_decision.schema.json
 ```
 
@@ -180,10 +182,12 @@ python script/run_pipeline.py \
 
 ```text
 1. 把 stage=all 误认为完整流程。
-2. 没有读 global_subagent_plan.md/json。
+2. 没有读 subagent_task_plan.md/json。
 3. 没有启动或模拟隔离 subagent。
 4. 把所有器件放进一个上下文里分析。
 5. selected_pin 编造了 pin_info 中不存在的 pin。
 6. 一条逻辑连接对应多个 pin 时自行新增 line_id，而不是输出 selected_pins。
-7. finish 前没有合并 model_resolved_decisions.jsonl。
+7. pin_info.json 缺少源端器件编码时仍强行让模型分析该器件。
+8. 把 pin 名按经验改写、翻译、补全、调整大小写或替换下划线。
+9. finish 前没有合并 model_resolved_decisions.jsonl。
 ```

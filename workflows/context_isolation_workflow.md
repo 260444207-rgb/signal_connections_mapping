@@ -62,7 +62,7 @@ prompts/semantic_mapping_resolver.md
 subagent 只能读取当前任务包：
 
 ```text
-intermediate/model_resolution_tasks/CTX_xxx.json
+intermediate/model_resolution_tasks/tasks/TASK_器件类型_器件编码_链路范围_hash.json
 ```
 
 任务包包含当前组的：
@@ -80,6 +80,8 @@ intermediate/model_resolution_tasks/CTX_xxx.json
 ```
 
 `link_family_profiles` 是跨 subagent 共享的链路语义上下文。它让同一 link_family 下的 SROC、TXVGA、91fbsw 等不同源端器件 subagent 借鉴拓扑、方向、实例索引、差分/总线展开规律和用户说明，但不能直接复制其他 line_id 或其他源端器件的 selected_pin。
+
+如果 `candidate_mappings.available_pins` 为空，表示入参 `pin_info.json` 没有当前源端器件编码对应的 pin 列表。该 context 不应启动语义 subagent；保留 unresolved，等待用户补充 pin 信息。
 
 ## 输出约束
 

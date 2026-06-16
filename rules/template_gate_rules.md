@@ -5,7 +5,7 @@
 ## 可以脚本预裁决的情况
 
 ```text
-1. source_part_id 能在 pin_info.json 中找到 pin 列表。
+1. source_part_id 能在入参 pin_info.json 中找到对应源端器件编码的 pin 列表。
 2. 候选 pin 分数足够高。
 3. 第一候选与第二候选差距足够大。
 4. 该裁决不依赖链路族、器件特殊规则、差分/总线展开语义或用户自然语言规则。
@@ -23,15 +23,17 @@ top_score - second_score >= 0.20
 ## 必须进入模型分析的情况
 
 ```text
-1. 没有候选 pin。
+1. 当前源端器件有 pin 列表，但没有唯一可信候选 pin。
 2. 多个候选分数接近。
 3. 需要理解链路级规则、器件级规则或通用信号规则。
 4. 需要判断差分 P/N、多物理 pin、总线位、片选、方向或上下游功能。
 5. 当前连接含有多个 link_contexts，归属链路需要语义判断。
-6. 校验阶段发现 selected_pin 不在 pin_info 中、置信度非法或输出不完整。
+6. 校验阶段发现 selected_pin / selected_pins 不在当前源端器件编码对应的 pin_info 列表中、置信度非法或输出不完整。
 ```
 
 这些情况写入 `needs_model_resolution.jsonl`，由 `build_model_resolution_tasks.py` 切分为隔离 subagent 任务。
+
+如果入参 pin_info.json 中没有当前源端器件编码对应的 pin 列表，则不写入 `needs_model_resolution.jsonl`，不启动模型语义分析；保持 unresolved，等待用户补充 pin 信息。
 
 ## 禁止行为
 
@@ -40,4 +42,5 @@ top_score - second_score >= 0.20
 2. 禁止把自然语言规则编译成硬编码模板。
 3. 禁止脚本改写 normalized_connection 的前 9 列连接事实。
 4. 禁止脚本自行新增 line_id；多物理 pin 应由模型输出 selected_pins，渲染阶段再展开。
+5. 禁止脚本或模型改写 pin_info.json 中的 pin 字符串；`原理图Pin脚` 必须逐字使用入参 pin 名。
 ```

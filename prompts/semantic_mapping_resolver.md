@@ -90,13 +90,14 @@ TX 控制链路规定 SROC 的 TX_SW0 控制 TXVGA0 的 EN_CHA/EN_CHB。
 ## 关键约束
 
 1. 只能输出输入中已有的 line_id。
-2. selected_pin 必须来自源端器件的 pin 列表；不能编造 pin。
+2. selected_pin / selected_pins 必须逐字来自入参 pin_info.json 中当前源端器件编码对应的 pin 列表，也就是 task_json.source_device_pins 或当前 line_id 的 candidate_mappings.available_pins；不能编造 pin，不能改大小写，不能翻译，不能补全，不能使用目标器件或其他源端器件的 pin。
 3. 不得修改前 9 列连接事实字段。
 4. 不得输出 output_sheet_name。
 5. 信息不足时不要硬猜，输出 unresolved/Low/needs_human_review=true。
 6. 只有语义、方向、上下游、电路规则都一致时，才能给 High。
 7. 不得把整条重复链路所有器件 pin 都塞进一个单行裁决；只使用 link_family_profiles/link_family_summary 理解全局语义，最终仍逐 line_id 输出。
 8. link_family_profiles 中的 line_examples 只是共享参考样例，不是已裁决结果；不得从其他源端器件复制 selected_pin。
+9. 如果 task_json.source_device_pins 中没有当前源端器件编码，或当前 line_id 的 available_pins 为空，必须跳过该器件/该行的 pin 选择，输出 unresolved，不得凭器件知识或自然语言规则生成 pin 名。
 
 ## 输出
 

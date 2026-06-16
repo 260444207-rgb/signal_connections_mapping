@@ -29,6 +29,7 @@ stage=all 只做脚本冒烟验证，不会自动调用语义 subagent。
 
 2. generate_candidates
    按 block_info 中的器件 code/料号，从 pin_info.json 取源端 pin 列表并生成候选。
+   如果 pin_info.json 没有当前源端器件编码对应的 pin 列表，该器件后续不进入语义模型分析，相关行保持 unresolved。
 
 3. build_analysis_context_groups
    按源端器件 pin 体系和 hard-case 状态隔离模型上下文。
@@ -114,7 +115,7 @@ subagent 分析优先级：
 
 不提供 `link_info` / `链路信息` 时流程仍然正常工作：系统会根据 block_info 的器件信息、源/目的 Block、端口名、连线名推断 mapping_family，并按器件上下文生成 subagent 任务。
 
-导出 `model_tasks` 时，框图信息表中的链路信息会被整理到每个 `CTX_xxx.json` 的：
+导出 `model_tasks` 时，框图信息表中的链路信息会被整理到每个 `TASK_xxx.json` 的：
 
 ```text
 diagram_link_context
@@ -127,11 +128,11 @@ matched_rule_sections
 导出 `model_tasks` 时会先生成全局任务规划：
 
 ```text
-intermediate/model_resolution_tasks/global_subagent_plan.md
-intermediate/model_resolution_tasks/global_subagent_plan.json
+intermediate/model_resolution_tasks/subagent_task_plan.md
+intermediate/model_resolution_tasks/subagent_task_plan.json
 ```
 
-这里会列出每个 subagent/context group 要处理的源端器件、组内 link families、link_family_source、目标上下文、line 数量和任务目标。`link_family_source=fallback_device_context` 或 `fallback_mapping_family` 表示没有显式链路级数据，当前任务在源端器件组内按器件/映射族兜底分析。
+这里会持久化列出每个 subagent/context group 要处理的源端器件、组内 link families、link_family_source、目标上下文、line 数量、任务目标和任务文件名。任务包放在 `intermediate/model_resolution_tasks/tasks/`，文件名类似 `TASK_01_SROC_302078562_MULTI_LINK_61889c68782d.json`，方便用户按器件类型检查。
 
 ## 输出约束
 
@@ -150,6 +151,7 @@ output/signal_interface.xlsx
 4. 前 9 列是原始连接事实，模型不得修改。
 5. 信息不足时输出 unresolved。
 6. 一条逻辑连接对应多个物理 pin 时，模型输出 `selected_pins` 数组，渲染阶段按 `主连线ID#数字` 展开。
+7. `原理图Pin脚` 必须逐字来自入参 `pin_info.json` 中该源端器件编码对应的 pin 列表；不得改写、翻译、补全、大小写规范化或使用其他器件 pin。
 ```
 
 标准 13 列：
@@ -175,9 +177,9 @@ output/signal_interface.xlsx
 正式生成推荐顺序：
 
 ```text
-1. 运行 model_tasks，生成 global_subagent_plan 和 CTX_xxx.json。
-2. 阅读 global_subagent_plan.md/json，按 context_group 规划 subagent 批次。
-3. 让 subagent 分别读取分配到的 CTX_xxx.json，先看 diagram_link_context 和 link_family_profiles，再输出 batch JSONL。
+1. 运行 model_tasks，生成 subagent_task_plan 和 TASK_xxx.json。
+2. 阅读 subagent_task_plan.md/json，按 context_group 规划 subagent 批次。
+3. 让 subagent 分别读取分配到的 TASK_xxx.json，先看 diagram_link_context 和 link_family_profiles，再输出 batch JSONL。
 4. 合并 batch JSONL 为 intermediate/model_resolved_decisions.jsonl。
 5. 运行 finish，输出 output/signal_interface.xlsx。
 6. 检查 validation_report.json 和 unresolved 列表。
