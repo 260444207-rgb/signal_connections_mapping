@@ -48,11 +48,11 @@ python script/run_pipeline.py \
 <task_dir>/intermediate/model_resolution_tasks/manifest.json
 <task_dir>/intermediate/model_resolution_tasks/subagent_task_plan.md
 <task_dir>/intermediate/model_resolution_tasks/subagent_task_plan.json
+<task_dir>/intermediate/model_resolution_tasks/subagent_task_prompt.md
 <task_dir>/intermediate/model_resolution_tasks/tasks/TASK_器件类型_器件编码_链路范围_hash.json
-<task_dir>/intermediate/model_resolution_tasks/tasks/TASK_器件类型_器件编码_链路范围_hash.prompt.md
 ```
 
-必须先阅读持久化到本地的 `subagent_task_plan.md/json`，再启动语义分析。`subagent_task_plan.md` 是给用户审阅的任务表；`subagent_task_plan.json` 是给脚本或模型读取的结构化任务计划。
+必须先阅读持久化到本地的 `subagent_task_plan.md/json`，再启动语义分析。`subagent_task_plan.md` 是给用户审阅的任务表；`subagent_task_plan.json` 是给脚本或模型读取的结构化任务计划；`subagent_task_prompt.md` 是所有 TASK 共享的模型分析说明。
 
 ### 3. 规划 subagent 批次
 
@@ -80,7 +80,7 @@ python script/run_pipeline.py \
 ```text
 1. 只处理分配给自己的 TASK_xxx.json。
 2. 只输出这些任务包内的 line_id。
-3. selected_pin / selected_pins 必须逐字来自入参 pin_info.json 中当前源端器件编码对应的 source_device_pins 或 candidate_mappings.available_pins。
+3. selected_pin / selected_pins 必须逐字来自入参 pin_info.json 中当前源端器件编码对应的 source_device_pins；candidate_mappings 只保留 top candidates。
 4. 不得修改 normalized_connection。
 5. 不得输出 output_sheet_name/source_sheet_name。
 6. 多物理 pin 使用 selected_pins，不要新增 line_id。
@@ -91,8 +91,10 @@ python script/run_pipeline.py \
 11. 必须阅读 task_json.matched_rule_sections；这里是脚本召回的候选自然语言规则块，但不能替代逐行语义判断。
 12. 必须阅读 task_json.link_family_profiles；这里是同一 link_family 跨 source_device subagent 共享的链路级语义上下文。
 13. link_family_profiles 只能用于借鉴拓扑、方向、实例索引、差分/总线展开规律和用户说明；不得复制其他 line_id 或其他源端器件的 selected_pin。
-14. 不得翻译、补全、改写、大小写规范化 pin 名；`原理图Pin脚` 必须保持 pin_info.json 中的原始 pin 字符串。
-15. 如果 pin_info.json 没有当前源端器件编码对应的 pin 列表，该器件不启动语义分析，相关行保持 unresolved，等待用户补充 pin 信息。
+14. 必须阅读 task_json.sheet_device_context；同一个 source_sheet_name 表示一个物理器件实例，sheet 内多个 block_id/block_name 是该器件的逻辑块或端口视图。
+15. 必须阅读 task_json.pin_allocation_context；先判断连接是 scalar、bus 还是 differential。同一 physical_device_instance_id 内普通 scalar 的同一个 pin 默认不能分配给多个不同语义 line_id，除非同一源端口扇出到多个目标端口、同网、同 base_connection、多端口别名或用户规则明确允许。
+16. 不得翻译、补全、改写、大小写规范化 pin 名；`原理图Pin脚` 必须保持 pin_info.json 中的原始 pin 字符串。
+17. 如果 pin_info.json 没有当前源端器件编码对应的 pin 列表，该器件不启动语义分析，相关行保持 unresolved，等待用户补充 pin 信息。
 ```
 
 推荐输出目录：
@@ -118,7 +120,8 @@ batch_c.jsonl
 2. 没有重复 line_id
 3. 没有额外 line_id
 4. 非空 selected_pin / selected_pins 都逐字来自该 line_id 源端器件编码对应的可用 pin 列表
-5. 输出字段符合 schemas/mapping_decision.schema.json
+5. 同一 physical_device_instance_id 内，没有未经说明的重复 selected_pin。
+6. 输出字段符合 schemas/mapping_decision.schema.json
 ```
 
 如果某批次失败，必须修复该批次输出，不能直接 finish。

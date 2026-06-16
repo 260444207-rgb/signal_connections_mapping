@@ -119,11 +119,13 @@ subagent 分析优先级：
 
 ```text
 diagram_link_context
+sheet_device_context
+pin_allocation_context
 link_family_profiles
 matched_rule_sections
 ```
 
-`diagram_link_context` 包含组内链路族、链路编号、用户链路说明、器件角色说明、相关 sheet、逐行 line_id 的链路上下文。`link_family_profiles` 包含同一 link_family 跨 source_device subagent 的共享链路语义、涉及器件、链路实例、用户说明和代表性 line 示例；它用于借鉴链路逻辑，不能直接复制其他 line_id 的 pin 结论。`matched_rule_sections` 包含脚本召回的候选自然语言规则块。subagent 必须先读它们，再做 pin 映射判断。
+`diagram_link_context` 包含组内链路族、链路编号、用户链路说明、器件角色说明、相关 sheet、逐行 line_id 的链路上下文。`sheet_device_context` 说明同一个 source_sheet_name 是一个物理器件实例，sheet 内多个 block_id/block_name 是该器件的逻辑块/端口视图。`pin_allocation_context` 说明同一物理器件实例内的 pin 复用约束、每条 line 的 scalar/bus/differential 判断、候选 pin 空间和可能允许共享 pin 的同源端口扇出/同网/同 base_connection 分组。`link_family_profiles` 包含同一 link_family 跨 source_device subagent 的共享链路语义、涉及器件、链路实例、用户说明和代表性 line 示例；它用于借鉴链路逻辑，不能直接复制其他 line_id 的 pin 结论。`matched_rule_sections` 包含脚本召回的候选自然语言规则块。subagent 必须先读它们，再做 pin 映射判断。
 
 导出 `model_tasks` 时会先生成全局任务规划：
 
@@ -132,7 +134,7 @@ intermediate/model_resolution_tasks/subagent_task_plan.md
 intermediate/model_resolution_tasks/subagent_task_plan.json
 ```
 
-这里会持久化列出每个 subagent/context group 要处理的源端器件、组内 link families、link_family_source、目标上下文、line 数量、任务目标和任务文件名。任务包放在 `intermediate/model_resolution_tasks/tasks/`，文件名类似 `TASK_01_SROC_302078562_MULTI_LINK_61889c68782d.json`，方便用户按器件类型检查。
+这里会持久化列出每个 subagent/context group 要处理的源端器件、组内 link families、link_family_source、目标上下文、line 数量、任务目标和任务文件名。任务包放在 `intermediate/model_resolution_tasks/tasks/`，文件名类似 `TASK_01_SROC_302078562_MULTI_LINK_61889c68782d.json`，方便用户按器件类型检查。所有任务共用 `intermediate/model_resolution_tasks/subagent_task_prompt.md`，不再为每个器件重复生成一份几乎相同的 md。
 
 ## 输出约束
 
@@ -179,7 +181,7 @@ output/signal_interface.xlsx
 ```text
 1. 运行 model_tasks，生成 subagent_task_plan 和 TASK_xxx.json。
 2. 阅读 subagent_task_plan.md/json，按 context_group 规划 subagent 批次。
-3. 让 subagent 分别读取分配到的 TASK_xxx.json，先看 diagram_link_context 和 link_family_profiles，再输出 batch JSONL。
+3. 让 subagent 分别读取分配到的 TASK_xxx.json，先看 diagram_link_context、sheet_device_context、pin_allocation_context 和 link_family_profiles，再输出 batch JSONL。
 4. 合并 batch JSONL 为 intermediate/model_resolved_decisions.jsonl。
 5. 运行 finish，输出 output/signal_interface.xlsx。
 6. 检查 validation_report.json 和 unresolved 列表。

@@ -1,6 +1,6 @@
 # Context Group Subagent 指令
 
-这是 `script/build_model_resolution_tasks.py` 生成的 `TASK_xxx.prompt.md` 的说明性版本。真实任务执行时，以任务包中的 `TASK_xxx.json` 和同目录生成的 `TASK_xxx.prompt.md` 为准。
+这是 `script/build_model_resolution_tasks.py` 生成的共享 `subagent_task_prompt.md` 的说明性版本。真实任务执行时，以 `subagent_task_plan.md/json` 分配的 `TASK_xxx.json` 和同目录生成的 `subagent_task_prompt.md` 为准。
 
 subagent 的核心语义方法见：
 
@@ -13,20 +13,17 @@ prompts/semantic_mapping_resolver.md
 ```json
 {
   "context_group": {},
+  "sheet_device_context": {},
+  "pin_allocation_context": {},
   "diagram_link_context": {},
   "link_family_profiles": {},
-  "link_family_summary": {},
+  "link_family_summaries": {},
   "line_ids": [],
   "normalized_connections": [],
   "candidate_mappings": [],
   "source_device_pins": {},
   "matched_rule_sections": [],
-  "natural_language_rules": {
-    "full_text": "",
-    "link_level_rules": "",
-    "device_level_rules": "",
-    "general_signal_rules": ""
-  },
+  "rule_source": {},
   "needs_model_resolution": [],
   "required_output": {}
 }
@@ -40,11 +37,13 @@ prompts/semantic_mapping_resolver.md
 3. 必须阅读 diagram_link_context。它来自框图信息表/link_info/链路信息 sheet，用来判断链路归属、链路实例、器件角色和特殊连接说明。
 4. 再阅读 matched_rule_sections。它是脚本召回的候选自然语言规则块，只能辅助阅读，不能直接替代逐行判断。
 5. 必须阅读 link_family_profiles。它是同一 link_family 跨多个 source_device subagent 共享的链路级上下文，用来借鉴拓扑、方向、实例索引、差分/总线展开规律和用户说明。
-6. 再阅读 context_group.link_family_ids、mapping_families、target_device_signatures、link_contexts。
-7. 链路级数据、目标上下文和信号族只作为组内上下文，不作为重新拆 subagent 的理由。
-8. 同类型不同实例、不同链路可以共享源端 pin 功能理解；同一 link_family 下不同 subagent 可以共享链路级语义，但不能复制其他 line_id 或其他源端器件的 selected_pin。
-9. 每条 line_id 的链路归属、实例编号、对端端口、网络名必须独立判断。
-10. 信息不足时输出 unresolved，不得硬猜。
+6. 必须阅读 sheet_device_context。同一个 source_sheet_name 表示同一个物理器件实例；sheet 内多个 block_id/block_name 是该器件的逻辑块/端口视图。
+7. 必须阅读 pin_allocation_context。同一个 physical_device_instance_id 内共享同一个 pin 空间；必须先判断每条连接是 scalar、bus 还是 differential；普通 scalar pin 默认不可被不同语义 line_id 重复使用。
+8. 再阅读 context_group.link_family_ids、mapping_families、target_device_signatures、link_contexts。
+9. 链路级数据、目标上下文和信号族只作为组内上下文，不作为重新拆 subagent 的理由。
+10. 同类型不同实例、不同链路可以共享源端 pin 功能理解；同一 link_family 下不同 subagent 可以共享链路级语义，但不能复制其他 line_id 或其他源端器件的 selected_pin。
+11. 每条 line_id 的链路归属、实例编号、对端端口、网络名必须独立判断；同时必须在同一个 physical_device_instance_id 内检查 pin 是否被重复分配。
+12. 信息不足时输出 unresolved，不得硬猜。
 ```
 
 ## 执行要求
@@ -55,9 +54,10 @@ prompts/semantic_mapping_resolver.md
 3. JSONL 每行一个 mapping_decision object，不要 Markdown 包裹。
 4. 输出前必须自检：assigned_line_ids == output_line_ids。
 5. 输出前必须自检：没有重复 line_id，没有额外 line_id。
-6. 输出前必须自检：非空 selected_pin / selected_pins 都逐字来自入参 pin_info.json 中当前源端器件编码对应的 source_device_pins 或 candidate_mappings.available_pins；不得改写 pin 名、大小写、下划线或使用其他器件的 pin。
+6. 输出前必须自检：非空 selected_pin / selected_pins 都逐字来自入参 pin_info.json 中当前源端器件编码对应的 source_device_pins；candidate_mappings 只提供 top candidates，不承载完整 pin 列表。不得改写 pin 名、大小写、下划线或使用其他器件的 pin。
 7. subagent 最终回复只能摘要输出条数、unresolved 条数和原因；真正结果以 JSONL 文件为准。
-8. 如果 source_device_pins 没有当前源端器件编码，或当前 line_id 的 available_pins 为空，必须输出 unresolved，并在 analysis 中说明入参 pin_info 缺少该器件 pin 信息。
+8. 如果 source_device_pins 没有当前源端器件编码，必须输出 unresolved，并在 analysis 中说明入参 pin_info 缺少该器件 pin 信息。
+9. 输出前必须自检：同一个 physical_device_instance_id 内，除同一源端口扇出到多个目标端口、同一网络/同一 base_connection_id/多端口别名/用户规则明确允许外，不得让多个不同语义 scalar line_id 选择同一个 selected_pin。
 ```
 
 ## 输出格式

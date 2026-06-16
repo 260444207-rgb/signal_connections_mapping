@@ -69,19 +69,24 @@ intermediate/model_resolution_tasks/tasks/TASK_器件类型_器件编码_链路�
 
 ```text
 1. context_group
-2. diagram_link_context
-3. link_family_profiles
-4. matched_rule_sections
-5. link_family_summary
-6. normalized_connections
-7. candidate_mappings.available_pins
-8. natural_language_mapping_rules_template.md
-9. needs_model_resolution 原因
+2. sheet_device_context
+3. pin_allocation_context
+4. diagram_link_context
+5. link_family_profiles
+6. matched_rule_sections
+7. link_family_summaries
+8. normalized_connections
+9. candidate_mappings top candidates
+10. source_device_pins
+11. rule_source 指向 natural_language_mapping_rules_template.md
+12. needs_model_resolution 原因
 ```
 
 `link_family_profiles` 是跨 subagent 共享的链路语义上下文。它让同一 link_family 下的 SROC、TXVGA、91fbsw 等不同源端器件 subagent 借鉴拓扑、方向、实例索引、差分/总线展开规律和用户说明，但不能直接复制其他 line_id 或其他源端器件的 selected_pin。
 
-如果 `candidate_mappings.available_pins` 为空，表示入参 `pin_info.json` 没有当前源端器件编码对应的 pin 列表。该 context 不应启动语义 subagent；保留 unresolved，等待用户补充 pin 信息。
+`sheet_device_context` 表达 sheet 与物理器件实例的关系：同一 source_sheet_name 是一个物理器件实例，sheet 内多个 block_id/block_name 是该器件的逻辑块/端口视图。`pin_allocation_context` 表达同一物理器件实例内 pin 的默认互斥使用关系、scalar/bus/differential 判断和允许共享的候选分组。
+
+如果 `source_device_pins` 为空，表示入参 `pin_info.json` 没有当前源端器件编码对应的 pin 列表。该 context 不应启动语义 subagent；保留 unresolved，等待用户补充 pin 信息。
 
 ## 输出约束
 

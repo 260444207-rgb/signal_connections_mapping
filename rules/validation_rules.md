@@ -4,4 +4,6 @@
 
 如果 pin_info.json 中没有当前源端器件编码对应的 pin 列表，该器件相关行应保持 unresolved，不得输出模型猜测的 pin 名。
 
+同一个 source_sheet_name + source_part_id 表示同一个物理器件实例。该实例内同一个 selected_pin 被多个不同 line_id 复用时，必须能被相同源端口扇出到多个目标端口、相同网络名、相同 base_connection、多端口别名或用户规则解释；否则 validation 至少输出 WARNING，提醒用户检查 pin 复用冲突。
+
 错误等级：ERROR 必须修复；WARNING 可继续但需记录；PASS 通过。

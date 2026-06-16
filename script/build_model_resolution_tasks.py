@@ -29,6 +29,7 @@ def cleanup_model_task_output_dir(output_dir: Path) -> None:
         "subagent_task_plan.md",
         "index.json",
         "manifest.json",
+        "subagent_task_prompt.md",
     ]:
         for path in output_dir.glob(pattern):
             if path.is_file():
@@ -342,6 +343,232 @@ def build_diagram_link_context(group: Dict[str, Any], normalized_connections: Li
     }
 
 
+def build_sheet_device_context(normalized_connections: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    表达输入 Excel 的 sheet 语义：
+
+    一个连接 sheet 表示一个物理器件实例；sheet 内不同 source_block_id /
+    source_block_name 是这个物理器件的逻辑块、功能块或端口视图，不应被模型
+    当成多个独立器件来分配 pin。
+    """
+    instances: Dict[str, Dict[str, Any]] = {}
+    for row in normalized_connections:
+        sheet = row.get("source_sheet_name") or row.get("output_sheet_name") or "UNKNOWN_SHEET"
+        part_id = row.get("source_part_id", "")
+        instance_key = f"SHEET:{sheet}|PART:{part_id or 'UNKNOWN_PART'}"
+        instance = instances.setdefault(instance_key, {
+            "physical_device_instance_id": instance_key,
+            "source_sheet_name": sheet,
+            "source_part_id": part_id,
+            "interpretation": "该 sheet 表示一个物理器件实例；sheet 内不同 source_block_id/source_block_name 是该器件的逻辑块、功能块或端口视图。",
+            "logical_blocks": {},
+            "line_ids": [],
+        })
+        block_key = row.get("source_block_id") or row.get("source_block_name") or "UNKNOWN_BLOCK"
+        block = instance["logical_blocks"].setdefault(block_key, {
+            "source_block_id": row.get("source_block_id", ""),
+            "source_block_name": row.get("source_block_name", ""),
+            "ports": set(),
+            "line_ids": [],
+        })
+        if row.get("source_port"):
+            block["ports"].add(row.get("source_port"))
+        block["line_ids"].append(row.get("line_id", ""))
+        instance["line_ids"].append(row.get("line_id", ""))
+
+    result_instances = []
+    for instance in instances.values():
+        logical_blocks = []
+        for block in instance["logical_blocks"].values():
+            logical_blocks.append({
+                "source_block_id": block.get("source_block_id", ""),
+                "source_block_name": block.get("source_block_name", ""),
+                "ports": sorted(x for x in block.get("ports", set()) if x),
+                "line_ids": block.get("line_ids", []),
+            })
+        instance["logical_blocks"] = logical_blocks
+        result_instances.append(instance)
+
+    return {
+        "source": "input_workbook_sheet_structure",
+        "usage": "subagent 必须把同一 source_sheet_name 视为同一个物理器件实例；同 sheet 内多个 block_id/block_name 只表示该器件的逻辑块/端口视图。",
+        "physical_device_instances": result_instances,
+    }
+
+
+def shared_signal_key(row: Dict[str, Any]) -> str:
+    name = str(row.get("connection_name", "") or "").strip()
+    if name:
+        return f"NET:{name}"
+    base_connection = str(row.get("base_connection_id", "") or "").strip()
+    if base_connection:
+        return f"CONNECTION:{base_connection}"
+    return ""
+
+
+def endpoint_key(row: Dict[str, Any]) -> str:
+    return "|".join([
+        str(row.get("source_sheet_name") or row.get("output_sheet_name") or ""),
+        str(row.get("source_block_id") or row.get("source_block_name") or ""),
+        str(row.get("source_port") or ""),
+    ])
+
+
+def classify_signal_shape(row: Dict[str, Any], candidate_mapping: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    text = " ".join([
+        str(row.get("source_port", "")),
+        str(row.get("target_port", "")),
+        str(row.get("connection_name", "")),
+    ]).upper()
+    candidate_text = " ".join([
+        str(item.get("pin", ""))
+        for item in (candidate_mapping or {}).get("candidates", [])[:10]
+    ]).upper()
+    reasons = []
+    shape = "scalar"
+    if int(row.get("expansion_count", 1) or 1) > 1:
+        shape = "bus"
+        reasons.append("expansion_count > 1")
+    if re.search(r"\[[0-9]+:[0-9]+\]|\*[0-9]+|\bD\[[0-9]+", text):
+        shape = "bus"
+        reasons.append("bus notation in port/net")
+    if re.search(r"(_P\b|_N\b|\bDP\b|\bDN\b|\bP\b|\bN\b)", text):
+        shape = "differential"
+        reasons.append("P/N differential marker")
+    if re.search(r"\b(RFIN|RFOUT|DAC|ADC)\d*", text):
+        shape = "differential"
+        reasons.append("RF/DAC/ADC port commonly maps to P/N physical pins")
+    return {
+        "shape": shape,
+        "is_bus_or_differential": shape in {"bus", "differential"},
+        "reasons": reasons,
+    }
+
+
+def slim_candidate_mapping(candidate_mapping: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "line_id": candidate_mapping.get("line_id", ""),
+        "source_part_id": candidate_mapping.get("source_part_id", ""),
+        "resolved_part_id": candidate_mapping.get("resolved_part_id", ""),
+        "candidates": [
+            {
+                "pin": item.get("pin", ""),
+                "score": item.get("score", 0),
+                "basis": item.get("basis", []),
+            }
+            for item in candidate_mapping.get("candidates", [])
+        ],
+        "available_pins_count": len(candidate_mapping.get("available_pins", [])),
+        "available_pins_ref": "source_device_pins[source_part_id]",
+    }
+
+
+def slim_need_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "line_id": row.get("line_id", ""),
+        "reason": row.get("reason", ""),
+    }
+
+
+def build_pin_allocation_context(
+    normalized_connections: List[Dict[str, Any]],
+    candidates_by_id: Dict[str, Dict[str, Any]],
+) -> Dict[str, Any]:
+    """
+    给模型显式提供同一物理器件实例内的 pin 分配约束。
+
+    这里不预先选择 pin，只告诉模型哪些连接共享同一物理器件 pin 空间，
+    哪些连接可能因为同一网络/连接名而允许共享同一个 pin。
+    """
+    instances: Dict[str, Dict[str, Any]] = {}
+    shared_groups: Dict[str, Dict[str, Any]] = {}
+    endpoint_groups: Dict[str, Dict[str, Any]] = {}
+    for row in normalized_connections:
+        line_id = row.get("line_id", "")
+        sheet = row.get("source_sheet_name") or row.get("output_sheet_name") or "UNKNOWN_SHEET"
+        part_id = row.get("source_part_id", "")
+        instance_key = f"SHEET:{sheet}|PART:{part_id or 'UNKNOWN_PART'}"
+        candidate_mapping = candidates_by_id.get(line_id, {})
+        top_candidates = [
+            {
+                "pin": item.get("pin", ""),
+                "score": item.get("score", 0),
+                "basis": item.get("basis", []),
+            }
+            for item in candidate_mapping.get("candidates", [])[:5]
+        ]
+        instances.setdefault(instance_key, {
+            "physical_device_instance_id": instance_key,
+            "source_sheet_name": sheet,
+            "source_part_id": part_id,
+            "pin_space": "source_device_pins for this source_part_id",
+            "line_pin_domains": [],
+        })["line_pin_domains"].append({
+            "line_id": line_id,
+            "signal_shape": classify_signal_shape(row, candidate_mapping),
+            "source_block_id": row.get("source_block_id", ""),
+            "source_block_name": row.get("source_block_name", ""),
+            "source_port": row.get("source_port", ""),
+            "target_block_name": row.get("target_block_name", ""),
+            "target_port": row.get("target_port", ""),
+            "connection_id": row.get("connection_id", ""),
+            "connection_name": row.get("connection_name", ""),
+            "available_pins_count": len(candidate_mapping.get("available_pins", [])),
+            "top_candidates": top_candidates,
+        })
+
+        key = shared_signal_key(row)
+        if key:
+            group = shared_groups.setdefault(f"{instance_key}|{key}", {
+                "physical_device_instance_id": instance_key,
+                "shared_signal_key": key,
+                "reason": "相同 connection_name 或 base_connection_id，可能是同一物理信号/同一 pin 的多端口视图；是否共享 pin 仍需结合规则和语义判断。",
+                "line_ids": [],
+            })
+            group["line_ids"].append(line_id)
+
+        endpoint = endpoint_key(row)
+        if endpoint:
+            endpoint_group = endpoint_groups.setdefault(f"{instance_key}|ENDPOINT:{endpoint}", {
+                "physical_device_instance_id": instance_key,
+                "shared_signal_key": f"SOURCE_ENDPOINT:{endpoint}",
+                "source_sheet_name": sheet,
+                "source_block_id": row.get("source_block_id", ""),
+                "source_block_name": row.get("source_block_name", ""),
+                "source_port": row.get("source_port", ""),
+                "reason": "同一个源端端口连接到多个目标端口，表示扇出/多目标连接；通常可共享同一个源端 pin 和网络名。",
+                "line_ids": [],
+                "target_endpoints": set(),
+            })
+            endpoint_group["line_ids"].append(line_id)
+            endpoint_group["target_endpoints"].add(
+                f"{row.get('target_block_name', '')}:{row.get('target_port', '')}"
+            )
+
+    endpoint_shared_groups = []
+    for group in endpoint_groups.values():
+        group["target_endpoints"] = sorted(x for x in group.get("target_endpoints", set()) if x and x != ":")
+        if len(set(group.get("line_ids", []))) > 1 and len(group["target_endpoints"]) > 1:
+            endpoint_shared_groups.append(group)
+
+    return {
+        "pin_reuse_policy": [
+            "每个 line_id 必须先判断 signal_shape：scalar / bus / differential。",
+            "如果不是 bus/differential，且不是同一源端口扇出到多个目标端口，则同一个源端端口对应的 selected_pin 不应重复分配给其他不同语义连接。",
+            "如果同一个源端端口连接到多个目标器件端口，表示 fanout / multi-target connection，通常可以共享同一个 selected_pin 和 net_name。",
+            "bus/differential 可以在同一个 decision 中使用 selected_pins 表达多个物理 pin；不要把非 bus/differential 的普通标量连接硬拆成多个 pin。",
+            "只有当连接明确属于同一物理信号、同一网络名、同一 base_connection_id、同一源端口扇出、多端口别名，或用户/规则明确说明一个器件引脚暴露为多个端口时，才允许多个 line_id 选择同一个 pin。",
+            "如果两个不同语义的 line_id 竞争同一个 pin，不能硬分配；应选择更匹配的一条，另一条输出 unresolved 或说明冲突。",
+            "这个约束只在同一个 physical_device_instance_id 内生效；不同 sheet 表示不同物理器件实例，可以使用同名 pin。",
+        ],
+        "physical_device_pin_spaces": list(instances.values()),
+        "potential_shared_pin_groups": [
+            group for group in shared_groups.values()
+            if len(set(group.get("line_ids", []))) > 1
+        ] + endpoint_shared_groups,
+    }
+
+
 def render_subagent_task_plan(tasks: List[Dict[str, Any]], skipped_tasks: List[Dict[str, Any]] | None = None) -> str:
     skipped_tasks = skipped_tasks or []
     lines = [
@@ -521,11 +748,11 @@ def match_rule_sections(rule_blocks: List[Dict[str, Any]], group: Dict[str, Any]
     return matched[:limit]
 
 
-def render_prompt(task: Dict[str, Any]) -> str:
+def render_shared_prompt() -> str:
     lines = [
-        "# Context Group Model Resolution Task",
+        "# Subagent Model Resolution Task Prompt",
         "",
-        "你是当前 context_group 的硬件信号接口映射专家。只能分析本文件列出的 line_id。",
+        "你是当前 TASK JSON 的硬件信号接口映射专家。只能分析被分配的 task_json 中列出的 line_id。",
         "请按 prompts/semantic_mapping_resolver.md 的语义分析方法处理，优先使用链路族语义理解全局功能，再在链路约束下复用器件类型局部 pin 规则。",
         "本任务的结果必须回写给调用方指定的 JSON/JSONL；只在聊天回复中解释而不产出 mapping_decision 文件，视为未完成。",
         "",
@@ -541,12 +768,15 @@ def render_prompt(task: Dict[str, Any]) -> str:
         "8. 必须先阅读 task_json.diagram_link_context；它来自输入框图表/link_info/链路信息 sheet，用于判断链路归属、上下游角色、实例编号和特殊连接方式。",
         "9. 必须阅读 task_json.matched_rule_sections；它只是脚本召回的候选自然语言规则块，不能替代逐行语义判断。",
         "10. 必须阅读 task_json.link_family_profiles；它是同一 link_family 跨 subagent 共享的链路级语义上下文，用于借鉴拓扑、方向、实例索引和用户说明。",
-        "11. 借鉴 link_family_profiles 时，只能复用链路语义和分析方法，不能直接复制其他 line_id 或其他源端器件的 selected_pin。",
-        "12. 如果 task_json 中存在 link_family_summary/link_family_summaries，先用它们理解组内链路族、控制族、总线族和局部映射，再做单行 pin 选择。",
-        "13. 如果没有显式 link_info/link_family 数据，必须按 context_group 的源/目的器件类型、源Block名称、源Port 和 mapping_family 继续分析，不得要求用户必须补充链路表。",
-        "14. 输出前自检：输出 line_id 集合必须等于 task_json.line_ids；不得遗漏、重复或额外输出。",
-        "15. selected_pin/selected_pins 必须逐字来自入参 pin_info.json 中当前源端器件编码对应的 task_json.source_device_pins 或 candidate_mappings.available_pins；不能编造、改写、翻译、补全 pin，也不能使用其他器件的 pin。",
-        "16. 如果 task_json.source_device_pins 没有当前源端器件编码，或当前 line_id 的 available_pins 为空，必须输出 unresolved，并说明入参 pin_info 缺少该器件 pin 信息。",
+        "11. 必须阅读 task_json.sheet_device_context；同一个 source_sheet_name 表示同一个物理器件实例，sheet 内不同 block_id/block_name 是该器件的逻辑块/端口视图。",
+        "12. 必须阅读 task_json.pin_allocation_context；先判断每条连接是 scalar、bus 还是 differential；同一物理器件实例内同一个 pin 默认不能被多个不同语义 line_id 重复使用，除非同一源端口扇出、同一网络、多端口别名或用户规则明确允许。",
+        "13. 借鉴 link_family_profiles 时，只能复用链路语义和分析方法，不能直接复制其他 line_id 或其他源端器件的 selected_pin。",
+        "14. 如果 task_json 中存在 link_family_summaries，先用它们理解组内链路族、控制族、总线族和局部映射，再做单行 pin 选择。",
+        "15. 如果没有显式 link_info/link_family 数据，必须按 context_group 的源/目的器件类型、源Block名称、源Port 和 mapping_family 继续分析，不得要求用户必须补充链路表。",
+        "16. 输出前自检：输出 line_id 集合必须等于 task_json.line_ids；不得遗漏、重复或额外输出。",
+        "17. 输出前自检：同一个 physical_device_instance_id 内，除 pin_allocation_context.potential_shared_pin_groups 或用户规则允许外，不得让多个不同语义 line_id 选择同一个 selected_pin。",
+        "18. selected_pin/selected_pins 必须逐字来自入参 pin_info.json 中当前源端器件编码对应的 task_json.source_device_pins；不能编造、改写、翻译、补全 pin，也不能使用其他器件的 pin。candidate_mappings 只保留 top candidates，不承载完整 pin 列表。",
+        "19. 如果 task_json.source_device_pins 没有当前源端器件编码，或 source_device_pins 中没有可用 pin，必须输出 unresolved，并说明入参 pin_info 缺少该器件 pin 信息。",
         "",
         "## 输出格式",
         "",
@@ -566,7 +796,7 @@ def render_prompt(task: Dict[str, Any]) -> str:
         "",
         "## 输入文件",
         "",
-        f"- task_json: {task['task_json']}",
+        "- task_json: 由 subagent_task_plan.md/json 分配的 TASK_xxx.json",
         "",
     ]
     return "\n".join(lines)
@@ -583,6 +813,8 @@ def build_model_resolution_tasks(
     output_dir = ensure_dir(output_dir)
     cleanup_model_task_output_dir(output_dir)
     tasks_dir = ensure_dir(output_dir / "tasks")
+    shared_prompt_path = output_dir / "subagent_task_prompt.md"
+    shared_prompt_path.write_text(render_shared_prompt(), encoding="utf-8")
     normalized_by_id = load_by_line_id(normalized_path)
     candidates_by_id = load_by_line_id(candidates_path)
 
@@ -593,7 +825,6 @@ def build_model_resolution_tasks(
     skill_root = Path(__file__).resolve().parents[1]
     rules_path = skill_root / "rules" / "natural_language_mapping_rules_template.md"
     rules_text = rules_path.read_text(encoding="utf-8") if rules_path.exists() else ""
-    natural_language_rules = split_natural_language_rules(rules_text)
     rule_blocks = extract_rule_blocks(rules_text)
     needs_rows = list(iter_jsonl(needs_model_path))
     needs_by_id = {row["line_id"]: row for row in needs_rows}
@@ -641,11 +872,9 @@ def build_model_resolution_tasks(
             "task_id": file_stem,
             "task_display_name": task_display_name,
             "context_group": group,
+            "sheet_device_context": build_sheet_device_context(group_nc),
+            "pin_allocation_context": build_pin_allocation_context(group_nc, candidates_by_id),
             "diagram_link_context": build_diagram_link_context(group, group_nc),
-            "link_family_summary": {
-                family_id: link_family_summaries.get(family_id, {})
-                for family_id in (group.get("link_family_ids") or [group.get("link_family_id") or "LOCAL_DEVICE_MAPPING"])
-            },
             "link_family_summaries": {
                 family_id: link_family_summaries.get(family_id, {})
                 for family_id in (group.get("link_family_ids") or [group.get("link_family_id") or "LOCAL_DEVICE_MAPPING"])
@@ -656,11 +885,17 @@ def build_model_resolution_tasks(
             },
             "line_ids": line_ids,
             "normalized_connections": group_nc,
-            "candidate_mappings": [candidates_by_id.get(line_id, {"line_id": line_id, "candidates": []}) for line_id in line_ids],
-            "source_device_pins": source_pins_map,   # ← 关键修复：从 block_info_pin.json 读取
-            "natural_language_rules": natural_language_rules,
+            "candidate_mappings": [
+                slim_candidate_mapping(candidates_by_id.get(line_id, {"line_id": line_id, "candidates": []}))
+                for line_id in line_ids
+            ],
+            "source_device_pins": source_pins_map,
+            "rule_source": {
+                "file": str(rules_path),
+                "usage": "TASK JSON 只内嵌 matched_rule_sections；完整自然语言规则从该文件读取。",
+            },
             "matched_rule_sections": match_rule_sections(rule_blocks, group, group_nc),
-            "needs_model_resolution": [needs_by_id[line_id] for line_id in line_ids],
+            "needs_model_resolution": [slim_need_row(needs_by_id[line_id]) for line_id in line_ids],
             "required_output": {
                 "type": "json_array",
                 "schema": "schemas/mapping_decision.schema.json",
@@ -677,7 +912,7 @@ def build_model_resolution_tasks(
             "line_ids": line_ids,
             "line_count": len(line_ids),
             "task_json": str(task_json),
-            "prompt_file": str(tasks_dir / f"{file_stem}.prompt.md"),
+            "prompt_file": str(shared_prompt_path),
             "recommended_subagent": group.get("recommended_subagent", "semantic-mapping-subagent"),
             "readable_device_type": readable_device_type(group),
             "source_part_id": source_part_label(group),
@@ -700,7 +935,6 @@ def build_model_resolution_tasks(
             "link_family_profile_ids": list((group.get("link_family_ids") or [group.get("link_family_id") or "LOCAL_DEVICE_MAPPING"])),
         }
         task_info["task_goal"] = describe_subagent_task(task_info, group)
-        (tasks_dir / f"{file_stem}.prompt.md").write_text(render_prompt(task_info), encoding="utf-8")
         tasks.append(task_info)
 
     subagent_plan = {
@@ -724,6 +958,7 @@ def build_model_resolution_tasks(
         "skipped_line_count": sum(t["line_count"] for t in skipped_tasks),
         "subagent_task_plan_json": str(plan_json),
         "subagent_task_plan_md": str(plan_md),
+        "subagent_task_prompt_md": str(shared_prompt_path),
         "tasks_dir": str(tasks_dir),
         "tasks": [
             {

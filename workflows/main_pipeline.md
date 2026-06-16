@@ -104,26 +104,30 @@ intermediate/model_resolution_tasks/
 ├── manifest.json
 ├── subagent_task_plan.md
 ├── subagent_task_plan.json
+├── subagent_task_prompt.md
 └── tasks/
-    ├── TASK_器件类型_器件编码_链路范围_hash.json
-    └── TASK_器件类型_器件编码_链路范围_hash.prompt.md
+    └── TASK_器件类型_器件编码_链路范围_hash.json
 ```
 
 任务包包含：
 
 ```text
 1. 当前 context_group
-2. 当前 diagram_link_context
-3. 当前 link_family_profiles
-4. 当前 matched_rule_sections
-5. 当前 link_family_summary
-6. 当前组 normalized_connections
-7. 当前组 candidate_mappings 和 available_pins
-8. natural_language_mapping_rules_template.md 内容
-9. needs_model_resolution 原因
+2. 当前 sheet_device_context
+3. 当前 pin_allocation_context
+4. 当前 diagram_link_context
+5. 当前 link_family_profiles
+6. 当前 matched_rule_sections
+7. 当前 link_family_summaries
+8. 当前组 normalized_connections
+9. 当前组 candidate_mappings top candidates
+10. rule_source 指向 natural_language_mapping_rules_template.md
+11. needs_model_resolution 原因
 ```
 
 `link_family_profiles` 会把同一 link_family 的共享链路语义注入到所有相关 source_device subagent 中。它用于借鉴链路拓扑、方向、实例索引和用户说明，不用于脚本裁决 pin。
+
+`sheet_device_context` 会告诉 subagent：一个连接 sheet 表示一个物理器件实例，sheet 内不同 block_id/block_name 只是该器件的逻辑块/端口视图。`pin_allocation_context` 会告诉 subagent：先判断连接是 scalar、bus 还是 differential；同一物理器件实例内普通 scalar 的 pin 默认不可被不同语义 line_id 重复使用，除非同一源端口扇出到多个目标端口、同网、同 base_connection、多端口别名或用户规则明确允许。
 
 在真正启动 subagent 前，应先阅读本地持久化的 `subagent_task_plan.md`，确认每个 subagent/context group 的源端器件、组内链路族、目标上下文、line 数量和任务文件名。不要再因为同一个源端器件内部的链路族或目标不同而拆分 subagent。
 
@@ -174,6 +178,8 @@ output/signal_interface.xlsx
 如果模型阶段判断一条逻辑连接对应多个物理 pin，应在同一个 mapping decision 中输出 `selected_pins` 数组。渲染阶段会复制原始连接事实并把连线ID改为 `主连线ID#数字`，除连线ID和后 4 列外，前置字段不得变化。
 
 `原理图Pin脚` 只能逐字使用入参 `pin_info.json` 中当前源端器件编码对应的 pin 字符串。模型不得补全、改写、翻译、调整大小写或使用其他器件的 pin。
+
+同一物理器件实例内重复使用同一个 pin 时，必须有同网、同 base_connection、多端口别名或用户规则依据；否则应 unresolved 或在 validation 中暴露 warning。
 
 ## 5. 规则入口
 

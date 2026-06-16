@@ -272,25 +272,27 @@ intermediate/model_resolution_tasks/
 ├── manifest.json
 ├── subagent_task_plan.md
 ├── subagent_task_plan.json
+├── subagent_task_prompt.md
 └── tasks/
-    ├── TASK_01_SROC_302078562_MULTI_LINK_61889c68782d.json
-    └── TASK_01_SROC_302078562_MULTI_LINK_61889c68782d.prompt.md
+    └── TASK_01_SROC_302078562_MULTI_LINK_61889c68782d.json
 ```
 
 任务包包含：
 
 ```text
 1. context_group
-2. diagram_link_context
-3. link_family_profiles
-4. matched_rule_sections
-5. link_family_summary / link_family_summaries
-6. normalized_connections
-7. candidate_mappings
-8. source_device_pins
-9. natural_language_rules
-10. needs_model_resolution
-11. required_output
+2. sheet_device_context
+3. pin_allocation_context
+4. diagram_link_context
+5. link_family_profiles
+6. matched_rule_sections
+7. link_family_summaries
+8. normalized_connections
+9. candidate_mappings（只保留 top candidates，不重复完整 pin 列表）
+10. source_device_pins
+11. rule_source
+12. needs_model_resolution
+13. required_output
 ```
 
 `diagram_link_context` 是从输入框图表/link_info/链路信息 sheet 和逐行连接事实整理出的链路上下文，包含：
@@ -305,6 +307,25 @@ line_link_contexts
 ```
 
 subagent 必须先读它，用来判断链路归属、器件角色、实例编号和特殊连接方式。
+
+`sheet_device_context` 表达输入 workbook 的 sheet 语义：
+
+```text
+同一个 source_sheet_name = 一个物理器件实例
+同一个 sheet 内多个 source_block_id/source_block_name = 这个器件的逻辑块、功能块或端口视图
+```
+
+因此即使 block_id 和 block_name 不同，只要它们在同一个连接 sheet 中，并且对应同一个 source_part_id，模型也应把它们看作同一个物理器件实例的不同接口视图，而不是多个独立器件。
+
+`pin_allocation_context` 表达同一物理器件实例内的 pin 分配约束，包含：
+
+```text
+pin_reuse_policy
+physical_device_pin_spaces
+potential_shared_pin_groups
+```
+
+默认规则是：同一个 `physical_device_instance_id` 内，普通 scalar 连接的同一个物理 pin 只能分配给一个不同语义的 line_id。总线/差分需要先识别为 bus/differential，并用 `selected_pins` 表达多个物理 pin。只有相同源端口扇出到多个目标端口、相同网络名、相同 base_connection_id、多端口别名，或用户/规则明确说明一个器件引脚给多个端口时，才允许多个 line_id 共用同一个 pin 和网络名。不同 sheet 表示不同物理器件实例，因此可以使用相同 pin 名。
 
 `link_family_profiles` 是同一 link_family 跨 source_device subagent 共享的链路级上下文，包含：
 
@@ -366,9 +387,10 @@ TASK_03_TXVGA_47151290_RF_TX_CHAIN_98e63e8c1e3a.json
 3. line_id 不重复。
 4. selected_pin / selected_pins 必须存在于源端 pin 列表。
 5. selected_pin / selected_pins 必须属于当前 line_id 的源端器件编码对应的 pin 列表，而不是仅仅存在于任意器件 pin 列表。
-6. confidence 合法。
-7. 有 pin 时应有 net_name 或可生成网络名。
-8. 无 pin 时不得 High。
+6. 同一 physical_device_instance_id 内重复使用同一个 selected_pin 时，必须能被同一源端口扇出、同网、同 base_connection、多端口别名或用户规则解释；否则 validation 输出 warning。
+7. confidence 合法。
+8. 有 pin 时应有 net_name 或可生成网络名。
+9. 无 pin 时不得 High。
 ```
 
 ### script/render_template_sheets.py
@@ -423,7 +445,7 @@ selected_pins: ["PIN_P", "PIN_N"]
 
 ### prompts/context_group_subagent_instruction.md
 
-说明性 prompt，描述 `TASK_xxx.prompt.md` 的结构和 subagent 任务输入输出。真实任务以自动生成的 prompt 为准。
+说明性 prompt，描述共享 `subagent_task_prompt.md` 的结构和 subagent 任务输入输出。真实任务以自动生成的 prompt 为准。
 
 ## 6. rules 目录
 
@@ -545,9 +567,9 @@ task_dir/
 │       ├── manifest.json
 │       ├── subagent_task_plan.md
 │       ├── subagent_task_plan.json
+│       ├── subagent_task_prompt.md
 │       └── tasks/
-│           ├── TASK_xxx.json
-│           └── TASK_xxx.prompt.md
+│           └── TASK_xxx.json
 └── output/
     └── signal_interface.xlsx
 ```

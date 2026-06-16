@@ -11,10 +11,12 @@
 2. 当前 line_id 对应 candidate_mapping
 3. source_device_pins 中该 source_part_id 的 pin 列表
 4. context_group 的 link_family_id / link_family_source / analysis_strategy
-5. diagram_link_context 中当前组和逐行链路上下文
-6. link_family_profiles 中同类链路跨 subagent 的共享语义
-7. link_family_summary 中同类链路的全局摘要
-8. matched_rule_sections / natural_language_mapping_rules_template.md 中的自然语言规则
+5. sheet_device_context 中 sheet 到物理器件实例的解释
+6. pin_allocation_context 中同一物理器件实例的 pin 复用约束
+7. diagram_link_context 中当前组和逐行链路上下文
+8. link_family_profiles 中同类链路跨 subagent 的共享语义
+9. link_family_summaries 中同类链路的全局摘要
+10. matched_rule_sections / natural_language_mapping_rules_template.md 中的自然语言规则
 ```
 
 ## 判断顺序
@@ -23,6 +25,8 @@
 确认源端器件类型和可用 pin
   ↓
 确认目的端器件/电路描述
+  ↓
+确认当前 source_sheet_name 对应的物理器件实例和同实例内其他连接
   ↓
 判断是否有显式链路族或多个 link_contexts
   ↓
@@ -51,6 +55,8 @@
 `link_family_profiles` 只提供共享语义，不提供最终 pin 结论。subagent 可以借鉴同一 link_family 下其他器件或实例的分析方式，但必须回到当前 source_device_pins 和当前 line_id 独立选择 pin。
 
 selected_pin / selected_pins 必须逐字来自当前 source_part_id 对应的 source_device_pins。没有该 source_part_id 的 pin 列表时，不分析该器件 pin，直接 unresolved。
+
+同一个 physical_device_instance_id 内，同一个 selected_pin 默认只能给一个不同语义 line_id。只有同一网络、同一 base_connection、多端口别名或用户规则明确说明一个器件引脚给多个端口时，才允许复用。
 
 ## 输出
 
