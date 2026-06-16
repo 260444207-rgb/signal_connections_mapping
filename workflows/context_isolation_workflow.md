@@ -2,14 +2,16 @@
 
 ## 目标
 
-把待模型分析的连接按链路族来源、block_info 器件信息、对端器件信息、映射族和疑难状态切分为独立 context group，避免不同硬件语义互相污染。
+把待模型分析的连接按源端器件 pin 体系和疑难状态切分为独立 context group。链路族、对端器件、映射族不再作为硬切分维度，而是作为组内上下文传给 subagent。
 
 分析策略是：
 
 ```text
-以重复链路族为主分析单元
-以器件类型为局部规则复用单元
-没有链路级数据时，以器件上下文和 mapping_family 为兜底分析单元
+以源端器件类型为 subagent 分析单元
+链路族/链路级信息作为组内上下文
+同一 link_family 会生成共享 link_family_profiles，注入给相关 source_device subagent
+同一源端器件下的不同实例共享 pin 功能理解
+hard_case 单独隔离
 ```
 
 上下文隔离只影响模型分析，不影响最终输出分页。
@@ -33,16 +35,21 @@ semantic subagent resolution
 ## 隔离维度
 
 ```text
-source_device_signature: DEVICE_INFO:<source_part_id> 或 UNKNOWN_SOURCE_DEVICE_INFO
-target_device_signature: DEVICE_INFO:<target_part_id> 或 TARGET_CONTEXT:<目的Block名称/标识>
-link_family_id: RF_TX_CHAIN / FEEDBACK_CHAIN / PA_CONTROL_CHAIN / SPI_CONTROL_CHAIN / LOCAL_DEVICE_MAPPING ...
-link_family_source: explicit_link_info / inferred_from_connection / fallback_mapping_family / fallback_device_context
-analysis_strategy: link_family_first_then_device_template_reuse / mapping_family_first / device_type_pair_with_link_context
-mapping_family: RF_CHAIN / POWER_ENABLE / SPI_CTRL / GPIO_CTRL / DATA_BUS / UNKNOWN ...
-isolation_level: device_type_pair_and_mapping_family / hard_case
+source_device_signature: DEVICE_INFO:<source_part_id> 或 UNKNOWN_SOURCE:<sheet/block>
+isolation_level: source_device_context / hard_case
 ```
 
-`link_info` / `链路信息` sheet 是可选输入。没有显式链路族时，`build_analysis_context_groups` 仍会根据 block_info 器件信息、源/目的 Block、端口名、连线名推断映射族；若无法归入链路族，则进入 `LOCAL_DEVICE_MAPPING` 并按器件上下文启动 subagent。
+以下字段作为 context_group 内部上下文，不参与硬切分：
+
+```text
+link_family_ids: RF_TX_CHAIN / FEEDBACK_CHAIN / PA_CONTROL_CHAIN / SPI_CONTROL_CHAIN / LOCAL_DEVICE_MAPPING ...
+link_family_sources: explicit_link_info / inferred_from_connection / fallback_mapping_family / fallback_device_context
+target_device_signatures: DEVICE_INFO:<target_part_id> 或 TARGET_CONTEXT:<目的Block名称/标识>
+mapping_families: RF_CHAIN / POWER_ENABLE / SPI_CTRL / GPIO_CTRL / DATA_BUS / UNKNOWN ...
+link_contexts / link_instance_ids / user_link_infos / device_role_infos
+```
+
+`link_info` / `链路信息` sheet 是可选输入。它只增强当前源端器件 subagent 的链路上下文，不会单独触发新的 subagent 分组。没有显式链路族时，系统仍会根据 block_info 器件信息、源/目的 Block、端口名、连线名推断映射族；若无法归入链路族，则进入 `LOCAL_DEVICE_MAPPING` 作为组内上下文。
 
 ## subagent
 
@@ -62,12 +69,17 @@ intermediate/model_resolution_tasks/CTX_xxx.json
 
 ```text
 1. context_group
-2. link_family_summary
-3. normalized_connections
-4. candidate_mappings.available_pins
-5. natural_language_mapping_rules_template.md
-6. needs_model_resolution 原因
+2. diagram_link_context
+3. link_family_profiles
+4. matched_rule_sections
+5. link_family_summary
+6. normalized_connections
+7. candidate_mappings.available_pins
+8. natural_language_mapping_rules_template.md
+9. needs_model_resolution 原因
 ```
+
+`link_family_profiles` 是跨 subagent 共享的链路语义上下文。它让同一 link_family 下的 SROC、TXVGA、91fbsw 等不同源端器件 subagent 借鉴拓扑、方向、实例索引、差分/总线展开规律和用户说明，但不能直接复制其他 line_id 或其他源端器件的 selected_pin。
 
 ## 输出约束
 

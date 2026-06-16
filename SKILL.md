@@ -5,6 +5,32 @@ description: 基于输入框图 Excel、pin_info.json 和自然语言硬件规�
 
 # OpenClaw Signal Mapping Layered Skill
 
+## 最重要的执行契约
+
+当用户要求“生成信号接口列表”“根据框图和 pin_info 推出映射”“调用本 skill 输出结果”时，默认目标是生成经过语义分析的正式 Excel，而不是只生成脚本兜底表。
+
+必须遵守：
+
+```text
+1. stage=all 只执行脚本路径，不会自动调用语义 subagent。
+2. 如果 stage=all 后大部分 decision 是 unresolved，不能宣称最终结果已完成。
+3. 完整语义输出必须执行：
+   prepare/model_tasks
+     -> 阅读 global_subagent_plan.md/json
+     -> 按 context_group 启动或等价执行隔离语义分析
+     -> 写入 intermediate/model_resolved_decisions.jsonl
+     -> stage=finish
+     -> 检查 validation_report.json。
+4. 如果环境允许并且当前用户请求允许使用 subagent，必须按 global_subagent_plan 启动隔离 subagent；一个 context_group 代表一个源端器件 pin 体系，不要再按链路族/信号族/目标上下文重新拆 subagent。
+5. 如果环境不能启动 subagent，执行模型必须自己逐个处理 CTX_xxx.json，并明确说明没有使用外部 subagent。
+```
+
+完整步骤见：
+
+```text
+RUNBOOK.md
+```
+
 ## 核心目标
 
 根据输入框图连接事实、源端器件 pin 列表、自然语言硬件规则，生成：
@@ -44,7 +70,7 @@ render_template_sheets
 
 脚本负责事实整理、候选生成、任务隔离、校验和渲染。
 
-模型负责根据自然语言规则和 pin 列表做语义判断。重复主链路采用 link-family-first：先理解链路族全局语义，再在链路约束下复用器件类型局部 pin 规则。没有 `link_info` / `链路信息` 或没有显式 `link_family` 时，仍按 block_info 器件信息、源/目的 Block、端口名和 mapping_family 启动 subagent。
+模型负责根据框图表链路上下文、自然语言规则和 pin 列表做语义判断。context_group 按源端器件 pin 体系分组；链路族、信号族、目标上下文作为组内分析上下文传给 subagent，并显式写入任务包的 `diagram_link_context`。重复主链路采用 link-family-first：先理解链路族全局语义，再在链路约束下复用器件类型局部 pin 规则。脚本还会生成 `link_family_profiles`，把同一 link_family 跨 source_device subagent 的链路拓扑、实例、用户说明和角色信息共享给相关 CTX；它只用于借鉴链路语义，不做 pin 裁决。没有 `link_info` / `链路信息` 或没有显式 `link_family` 时，仍按 block_info 器件信息、源/目的 Block、端口名和 mapping_family 在同一个源端器件组内分析。
 
 ## 必须遵守
 
@@ -57,6 +83,12 @@ render_template_sheets
 7. 一条逻辑连接对应多个物理 pin 时，模型输出 `selected_pins` 数组，渲染阶段按 `主连线ID#数字` 展开。
 
 ## 关键文件
+
+完整语义生成 runbook：
+
+```text
+RUNBOOK.md
+```
 
 结构说明：
 
@@ -83,7 +115,17 @@ rules/natural_language_mapping_rules_template.md
 推荐列：链路类型 / 链路编号 / 器件Sheet / 用户标识的链路信息 / 器件角色说明 / 相关连线ID
 ```
 
-该 sheet 是可选增强信息，不是必填输入。没有链路级数据时，context_group 会使用 `link_family_source=fallback_device_context` 或 `fallback_mapping_family`，subagent 按器件类型和映射族继续分析。
+该 sheet 是可选增强信息，不是必填输入。它只作为对应源端器件 subagent 的上下文，不会单独触发新的 context_group。没有链路级数据时，context_group 会使用 `link_family_source=fallback_device_context` 或 `fallback_mapping_family` 作为组内上下文，subagent 按器件类型和映射族继续分析。
+
+导出的每个 `CTX_xxx.json` 必须包含：
+
+```text
+diagram_link_context
+link_family_profiles
+matched_rule_sections
+```
+
+`diagram_link_context` 把框图信息表中的链路信息整理为当前 context_group 的模型上下文，包括链路族、链路编号、用户链路说明、器件角色说明、相关 sheet 和逐行 line_id 的链路上下文。`link_family_profiles` 是同一 link_family 跨多个 source_device subagent 共享的链路级上下文，用于借鉴拓扑、方向、实例索引、差分/总线展开规律和用户说明；不得直接复制其他 line_id 或其他源端器件的 selected_pin。`matched_rule_sections` 是脚本召回的候选自然语言规则块。subagent 必须先阅读它们。
 
 自然语言规则分为：
 
@@ -93,6 +135,20 @@ rules/natural_language_mapping_rules_template.md
 器件级规则：单个器件 code/料号下的 pin 功能
 通用信号规则：SPI、差分、电源、总线等通用语义
 ```
+
+规则模板可以用简单自然语言 RULE 块做召回索引：
+
+```text
+### RULE: <规则ID> <简短名称>
+适用条件：
+源端器件：...
+链路类型：...
+典型端口：...
+规则摘要：
+...
+```
+
+脚本只把相关 RULE 块召回到 `matched_rule_sections`，不做规则裁决；最终仍由 subagent 结合框图链路上下文和 pin 列表逐条判断。
 
 语义模型 prompt：
 
@@ -131,6 +187,8 @@ script/generate_net_name.py   ← 华为规范网络命名生成（独立模块�
 ```
 
 ## 阶段命令
+
+注意：下面的 `all` 只适合冒烟验证，不适合作为正式语义输出。正式输出请按 `RUNBOOK.md` 执行 `model_tasks -> 语义分析 -> finish`。
 
 准备中间数据：
 

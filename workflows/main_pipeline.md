@@ -61,18 +61,25 @@ render_template_sheets
 
 ### build_analysis_context_groups
 
-按 `link_family_id`、`link_family_source`、源端 `source_part_id`、目的端 `target_part_id`、映射族、hard-case 状态隔离模型上下文，生成 `analysis_context_groups.json`。
+按源端 `source_part_id` 对应的器件 pin 体系和 hard-case 状态隔离模型上下文，生成 `analysis_context_groups.json`。
 
-`link_family_source` 用于标识当前组的链路来源：
+硬分组维度：
 
 ```text
-explicit_link_info: 来自 link_info / 链路信息 sheet
-inferred_from_connection: 从连接文本推断出链路族
-fallback_mapping_family: 没有链路族，按 RF/SPI/POWER/CLOCK 等映射族兜底
-fallback_device_context: 没有链路族和明确映射族，按器件上下文兜底
+source_device_signature
+isolation_level
 ```
 
-器件类型签名只使用 block_info 的器件信息；源Block名称和 Port 仅用于模型语义判断。
+组内上下文字段：
+
+```text
+link_family_ids / link_family_sources
+mapping_families
+target_device_signatures
+link_contexts / link_instance_ids / user_link_infos / device_role_infos
+```
+
+器件类型签名只使用 block_info 的器件信息；源Block名称和 Port 仅用于模型语义判断。链路族、目标上下文和映射族只作为同一个源端器件 subagent 的分析上下文，不再作为重新起 subagent 的理由。
 
 对重复主链路，subagent 必须先按链路族理解全局功能、方向、上下游和索引关系，再在该链路语义约束下复用器件类型局部 pin 规则。
 
@@ -103,14 +110,19 @@ intermediate/model_resolution_tasks/
 
 ```text
 1. 当前 context_group
-2. 当前 link_family_summary
-3. 当前组 normalized_connections
-4. 当前组 candidate_mappings 和 available_pins
-5. natural_language_mapping_rules_template.md 内容
-6. needs_model_resolution 原因
+2. 当前 diagram_link_context
+3. 当前 link_family_profiles
+4. 当前 matched_rule_sections
+5. 当前 link_family_summary
+6. 当前组 normalized_connections
+7. 当前组 candidate_mappings 和 available_pins
+8. natural_language_mapping_rules_template.md 内容
+9. needs_model_resolution 原因
 ```
 
-在真正启动 subagent 前，应先阅读 `global_subagent_plan.md`，确认每个 subagent/context group 的任务目标、链路族、源/目的器件上下文和 line 数量。
+`link_family_profiles` 会把同一 link_family 的共享链路语义注入到所有相关 source_device subagent 中。它用于借鉴链路拓扑、方向、实例索引和用户说明，不用于脚本裁决 pin。
+
+在真正启动 subagent 前，应先阅读 `global_subagent_plan.md`，确认每个 subagent/context group 的源端器件、组内链路族、目标上下文和 line 数量。不要再因为同一个源端器件内部的链路族或目标不同而拆分 subagent。
 
 ### semantic subagent resolution
 

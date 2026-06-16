@@ -1,62 +1,84 @@
-# 器件类型上下文隔离规则
+# 源端器件上下文隔离规则
 
-## 1. 强约束
-
-1. 不同源端器件类型签名不得放入同一个模型分析上下文。
-2. 不同对端器件信息或对端上下文签名不得放入同一个模型分析上下文。
-3. 不同映射族不得放入同一个语义分析上下文。
-4. 主业务重复链路必须标记 link_family_id，subagent 先按链路族理解全局语义，再复用器件类型局部规则。
-5. 同类型不同实例可以共享一个 subagent，用于语义映射分析。
-6. 疑难连接必须进入 semantic-hard-case-subagent 单独分析。
-7. subagent 的隔离只影响模型分析上下文，不影响最终输出分页。
-8. 最终输出分页仍然严格按照输入 Excel 原始 sheet。
-
-## 2. 隔离优先级
+## 1. 核心定义
 
 ```text
-hard_case
-  > link_family_id
-  > mapping_family
-  > source_device_signature + target_device_signature
-  > device_category 兜底
+context_group = 同一个源端器件 pin 体系下的一组待分析连接
 ```
 
-如果一个 line_id 被标记为 hard_case，应从普通 context_group 中剥离，进入 semantic-hard-case-subagent。
+最终 `selected_pin` 是从源端器件 pin 列表里选择的，所以 context_group 的硬边界必须围绕源端器件，而不是围绕链路族、目标器件或信号族。
 
-器件类型签名直接使用 block_info 中的器件信息，不再根据框图标识、sheet 名或 block 名称推断器件类型。例如：
+## 2. 硬分组维度
+
+只使用以下字段做硬分组：
 
 ```text
-txvga0 / txvga1 在 block_info 中都对应 47151290 -> DEVICE_INFO:47151290
-91fbsw0 / 91fbsw1 在 block_info 中都对应 47140609-001 -> DEVICE_INFO:47140609-001
-源端 block_info 缺失时 -> UNKNOWN_SOURCE_DEVICE_INFO
-目的端 block_info 缺失时 -> TARGET_CONTEXT:<目的Block名称/标识>
+source_device_signature
+isolation_level
 ```
 
-源Block名称、目的Block名称、源Port、目的Port 只用于模型语义分析。目的端不在 block_info 中时，目的Block名称/标识只作为上下文隔离签名，不作为器件类型或 pin catalog key。
-
-链路族优先规则：
+规则：
 
 ```text
-1. 当多个连接实例具有相同或高度相似的器件序列、端口序列、方向和拓扑时，必须构建 link_family_id。
-2. 对重复链路，不得简单按器件类型孤立分析。
-3. 重复链路应先由 semantic-mapping-subagent 理解代表链路的整体功能、方向、索引和 P/N 传播。
-4. 器件类型局部规则只能在链路族语义约束下使用。
-5. 若某条连接与链路族模式不一致，应从普通语义分析中标记为 hard case 或 unresolved。
-6. link_family_id 只影响分析上下文，不影响最终输出分页。
+1. source_part_id 存在时，source_device_signature = DEVICE_INFO:<source_part_id>。
+2. 同一料号的不同实例必须放在同一个普通 context_group 中，例如 txvga0/txvga1/txvga2。
+3. source_part_id 缺失时，使用 UNKNOWN_SOURCE:<sheet/block> 隔离未知源端，避免所有未知器件混在一起。
+4. hard_case 必须单独隔离，不与普通连接混组。
 ```
 
-## 3. 推荐 subagent
+## 3. 组内上下文
+
+以下信息只作为组内上下文，不参与硬切分：
+
+```text
+link_family_ids
+link_family_sources
+mapping_families
+target_device_signatures
+link_contexts
+link_instance_ids
+user_link_infos
+device_role_infos
+source_device_instances
+target_device_instances
+```
+
+含义：
+
+```text
+1. link_family_ids 告诉 subagent 当前源端器件参与了哪些链路族。
+2. mapping_families 告诉 subagent 当前源端器件下有哪些信号族。
+3. target_device_signatures 告诉 subagent 当前源端器件连接到了哪些目标上下文。
+4. link_contexts / user_link_infos / device_role_infos 提供用户标注的链路语义。
+```
+
+这些字段帮助 subagent 逐条判断连接作用，但不能导致重新起一个 subagent。
+
+## 4. 分析原则
+
+```text
+1. subagent 先理解当前 source_device_signature 的 pin 列表和器件级 pin 功能。
+2. 再阅读组内 link_family_ids、mapping_families、target_device_signatures 和 link_contexts。
+3. 对每条 line_id，结合当前连接的源/目的端口、方向、网络名、链路上下文独立判断。
+4. 同类型不同实例可以共享 pin 功能理解，但不能共享实例编号、网络名或链路归属结论。
+5. 信息不足时输出 unresolved，不得硬猜。
+```
+
+## 5. 禁止行为
+
+```text
+1. 禁止将不同 source_device_signature 的普通连接放入同一个 context_group。
+2. 禁止因为 link_family_id 不同而把同一个源端器件拆成多个普通 subagent。
+3. 禁止因为 target_device_signature 不同而把同一个源端器件拆成多个普通 subagent。
+4. 禁止因为 mapping_family 不同而把同一个源端器件拆成多个普通 subagent。
+5. 禁止使用 context_group_id、link_family_id、mapping_family 生成输出 sheet。
+6. 禁止让 subagent 修改 output_sheet_name/source_sheet_name 或前 9 列连接事实。
+7. 禁止让 subagent 输出不属于当前 context_group 的 line_id。
+```
+
+## 6. 推荐 subagent
 
 | 类型 | 说明 |
 |---|---|
-| semantic-mapping-subagent | 在同一隔离上下文内做语义映射分析 |
+| semantic-mapping-subagent | 分析同一源端器件 pin 体系下的普通连接 |
 | semantic-hard-case-subagent | 处理无候选、冲突、校验失败等疑难项 |
-
-## 4. 禁止行为
-
-1. 禁止将不同源端器件类型签名混在同一个模型上下文中。
-2. 禁止将不同对端器件信息或对端上下文签名混在同一个模型上下文中。
-3. 禁止将 RF_CHAIN / CLOCK_TREE / SPI_CTRL / POWER_ENABLE 等不同映射族混在同一个语义分析上下文中。
-4. 禁止使用 context_group_id 作为输出 sheet 名。
-5. 禁止让 subagent 修改 output_sheet_name。
-6. 禁止让 subagent 输出不属于当前 context_group 的 line_id。

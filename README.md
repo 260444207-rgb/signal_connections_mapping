@@ -8,6 +8,19 @@
 STRUCTURE.md
 ```
 
+完整语义生成步骤见：
+
+```text
+RUNBOOK.md
+```
+
+关键提醒：
+
+```text
+stage=all 只做脚本冒烟验证，不会自动调用语义 subagent。
+正式信号接口列表必须经过 model_tasks -> 语义分析 -> finish。
+```
+
 ## 主流程
 
 ```text
@@ -18,17 +31,17 @@ STRUCTURE.md
    按 block_info 中的器件 code/料号，从 pin_info.json 取源端 pin 列表并生成候选。
 
 3. build_analysis_context_groups
-   按链路族来源、block_info 器件信息、对端器件信息、映射族、hard-case 状态隔离模型上下文。
-   没有链路级数据时，自动按器件类型和映射族兜底启动 subagent。
+   按源端器件 pin 体系和 hard-case 状态隔离模型上下文。
+   链路族、对端器件、映射族作为组内上下文传给 subagent，不再作为硬切分维度。
 
 4. pre_resolve_candidates
    仅做轻量预裁决：候选分数高且明显领先时自动输出，其余进入模型分析。
 
 5. build_model_resolution_tasks
-   为每个 context_group 导出隔离 subagent 任务包。
+   为每个 context_group 导出隔离 subagent 任务包，并把同一 link_family 的共享链路语义整理为 link_family_profiles。
 
 6. semantic subagent resolution
-   模型读取任务包，结合自然语言规则和 pin 列表做语义映射。
+   模型读取任务包，结合框图表链路上下文、自然语言规则和 pin 列表做语义映射。
 
 7. merge_decisions / validate_mapping / render_template_sheets
    合并、校验并渲染 output/signal_interface.xlsx。
@@ -59,6 +72,18 @@ prompts/semantic_mapping_resolver.md
 
 不要把复杂硬件语义强行写成脚本正则。脚本只负责流程与数据约束；信号作用判断交给隔离模型上下文。
 
+规则模板可以使用轻量 RULE 块：
+
+```text
+### RULE: SROC_PA_CONTROL SROC 功放/前端控制
+适用条件：
+源端器件：SROC / 0302078562
+链路类型：PA_CONTROL_CHAIN
+典型端口：PA_SW0, FEM_TDDSW00
+```
+
+脚本只会把可能相关的 RULE 块召回到 `matched_rule_sections`，不会根据规则块直接裁决 pin。
+
 subagent 分析优先级：
 
 ```text
@@ -83,11 +108,21 @@ subagent 分析优先级：
 相关连线ID
 ```
 
-其中 `链路类型` 相同表示同一个 link family，`链路编号` 表示一条具体链路，`器件Sheet` 写这条链路涉及的器件 sheet 名，`器件角色说明` 用自然语言描述同一个 sheet 在不同链路里的角色。`相关连线ID` 是可选列，只在需要精确约束时填写；多个值可用逗号、分号或顿号分隔，连线 ID 也可以写成 `sheet:连线ID`。
+其中 `链路类型` 相同表示同一个 link family，`链路编号` 表示一条具体链路，`器件Sheet` 写这条链路涉及的器件 sheet 名，`器件角色说明` 用自然语言描述同一个 sheet 在不同链路里的角色。`相关连线ID` 是可选列，只在需要精确约束时填写；多个值可用逗号、分号或顿号分隔，连线 ID 也可以写成 `sheet:连线ID`。这些链路信息会作为对应源端器件 subagent 的上下文，不会单独触发新的 subagent 分组。
 
 该 sheet 会被原样保留，不参与最终 13 列重建。
 
 不提供 `link_info` / `链路信息` 时流程仍然正常工作：系统会根据 block_info 的器件信息、源/目的 Block、端口名、连线名推断 mapping_family，并按器件上下文生成 subagent 任务。
+
+导出 `model_tasks` 时，框图信息表中的链路信息会被整理到每个 `CTX_xxx.json` 的：
+
+```text
+diagram_link_context
+link_family_profiles
+matched_rule_sections
+```
+
+`diagram_link_context` 包含组内链路族、链路编号、用户链路说明、器件角色说明、相关 sheet、逐行 line_id 的链路上下文。`link_family_profiles` 包含同一 link_family 跨 source_device subagent 的共享链路语义、涉及器件、链路实例、用户说明和代表性 line 示例；它用于借鉴链路逻辑，不能直接复制其他 line_id 的 pin 结论。`matched_rule_sections` 包含脚本召回的候选自然语言规则块。subagent 必须先读它们，再做 pin 映射判断。
 
 导出 `model_tasks` 时会先生成全局任务规划：
 
@@ -96,7 +131,7 @@ intermediate/model_resolution_tasks/global_subagent_plan.md
 intermediate/model_resolution_tasks/global_subagent_plan.json
 ```
 
-这里会列出每个 subagent/context group 要处理的 link family、link_family_source、器件上下文、line 数量和任务目标。`link_family_source=fallback_device_context` 或 `fallback_mapping_family` 表示没有显式链路级数据，当前任务按器件/映射族兜底分析。
+这里会列出每个 subagent/context group 要处理的源端器件、组内 link families、link_family_source、目标上下文、line 数量和任务目标。`link_family_source=fallback_device_context` 或 `fallback_mapping_family` 表示没有显式链路级数据，当前任务在源端器件组内按器件/映射族兜底分析。
 
 ## 输出约束
 
@@ -137,6 +172,17 @@ output/signal_interface.xlsx
 
 ## 常用命令
 
+正式生成推荐顺序：
+
+```text
+1. 运行 model_tasks，生成 global_subagent_plan 和 CTX_xxx.json。
+2. 阅读 global_subagent_plan.md/json，按 context_group 规划 subagent 批次。
+3. 让 subagent 分别读取分配到的 CTX_xxx.json，先看 diagram_link_context 和 link_family_profiles，再输出 batch JSONL。
+4. 合并 batch JSONL 为 intermediate/model_resolved_decisions.jsonl。
+5. 运行 finish，输出 output/signal_interface.xlsx。
+6. 检查 validation_report.json 和 unresolved 列表。
+```
+
 准备中间数据：
 
 ```bash
@@ -175,7 +221,7 @@ python script/run_pipeline.py \
   --stage finish
 ```
 
-单次脚本验证：
+单次脚本冒烟验证：
 
 ```bash
 python script/run_pipeline.py \
@@ -187,4 +233,4 @@ python script/run_pipeline.py \
   --stage all
 ```
 
-`all` 只执行脚本路径，不会自动调用真实 subagent；未解决项会保留为 `unresolved`。
+`all` 只执行脚本路径，不会自动调用真实 subagent；未解决项会保留为 `unresolved`。如果用户要的是正式语义结果，不要停在 `all`。

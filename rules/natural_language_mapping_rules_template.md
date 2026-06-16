@@ -26,6 +26,170 @@
 
 ---
 
+## 规则块索引
+
+规则块用于脚本做轻量召回。格式保持自然语言，但标题必须使用：
+
+```text
+### RULE: <规则ID> <简短名称>
+```
+
+规则块中的“适用条件”只用于召回候选规则，不表示脚本可以直接裁决。最终是否使用该规则，仍由 subagent 结合框图连接、链路上下文、源端 pin 列表逐条判断。
+
+### RULE: FBSW_FEEDBACK_SWITCH 反馈九选一开关映射
+
+适用条件：
+源端器件：反馈九选一开关 / 47140609-001 / 91fbsw
+链路类型：FEEDBACK_CHAIN
+典型端口：FB00, FB01, FB02, FB03, FB04, FB05, FB06, FB07, CH0, SW_V1, SW_V2, SW_V3, VCC
+
+规则摘要：
+FB00~FB07 是九选一开关分路 RF 输入端，按顺序映射 RF1~RF8。
+CHx 是公共通道/合路端，优先映射 RFC，不得按 CH 数字映射到 RFx。
+SW_V1/SW_V2/SW_V3 是控制端口，映射同名 pin。
+VCC/VDD_5V0 等供电端口映射到 VCC。
+
+### RULE: SROC_FEEDBACK_CONTROL SROC 反馈链路控制
+
+适用条件：
+源端器件：SROC / SROC城堡板 / 0302078562 / 302078562
+链路类型：FEEDBACK_CHAIN
+典型端口：SP9T0_FBV0, SP9T0_FBV1, SP9T0_FBV2, ADC_FB00
+典型目标：反馈九选一开关, balun, 功放模组
+
+规则摘要：
+SP9T0_FBV0/1/2 连接反馈九选一开关 SW_V1/SW_V2/SW_V3 时，分别映射 FB_SW0/FB_SW1/FB_SW2。
+ADC_FB00 连接反馈九选一开关 CH0 时，映射 RX_BYPASS0。
+ADC_FB00 或 ADC32 连接 balun out 时若缺少 AFE 组号，需要 unresolved。
+
+### RULE: SROC_PA_CONTROL SROC 功放/前端控制
+
+适用条件：
+源端器件：SROC / SROC城堡板 / 0302078562 / 302078562
+链路类型：PA_CONTROL_CHAIN
+典型端口：PA_SW0, FEM_TDDSW00, FEM_RXPD00, FEM_RXBY00, FEM_RXBY01, FEM_RXBY02, FEM_RXBY03
+典型目标：功放模组, PA_SW_AB, SW_CTRL_CHAB, SWN_PD_RXAB
+
+规则摘要：
+PA_SW0 连接功放模组 PA_SW_AB 时，映射 PA_PD_SW0。
+FEM_TDDSW00 连接 SW_CTRL_CHAB 时，映射 TRX_TDD_SW0。
+FEM_RXPD00 连接 SWN_PD_RXAB 时，需要按连接顺序或目标实例区分 LNA_PD_SW0/LNA_PD_SW1。
+FEM_RXBY00~FEM_RXBY03 分别映射 RX_BYPASS0~RX_BYPASS3。
+
+### RULE: SROC_TXVGA_CONTROL_AND_AFE SROC 到 TXVGA 控制与 AFE
+
+适用条件：
+源端器件：SROC / SROC城堡板 / 0302078562 / 302078562
+链路类型：RF_TX_CHAIN
+典型端口：TX_SW0, TX_SW1, DAC00, DAC01, DAC02, DAC03, DAC04, DAC05, DAC06, DAC07
+典型目标：TXVGA, TX VGA, RFIN, EN_CHA, EN_CHB
+
+规则摘要：
+TX_SW0 控制 TXVGA00/TXVGA01 的 EN_CHA/EN_CHB，映射 TX_PD_SW0。
+TX_SW1 控制 TXVGA02/TXVGA03 的 EN_CHA/EN_CHB，映射 TX_PD_SW1。
+DAC00~DAC07 到 TXVGA RFIN/default 输入时，是 TX AFE 差分输出，映射对应 TX_AFE0_xx_P/N。
+
+### RULE: SROC_SPI_AMC7964 SROC 到 AMC7964 SPI
+
+适用条件：
+源端器件：SROC / SROC城堡板 / 0302078562 / 302078562
+链路类型：SPI_CONTROL_CHAIN
+映射族：SPI_CTRL
+典型端口：SPI
+典型目标：AMC7964
+
+规则摘要：
+SROC 源Port SPI 连接 AMC7964_00-04/05/06/07 的 SPI 时，使用 HAC_SPI1 总线。
+AMC7964_00-04 对应 HAC_SPI1_CS0。
+AMC7964_00-05 对应 HAC_SPI1_CLK。
+AMC7964_00-06 对应 HAC_SPI1_DIO。
+AMC7964_00-07 对应 HAC_SPI1_DI。
+AMC7964_00-03 当前待确认，不能硬套。
+
+### RULE: SROC_DRIVER_CONTROL SROC 到集成驱动控制
+
+适用条件：
+源端器件：SROC / SROC城堡板 / 0302078562 / 302078562
+链路类型：SROC_DRIVER_CONTROL_CHAIN
+典型端口：SW, GPIO, SIO
+典型目标：集成驱动0, 集成驱动1, PWRSAVE, ALERT, IN_A-D
+
+规则摘要：
+SROC SW 连接集成驱动0/1 PWRSAVE 时，分别映射 HBF_PWR_SW0/HBF_PWR_SW1。
+GPIO 连接集成驱动0/1 ALERT 时，分别映射 COM_PA_OFF1/COM_PA_OFF2。
+SIO 连接集成驱动0/1 IN_A-D 时，分别映射 HBF_IO_1/HBF_IO_2。
+
+### RULE: SROC_CAL_SWITCH SROC 校准开关
+
+适用条件：
+源端器件：SROC / SROC城堡板 / 0302078562 / 302078562
+链路类型：CAL_SWITCH_CHAIN
+典型端口：SW
+典型目标：TXCAL_1, RXCAL_1, SW-SROC
+
+规则摘要：
+SROC SW 连接 TXCAL_1 的 SW-SROC 时，映射 CAL_SW_11 和 CAL_SW_12。
+SROC SW 连接 RXCAL_1 的 SW-SROC 时，映射 CAL_SW_15 和 CAL_SW_16。
+一条逻辑控制连接对应两个物理 pin，应使用 selected_pins。
+
+### RULE: SROC_POWER_NET SROC 电源网络
+
+适用条件：
+源端器件：SROC / SROC城堡板 / 0302078562 / 302078562
+链路类型：POWER_CHAIN
+映射族：POWER_ENABLE
+典型端口：VDD_0V65_PMU_SROC0_AVS_40A, VDD_1V8_TRX_DVDD
+
+规则摘要：
+SROC 电源网络在既有表中不映射到 SROC 器件 pin，原理图Pin脚留空，置信度 Low，网络命名按电源网络名处理。
+
+### RULE: TXVGA_RF_POWER_ENABLE TXVGA 射频/供电/使能
+
+适用条件：
+源端器件：TXVGA / TX VGA / 47151290
+链路类型：RF_TX_CHAIN, POWER_CHAIN
+典型端口：RFIN0, RFIN1, RFOUT0, RFOUT1, EN_CHA, EN_CHB, VDD_2V5, VDD_3V3
+典型目标：SROC, 功放模组, 比邻星, 天狼星, PMU, VOUT
+
+规则摘要：
+RFIN0/RFIN1 是通道 0/1 射频差分输入，映射对应 CH0/CH1 RF_IN P/N。
+RFOUT0/RFOUT1 是通道 0/1 射频输出，映射对应 CH0/CH1 RF_OUT。
+EN_CHA/EN_CHB 分别映射 EN_CH0/EN_CHA、EN_CH1/EN_CHB。
+VDD_2V5 对应 VCC1 类 pin，VDD_3V3 对应 VCC2 类 pin；目标端为 PMU/比邻星/天狼星/VOUT 时表示给 TXVGA 供电。
+
+### RULE: GENERAL_SPI 通用 SPI
+
+适用条件：
+映射族：SPI_CTRL
+典型端口：SPI, CLK, CS, DI, DIO, MOSI, MISO, SCLK
+
+规则摘要：
+SPI 通常可拆成 CLK、CS、DI、DIO 或 CLK、CS、MOSI、MISO。
+如果只有 SPI -> SPI 且没有总线编号、片选号、数据方向，则不能唯一映射到具体 pin。
+
+### RULE: GENERAL_DIFFERENTIAL 通用差分
+
+适用条件：
+典型端口：_P, _N, DP, DN, RFIN, DAC, ADC, AFE
+
+规则摘要：
+带 P/N、_P/_N、DP/DN 或 AFE 差分语义的信号需要成对判断。
+如果一个逻辑端口对应 P/N 两个物理 pin，应使用 selected_pins，不要新增 line_id。
+
+### RULE: GENERAL_POWER 通用电源
+
+适用条件：
+映射族：POWER_ENABLE
+典型端口：VDD, VCC, AVS, DVDD, VOUT, PWR
+典型目标：PMU, 比邻星, 天狼星
+
+规则摘要：
+端口名或网络名包含 VDD、VCC、AVS、DVDD 时通常是电源信号。
+目标器件名称包含 PMU、比邻星、天狼星且目标端口是 VOUT/VOUT1/VOUT2 时，通常表示 PMU 给源器件供电。
+电源 pin 映射必须优先匹配电压值和功能域。
+
+---
+
 ## 0. 链路族规则
 
 链路族规则描述“重复出现的一类完整业务链路”。它不是最终输出分组，也不改变 Excel sheet；它只帮助模型先理解全局语义，再判断局部 pin。

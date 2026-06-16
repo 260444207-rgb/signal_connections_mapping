@@ -51,6 +51,24 @@ def context_signature(prefix: str, *values: Any) -> str:
     return f"{prefix}:UNKNOWN"
 
 
+def source_analysis_signature(row: Dict[str, Any]) -> str:
+    """
+    context_group 的硬边界是“源端器件 pin 体系”。
+
+    如果能从 block_info 找到 source_part_id，则同料号实例合并分析；
+    如果找不到，则按 sheet/block 上下文隔离未知源端，避免所有未知器件混在一起。
+    """
+    part = normalize_text(row.get("source_part_id"))
+    if part:
+        return f"DEVICE_INFO:{part.upper()}"
+    return context_signature(
+        "UNKNOWN_SOURCE",
+        row.get("source_sheet_name"),
+        row.get("source_block_id"),
+        row.get("source_block_name"),
+    )
+
+
 def infer_mapping_family(row: Dict[str, Any]) -> str:
     text = " ".join([
         normalize_text(row.get("source_port")),
@@ -109,6 +127,16 @@ def analysis_strategy_for(link_family_id: str, mapping_family: str) -> str:
     return "device_type_pair_with_link_context"
 
 
+def analysis_strategy_for_group(link_family_ids: List[str], mapping_families: List[str], isolation_level: str) -> str:
+    if isolation_level == "hard_case":
+        return "source_device_hard_case"
+    if len(link_family_ids) > 1 or len(mapping_families) > 1:
+        return "source_device_context_with_link_summaries"
+    link_family_id = link_family_ids[0] if link_family_ids else "LOCAL_DEVICE_MAPPING"
+    mapping_family = mapping_families[0] if mapping_families else "UNKNOWN"
+    return analysis_strategy_for(link_family_id, mapping_family)
+
+
 def choose_subagent(mapping_family: str, line_ids: List[str], hard_case: bool = False) -> tuple[str, str]:
     if hard_case:
         return "semantic-hard-case-subagent", "prompts/semantic_mapping_resolver.md"
@@ -144,31 +172,40 @@ def build_analysis_context_groups(
     rows = list(iter_jsonl(normalized_path))
     hard_cases = load_hard_case_line_ids(needs_model_path)
 
-    buckets: Dict[Tuple[str, str, str, str, str, str], List[Dict[str, Any]]] = defaultdict(list)
+    buckets: Dict[Tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
 
     for row in rows:
-        source_device_signature = device_signature(
-            row.get("source_part_id"),
-            "UNKNOWN_SOURCE_DEVICE_INFO",
-        )
-        target_device_signature = device_signature(
+        source_device_signature = source_analysis_signature(row)
+        row["_source_device_signature"] = source_device_signature
+        row["_target_device_signature"] = device_signature(
             row.get("target_part_id"),
             context_signature("TARGET_CONTEXT", row.get("target_block_name"), row.get("target_block_id")),
         )
         mapping_family = infer_mapping_family(row)
         link_family_id = infer_link_family(row, mapping_family)
         source = link_family_source(row, link_family_id, mapping_family)
+        row["_mapping_family"] = mapping_family
+        row["_link_family_id"] = link_family_id
+        row["_link_family_source"] = source
         is_hard = row.get("line_id") in hard_cases
-        isolation_level = "hard_case" if is_hard else "device_type_pair_and_mapping_family"
-        key = (link_family_id, source, source_device_signature, target_device_signature, mapping_family, isolation_level)
+        isolation_level = "hard_case" if is_hard else "source_device_context"
+        key = (source_device_signature, isolation_level)
         buckets[key].append(row)
 
     context_groups = []
-    for (link_family_id, source, source_device_signature, target_device_signature, mapping_family, isolation_level), group_rows in buckets.items():
+    for (source_device_signature, isolation_level), group_rows in buckets.items():
         device_category = source_device_signature
         line_ids = [r["line_id"] for r in group_rows]
         source_sheets = sorted({r.get("source_sheet_name") or r.get("output_sheet_name") or "" for r in group_rows if r.get("source_sheet_name") or r.get("output_sheet_name")})
         source_block_ids = sorted({r.get("source_block_id", "") for r in group_rows if r.get("source_block_id")})
+        link_family_ids = sorted({r.get("_link_family_id", "") for r in group_rows if r.get("_link_family_id")})
+        link_family_sources = sorted({r.get("_link_family_source", "") for r in group_rows if r.get("_link_family_source")})
+        mapping_families = sorted({r.get("_mapping_family", "") for r in group_rows if r.get("_mapping_family")})
+        target_device_signatures = sorted({r.get("_target_device_signature", "") for r in group_rows if r.get("_target_device_signature")})
+        link_family_id = link_family_ids[0] if len(link_family_ids) == 1 else "SOURCE_DEVICE_CONTEXT"
+        source = link_family_sources[0] if len(link_family_sources) == 1 else "mixed_context"
+        mapping_family = mapping_families[0] if len(mapping_families) == 1 else "MIXED"
+        target_device_signature = target_device_signatures[0] if len(target_device_signatures) == 1 else "MULTI_TARGET_CONTEXT"
         link_instance_ids = sorted({r.get("link_instance_id", "") for r in group_rows if r.get("link_instance_id")})
         user_link_infos = sorted({r.get("user_link_info", "") for r in group_rows if r.get("user_link_info")})
         device_role_infos = sorted({r.get("device_role_info", "") for r in group_rows if r.get("device_role_info")})
@@ -206,23 +243,23 @@ def build_analysis_context_groups(
             hard_case=(isolation_level == "hard_case")
         )
         context_group_id = "CTX_" + stable_hash({
-            "link_family_id": link_family_id,
-            "link_family_source": source,
             "source_device_signature": source_device_signature,
-            "target_device_signature": target_device_signature,
-            "mapping_family": mapping_family,
             "isolation_level": isolation_level,
             "line_ids": line_ids[:20],
         })
+        analysis_strategy = analysis_strategy_for_group(link_family_ids, mapping_families, isolation_level)
 
         context_groups.append({
             "context_group_id": context_group_id,
             "device_category": device_category,
             "link_family_id": link_family_id,
             "link_family_source": source,
-            "analysis_strategy": analysis_strategy_for(link_family_id, mapping_family),
+            "link_family_ids": link_family_ids,
+            "link_family_sources": link_family_sources,
+            "analysis_strategy": analysis_strategy,
             "source_device_signature": source_device_signature,
             "target_device_signature": target_device_signature,
+            "target_device_signatures": target_device_signatures,
             "source_device_instances": source_device_instances,
             "target_device_instances": target_device_instances,
             "link_instance_ids": link_instance_ids,
@@ -231,13 +268,14 @@ def build_analysis_context_groups(
             "device_role_infos": device_role_infos,
             "link_contexts": link_contexts,
             "mapping_family": mapping_family,
+            "mapping_families": mapping_families,
             "isolation_level": isolation_level,
             "source_sheets": source_sheets,
             "source_block_ids": source_block_ids,
             "line_ids": line_ids,
             "recommended_subagent": subagent,
             "prompt_file": prompt_file,
-            "notes": "context_group 按链路族来源、器件类型签名和信号族隔离；没有显式链路信息时按器件上下文和映射族兜底启动 subagent，不影响最终输出分页。"
+            "notes": "context_group 按源端器件 pin 体系隔离；链路族、信号族和目标上下文作为组内上下文传给 subagent，不再作为硬切分维度。"
         })
 
     result = {"context_groups": context_groups}

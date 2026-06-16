@@ -11,8 +11,10 @@
 2. 当前 line_id 对应 candidate_mapping
 3. source_device_pins 中该 source_part_id 的 pin 列表
 4. context_group 的 link_family_id / link_family_source / analysis_strategy
-5. link_family_summary 中同类链路的全局摘要
-6. natural_language_mapping_rules_template.md 中的自然语言规则
+5. diagram_link_context 中当前组和逐行链路上下文
+6. link_family_profiles 中同类链路跨 subagent 的共享语义
+7. link_family_summary 中同类链路的全局摘要
+8. matched_rule_sections / natural_language_mapping_rules_template.md 中的自然语言规则
 ```
 
 ## 判断顺序
@@ -23,6 +25,8 @@
 确认目的端器件/电路描述
   ↓
 判断是否有显式链路族或多个 link_contexts
+  ↓
+阅读同一 link_family 的共享 profile，借鉴拓扑/方向/实例规律
   ↓
 理解当前连接在链路/器件上下文中的作用
   ↓
@@ -43,6 +47,8 @@
   > 通用信号规则
   > pin 名称相似度
 ```
+
+`link_family_profiles` 只提供共享语义，不提供最终 pin 结论。subagent 可以借鉴同一 link_family 下其他器件或实例的分析方式，但必须回到当前 source_device_pins 和当前 line_id 独立选择 pin。
 
 ## 输出
 

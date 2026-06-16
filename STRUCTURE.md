@@ -41,6 +41,7 @@
 signal_connections_mapping/
 ├── SKILL.md
 ├── README.md
+├── RUNBOOK.md
 ├── STRUCTURE.md
 ├── .gitignore
 ├── script/
@@ -65,6 +66,16 @@ Codex 调用该 skill 时最先读取的入口说明。它描述：
 ### README.md
 
 面向使用者的快速说明。它描述如何准备输入、如何运行 prepare/model_tasks/finish/all，以及最终输出约束。
+
+### RUNBOOK.md
+
+面向执行模型的完整语义生成步骤。它明确说明：
+
+```text
+1. stage=all 不是完整语义流程。
+2. 正式输出必须经过 model_tasks、subagent 语义分析、model_resolved_decisions.jsonl、finish。
+3. subagent 批次如何规划、如何约束输出、如何合并和校验。
+```
 
 ### STRUCTURE.md
 
@@ -113,10 +124,12 @@ render_template_sheets
 ```text
 prepare:     生成 normalized_connections、analysis_context_groups、candidate_mappings
 apply:       生成 pre_resolved_decisions 和 needs_model_resolution
-model_tasks: 生成隔离 subagent 任务包和 global_subagent_plan
+model_tasks: 生成按源端器件 pin 体系隔离的 subagent 任务包和 global_subagent_plan
 finish:      合并模型/人工结果，校验并渲染 Excel
-all:         走脚本路径，不会自动调用真实 subagent；未解决项保持 unresolved
+all:         只走脚本路径，不会自动调用真实 subagent；只适合冒烟验证，未解决项保持 unresolved
 ```
+
+正式语义输出必须按 `RUNBOOK.md` 执行，不得停在 `stage=all`。
 
 ## 4. script 目录
 
@@ -190,18 +203,29 @@ task_dir/
 
 生成 `intermediate/analysis_context_groups.json`。
 
-分组维度：
+硬分组维度：
 
 ```text
-link_family_id
-link_family_source
 source_device_signature
-target_device_signature
-mapping_family
 isolation_level
 ```
 
-`link_family_source` 含义：
+也就是说，context_group 表示“同一个源端器件 pin 体系下的一组待分析连接”。如果 `source_part_id` 存在，同料号不同实例会合并分析；如果源端器件信息缺失，则按 sheet/block 上下文隔离未知源端。
+
+组内上下文字段：
+
+```text
+link_family_ids
+link_family_sources
+target_device_signatures
+mapping_families
+link_contexts
+link_instance_ids
+user_link_infos
+device_role_infos
+```
+
+`link_family_sources` 含义：
 
 ```text
 explicit_link_info: 来自 link_info / 链路信息 sheet
@@ -210,7 +234,7 @@ fallback_mapping_family: 无显式链路族，按 RF/SPI/POWER/CLOCK 等映射�
 fallback_device_context: 无显式链路族和明确映射族，按器件上下文兜底
 ```
 
-没有链路级数据时，仍会按器件类型和映射族生成 subagent 任务。
+链路级数据、信号族和目标上下文不再用于重新起 subagent；它们只帮助同一个源端器件 subagent 判断每条连接的作用。
 
 ### script/generate_candidates.py
 
@@ -252,16 +276,52 @@ intermediate/model_resolution_tasks/
 
 ```text
 1. context_group
-2. link_family_summary
-3. normalized_connections
-4. candidate_mappings
-5. source_device_pins
-6. natural_language_rules
-7. needs_model_resolution
-8. required_output
+2. diagram_link_context
+3. link_family_profiles
+4. matched_rule_sections
+5. link_family_summary / link_family_summaries
+6. normalized_connections
+7. candidate_mappings
+8. source_device_pins
+9. natural_language_rules
+10. needs_model_resolution
+11. required_output
 ```
 
-启动 subagent 前应先读 `global_subagent_plan.md`，确认每个 context group 的任务目标和隔离边界。
+`diagram_link_context` 是从输入框图表/link_info/链路信息 sheet 和逐行连接事实整理出的链路上下文，包含：
+
+```text
+group_link_family_ids
+group_link_instance_ids
+group_user_link_infos
+group_device_role_infos
+group_link_contexts
+line_link_contexts
+```
+
+subagent 必须先读它，用来判断链路归属、器件角色、实例编号和特殊连接方式。
+
+`link_family_profiles` 是同一 link_family 跨 source_device subagent 共享的链路级上下文，包含：
+
+```text
+link_family_id
+context_group_ids
+source_device_signatures
+target_device_signatures
+mapping_families
+link_instance_ids
+member_sheets
+user_link_infos
+device_role_infos
+line_examples
+shared_semantic_hints
+```
+
+它解决“链路逻辑如何给其他链路/其他器件 subagent 借鉴”的问题：同一 link_family 下的 subagent 可以共享链路拓扑、方向、实例索引、差分/总线展开规律和用户说明。它不是规则裁决结果，不能直接复制其他 line_id 或其他源端器件的 selected_pin。
+
+`matched_rule_sections` 是从 `rules/natural_language_mapping_rules_template.md` 的 `### RULE:` 块中召回的候选规则文本。召回只基于源端器件、链路族、信号族、目标上下文、端口关键词等做相关性筛选，不做 pin 裁决。
+
+启动 subagent 前应先读 `global_subagent_plan.md`，确认每个 context group 的源端器件、组内链路族、目标上下文和 line 数量。不要再按链路族/信号族/目标上下文把同一个源端器件任务拆开。
 
 ### script/merge_decisions.py
 

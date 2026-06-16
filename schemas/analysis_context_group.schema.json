@@ -41,8 +41,21 @@
               "explicit_link_info",
               "inferred_from_connection",
               "fallback_mapping_family",
-              "fallback_device_context"
+              "fallback_device_context",
+              "mixed_context"
             ]
+          },
+          "link_family_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "link_family_sources": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           },
           "analysis_strategy": {
             "type": "string"
@@ -52,6 +65,12 @@
           },
           "target_device_signature": {
             "type": "string"
+          },
+          "target_device_signatures": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           },
           "source_device_instances": {
             "type": "array",
@@ -94,6 +113,12 @@
           },
           "mapping_family": {
             "type": "string"
+          },
+          "mapping_families": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           },
           "isolation_level": {
             "type": "string"
