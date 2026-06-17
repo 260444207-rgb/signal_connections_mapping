@@ -1,0 +1,23 @@
+name: openclaw-loop-runner
+version: 0.1.0
+description: Ralph-style loop runtime plugin pattern for OpenClaw.
+
+commands:
+  - name: loop.init
+    entry: scripts/openclaw_loop.py init
+  - name: loop.status
+    entry: scripts/openclaw_loop.py status
+  - name: loop.next
+    entry: scripts/openclaw_loop.py next
+  - name: loop.run
+    entry: scripts/openclaw_loop.py run
+  - name: loop.check
+    entry: scripts/openclaw_loop.py check
+
+config:
+  state_dir: .openclaw-loop
+  max_iterations: 20
+  max_no_progress_rounds: 3
+  max_task_attempts: 3
+  reset_context_each_iteration: true
+  evaluator: output_contract_jsonl

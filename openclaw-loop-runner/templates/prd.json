@@ -1,0 +1,24 @@
+{
+  "project": "openclaw-loop-project",
+  "goal": "Describe the long-running task goal here.",
+  "status": "running",
+  "tasks": [
+    {
+      "id": "T001",
+      "title": "First task",
+      "description": "Replace this with the first concrete task.",
+      "status": "todo",
+      "attempts": 0,
+      "maxAttempts": 3,
+      "dependsOn": [],
+      "output_contract": {
+        "must_write_file": true,
+        "output_file": ".openclaw-loop/outputs/T001.jsonl",
+        "format": "jsonl",
+        "id_field": "line_id",
+        "expected_ids": ["T001"],
+        "chat_output_is_not_completion": true
+      }
+    }
+  ]
+}

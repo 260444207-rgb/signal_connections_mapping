@@ -1,0 +1,22 @@
+{
+  "name": "openclaw-loop-runner",
+  "version": "0.1.0",
+  "description": "Looping long-task supervisor for OpenClaw-style task bundles with output contracts, gates, and rerun plans.",
+  "author": {
+    "name": "Local developer"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Openclaw Loop Runner",
+    "shortDescription": "Run long OpenClaw tasks with looped verification.",
+    "longDescription": "Openclaw Loop Runner helps Codex split long tasks into contract-bound task bundles, require file outputs, verify coverage, generate rerun plans, and keep looping until gates pass.",
+    "developerName": "Local developer",
+    "category": "Productivity",
+    "capabilities": [
+      "long-task-loop",
+      "output-contracts",
+      "rerun-plan"
+    ],
+    "defaultPrompt": "Use OpenClaw Loop Runner to plan, dispatch, verify, and rerun a long task until all output contracts pass."
+  }
+}
