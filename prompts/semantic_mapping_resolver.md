@@ -59,7 +59,7 @@ context_group 表示同一个源端器件 pin 体系；链路族、信号族、�
 12. 再查器件级规则，理解源端器件有哪些 pin 承担这个作用；器件类型规则只能在链路语义约束下复用。
 13. 再用通用信号规则处理 SPI、差分、电源、总线等协议或信号族。
 14. 最后才参考 pin 名称相似度。
-15. 如果一个框图逻辑信号对应多个物理 pin，在同一个 decision 中输出 `selected_pins` 数组；渲染阶段会按 `主连线ID#数字` 展开，模型不得自行新增 line_id。
+15. 如果一个框图逻辑信号对应多个物理 pin，优先输出多行 decision：`line_id=原line_id#数字`、`parent_line_id=原line_id`、每行一个 `selected_pin`；兼容旧任务时才使用 `selected_pins` 数组。
 16. 对差分信号，确认 P/N 是否能由 `expansion_index`、`#数字`、链路族模板或链路规则确定。
 17. 对总线信号，必须知道总线编号、片选、数据方向或用户规则后才能选择具体 pin。
 18. 当多个 pin 都可能承担同样作用，且没有额外上下文区分时，必须输出 unresolved。
@@ -101,10 +101,12 @@ TX 控制链路规定 SROC 的 TX_SW0 控制 TXVGA0 的 EN_CHA/EN_CHB。
 9. 如果 task_json.source_device_pins 中没有当前源端器件编码，必须跳过该器件/该行的 pin 选择，输出 unresolved，不得凭器件知识或自然语言规则生成 pin 名。
 10. 在同一个 physical_device_instance_id 内，同一个 selected_pin 默认只能用于一个不同语义的 scalar line_id；只有 `pin_allocation_context.potential_shared_pin_groups`、相同源端口扇出到多个目标端口、相同网络/同一 base_connection_id、多端口别名或用户规则明确说明时，才允许复用。
 11. 如果两个不同语义 line_id 竞争同一个 pin，不能两个都输出 High；应给出最合理分配，无法区分时输出 unresolved 并说明 pin 冲突。
-12. 对每条连接必须先读取前置 signal_shape_info：bus/differential 可以通过 selected_pins 表示多个物理 pin；普通 scalar 连接不能因为候选相似就重复使用别的端口已经占用的 pin。
+12. 对每条连接必须先读取前置 signal_shape_info：bus/differential 如果已展开则逐行输出单个 selected_pin；如果需上下文展开则输出 parent_line_id#数字 多行 decision。普通 scalar 连接不能因为候选相似就重复使用别的端口已经占用的 pin。
 13. 如果 selected_pin/selected_pins 为空，net_name/net_names 必须为空；没有原理图 pin 时不得生成网络名。
 14. `LINE_xxx`、`line`、包含 `line` 的连线名称是画图工具默认连线名，不是有效网络名；需要网络名时应结合信号语义生成，不得直接复制这类默认名称。
 15. signal_shape_info 是进入映射分析前生成的形态判断结果，来源包括自动总线宽度识别、源端 pin 列表中的 P/N 对识别，以及本地自然语言规则中的“差分/总线”提示。只有 needs_model_shape_review=true、证据冲突或明显不符合连接语义时，才修正该判断，并必须在 analysis 中说明原因。
+16. 如果 normalized_connection.signal_shape_info.is_expanded_member=true，说明差分/总线已经在映射前展开成独立 line_id，例如 `1868#1`、`1868#2`；该行只输出一个 `selected_pin`，不要再输出 `selected_pins`。
+17. 如果某条未展开 line 需要结合上下文才知道是差分/总线，可以直接输出多行展开 decision：`line_id=原line_id#数字`、`parent_line_id=原line_id`，每行一个 `selected_pin`。这类输出会在 merge/validate/render 阶段按 parent 复制原始连接事实。
 
 ## 输出
 
@@ -113,15 +115,15 @@ TX 控制链路规定 SROC 的 TX_SW0 控制 TXVGA0 的 EN_CHA/EN_CHB。
 写入后必须重新读取输出文件自检：
 
 ```text
-1. line_id 集合必须等于 task_json.output_contract.expected_line_ids。
-2. 不得遗漏、重复或额外输出 line_id。
+1. 每个 task_json.output_contract.expected_line_ids 必须被同名 line_id 覆盖；如果上下文判断需要展开，可由 parent_line_id=expected_line_id 且 line_id=expected_line_id#数字 的多行 decision 覆盖。
+2. 不得遗漏 expected_line_ids；不得输出无合法 parent_line_id 的额外 line_id；不得重复输出 line_id。
 3. 每一行必须是一个 JSON object，不得写成 JSON 数组。
 ```
 
 聊天回复只报告 `status`、`output_file`、`decision_count` 和是否通过自检。
 
 ```json
-{"line_id":"","selected_pin":"","selected_pins":[],"decision_type":"model_resolved|unresolved","confidence":"High|Medium|Low","analysis":"","net_name":"","net_names":[],"needs_human_review":false}
+{"line_id":"","parent_line_id":"","selected_pin":"","selected_pins":[],"decision_type":"model_resolved|unresolved","confidence":"High|Medium|Low","analysis":"","net_name":"","net_names":[],"needs_human_review":false}
 ```
 
 ## 示例判断

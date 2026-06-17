@@ -67,9 +67,9 @@ render_template_sheets
 
 ### infer_signal_shapes
 
-读取 `normalized_connections.jsonl`、`candidate_mappings.jsonl`、`pin_info.json` 和合并后的自然语言规则，生成 `signal_shape_inference.jsonl`，并把 `signal_shape`、`expected_physical_pin_count`、`signal_shape_info` 写回 `normalized_connections.jsonl`。
+读取 `normalized_connections.jsonl`、`pin_info.json` 和合并后的自然语言规则，生成 `signal_shape_inference.jsonl`，并把 `signal_shape`、`expected_physical_pin_count`、`signal_shape_info` 写回 `normalized_connections.jsonl`。若一条原始连接对应多个物理 pin，会在进入候选生成和 subagent 前展开为多个 normalized row，`line_id` / `connection_id` 使用 `原ID#数字`。
 
-该阶段只判断 scalar / bus / differential 和预计物理 pin 数，不选择具体 pin；后续 subagent 必须结合当前源端器件 pin 列表和语义上下文独立裁决 `selected_pin` / `selected_pins`。
+该阶段只判断 scalar / bus / differential 和预计物理 pin 数，不选择具体 pin；后续 subagent 必须结合当前源端器件 pin 列表和语义上下文独立裁决 `selected_pin`。未自动展开但经上下文判断需要展开的连接，应输出 `parent_line_id#数字` 多行 decision。
 
 ### build_analysis_context_groups
 
@@ -194,7 +194,7 @@ output/signal_interface_YYYYMMDD_HHMMSS.xlsx
 
 前 9 列是连接事实字段，模型不得修改。
 
-如果模型阶段判断一条逻辑连接对应多个物理 pin，应在同一个 mapping decision 中输出 `selected_pins` 数组。渲染阶段会复制原始连接事实并把连线ID改为 `主连线ID#数字`，除连线ID和后 4 列外，前置字段不得变化。
+如果模型阶段判断一条逻辑连接对应多个物理 pin，应输出多行 decision：`line_id=原line_id#数字`、`parent_line_id=原line_id`、每行一个 `selected_pin`。渲染阶段会复制 parent 原始连接事实并把连线ID改为 `主连线ID#数字`，除连线ID和后 4 列外，前置字段不得变化。
 
 `原理图Pin脚` 只能逐字使用入参 `pin_info.json` 中当前源端器件编码对应的 pin 字符串。模型不得补全、改写、翻译、调整大小写或使用其他器件的 pin。
 

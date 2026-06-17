@@ -31,6 +31,11 @@ GENERIC_RULE_TERMS = {
 
 
 def load_candidate_map(path: str | Path) -> Dict[str, Dict[str, Any]]:
+    if not path:
+        return {}
+    p = Path(path)
+    if not p.exists():
+        return {}
     return {row["line_id"]: row for row in iter_jsonl(path)}
 
 
@@ -72,18 +77,16 @@ def bus_width_from_text(text: str) -> int:
 
 
 def explicit_bus_reason(row: Dict[str, Any]) -> tuple[int, List[str]]:
+    if int(row.get("expansion_count", 1) or 1) > 1:
+        # normalize_connections has already materialized these members.
+        return 1, []
     blob = " ".join([
         normalize_text(row.get("source_port", "")),
         normalize_text(row.get("target_port", "")),
         normalize_text(row.get("connection_name", "")),
     ])
-    width = max(
-        int(row.get("expansion_count", 1) or 1),
-        bus_width_from_text(blob),
-    )
+    width = bus_width_from_text(blob)
     reasons: List[str] = []
-    if int(row.get("expansion_count", 1) or 1) > 1:
-        reasons.append("normalized expansion_count > 1")
     if bus_width_from_text(blob) > 1:
         reasons.append("bus width notation in connection text")
     return width, reasons
@@ -304,6 +307,11 @@ def infer_signal_shape_for_row(
     return {
         "shape": shape,
         "expected_physical_pin_count": expected_count,
+        "is_expanded_member": False,
+        "parent_line_id": row.get("line_id", ""),
+        "member_index": 1,
+        "member_count": expected_count,
+        "member_role": "",
         "line_id_expansion_policy": "selected_pins_array_then_render_connection_id_suffix" if expected_count > 1 else "single_output_row",
         "connection_id_suffix_separator": "#" if expected_count > 1 else "",
         "expected_output_connection_ids": expected_connection_ids,
@@ -312,6 +320,50 @@ def infer_signal_shape_for_row(
         "reasons": reasons,
         "evidence": evidence,
     }
+
+
+def expanded_rows_for_signal_shape(row: Dict[str, Any], signal_shape_info: Dict[str, Any]) -> List[Dict[str, Any]]:
+    count = int(signal_shape_info.get("expected_physical_pin_count", 1) or 1)
+    if count <= 1:
+        updated = dict(row)
+        updated["signal_shape"] = signal_shape_info["shape"]
+        updated["expected_physical_pin_count"] = 1
+        updated["signal_shape_info"] = signal_shape_info
+        return [updated]
+
+    parent_line_id = row.get("line_id", "")
+    base_connection_id = row.get("base_connection_id") or row.get("connection_id", "")
+    member_rows: List[Dict[str, Any]] = []
+    for index in range(1, count + 1):
+        member = dict(row)
+        member_info = dict(signal_shape_info)
+        member_role = ""
+        if signal_shape_info.get("shape") == "differential":
+            member_role = "P" if index == 1 else "N" if index == 2 else str(index)
+
+        member["parent_line_id"] = parent_line_id
+        member["line_id"] = f"{parent_line_id}#{index}"
+        member["base_line_id"] = row.get("base_line_id") or parent_line_id
+        member["connection_id"] = f"{base_connection_id}#{index}" if base_connection_id else str(index)
+        member["base_connection_id"] = base_connection_id
+        member["shape_expansion_index"] = index
+        member["shape_expansion_count"] = count
+        member["shape_member_role"] = member_role
+        member["signal_shape"] = signal_shape_info["shape"]
+        member["expected_physical_pin_count"] = 1
+
+        member_info["is_expanded_member"] = True
+        member_info["parent_line_id"] = parent_line_id
+        member_info["parent_expected_physical_pin_count"] = count
+        member_info["expected_physical_pin_count"] = 1
+        member_info["member_index"] = index
+        member_info["member_count"] = count
+        member_info["member_role"] = member_role
+        member_info["line_id_expansion_policy"] = "already_expanded_before_mapping"
+        member_info["current_output_connection_id"] = member["connection_id"]
+        member["signal_shape_info"] = member_info
+        member_rows.append(member)
+    return member_rows
 
 
 def infer_signal_shapes(
@@ -334,13 +386,11 @@ def infer_signal_shapes(
         source_pins = pins_for_part(catalog, part_id)
         candidate_mapping = candidates_by_id.get(row.get("line_id", ""), {})
         signal_shape_info = infer_signal_shape_for_row(row, candidate_mapping, source_pins, rule_text)
-        updated = dict(row)
-        updated["signal_shape"] = signal_shape_info["shape"]
-        updated["expected_physical_pin_count"] = signal_shape_info["expected_physical_pin_count"]
-        updated["signal_shape_info"] = signal_shape_info
-        enriched.append(updated)
+        expanded_rows = expanded_rows_for_signal_shape(row, signal_shape_info)
+        enriched.extend(expanded_rows)
         reports.append({
             "line_id": row.get("line_id", ""),
+            "expanded_line_ids": [expanded.get("line_id", "") for expanded in expanded_rows],
             "source_part_id": part_id,
             "source_port": row.get("source_port", ""),
             "target_port": row.get("target_port", ""),
@@ -358,7 +408,7 @@ def infer_signal_shapes(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Infer scalar/bus/differential shape before semantic pin mapping.")
     parser.add_argument("--normalized", required=True)
-    parser.add_argument("--candidates", required=True)
+    parser.add_argument("--candidates", default="")
     parser.add_argument("--pins", required=True)
     parser.add_argument("--output-normalized", required=True)
     parser.add_argument("--report", required=True)

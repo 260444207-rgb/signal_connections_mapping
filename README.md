@@ -33,7 +33,9 @@ stage=all 只做脚本冒烟验证，不会自动调用语义 subagent。
 
 3. infer_signal_shapes
    在语义映射前判断 scalar / bus / differential，输出 signal_shape_inference.jsonl，并把 signal_shape_info 写回 normalized_connections。
+   如果识别出一条原始连接对应多个物理 pin，会在进入候选生成和 subagent 前展开为多个 line_id，例如 1868#1、1868#2。
    总线只按明确位宽自动展开；差分可根据源端 pin 列表中的 P/N 对和本地规则提示识别。
+   如果是否差分/总线必须结合上下文才能判断，则保留原始 line 给 subagent；subagent 可输出 `parent_line_id=原line_id`、`line_id=原line_id#数字` 的多行 decision。
 
 4. build_analysis_context_groups
    按源端器件 pin 体系和 hard-case 状态隔离模型上下文。
@@ -164,7 +166,7 @@ output/signal_interface_YYYYMMDD_HHMMSS.xlsx
 3. 其他连接 sheet 重建为标准 13 列。
 4. 前 9 列是原始连接事实，模型不得修改。
 5. 信息不足时输出 unresolved。
-6. 一条逻辑连接对应多个物理 pin 时，模型输出 `selected_pins` 数组，渲染阶段按 `主连线ID#数字` 展开。
+6. 一条逻辑连接对应多个物理 pin 时，优先在映射前或 subagent 输出阶段展开为 `主line_id#数字` 多行；兼容旧任务时才使用 `selected_pins` 数组。
 7. `原理图Pin脚` 必须逐字来自入参 `pin_info.json` 中该源端器件编码对应的 pin 列表；不得改写、翻译、补全、大小写规范化或使用其他器件 pin。
 8. 没有 `原理图Pin脚` 时，`网络命名` 必须为空。
 9. `LINE_xxx`、`line`、包含 `line` 的连线名称是默认连线名，不得直接作为网络名。

@@ -12,6 +12,9 @@
     "line_id": {
       "type": "string"
     },
+    "parent_line_id": {
+      "type": "string"
+    },
     "selected_pin": {
       "type": "string"
     },

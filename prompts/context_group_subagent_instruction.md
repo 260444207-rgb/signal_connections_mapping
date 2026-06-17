@@ -61,6 +61,8 @@ prompts/semantic_mapping_resolver.md
 10. 如果 selected_pin/selected_pins 为空，net_name/net_names 必须为空；没有原理图 pin 时不得生成网络名。
 11. `LINE_xxx`、`line`、包含 `line` 的连线名称是默认连线名，不是有效网络名，不得直接复制到 net_name/net_names。
 12. signal_shape_info 是进入映射分析前生成的形态判断结果，来源包括自动总线宽度识别、源端 pin 列表 P/N 对识别和本地自然语言规则提示。只有 needs_model_shape_review=true、证据冲突或明显不符合连接语义时，才修正该判断，并在 analysis 中说明。
+13. 如果 normalized_connection.signal_shape_info.is_expanded_member=true，该差分/总线成员已经是独立 line_id；该行只输出单个 selected_pin，不要再输出 selected_pins。
+14. 如果某条未展开 line 需要结合上下文才知道是差分/总线，可以直接输出多行展开 decision：`line_id=原line_id#数字`、`parent_line_id=原line_id`，每行一个 selected_pin。
 ```
 
 ## 输出格式
@@ -68,7 +70,7 @@ prompts/semantic_mapping_resolver.md
 必须写入 `output_contract.output_file`，每行一个 JSON object。只在聊天中输出 JSON 数组或分析说明、不写入 output_file，视为未完成。
 
 ```json
-{"line_id":"","selected_pin":"","selected_pins":[],"decision_type":"model_resolved|unresolved","confidence":"High|Medium|Low","analysis":"","net_name":"","net_names":[],"needs_human_review":false}
+{"line_id":"","parent_line_id":"","selected_pin":"","selected_pins":[],"decision_type":"model_resolved|unresolved","confidence":"High|Medium|Low","analysis":"","net_name":"","net_names":[],"needs_human_review":false}
 ```
 
-一条逻辑连接对应多个物理 pin 时，使用 `selected_pins`、`net_names`、`analyses`、`confidences` 数组；不要在模型输出里新增 `line_id`。渲染阶段会按 `主连线ID#数字` 展开输出行。
+如果 TASK 中仍存在未展开的多物理 pin 逻辑连接，优先输出 `parent_line_id#数字` 多行 decision；不要把多个 pin 塞在同一个 `selected_pins` 数组里。只有兼容旧任务时才使用 `selected_pins`、`net_names`、`analyses`、`confidences` 数组。

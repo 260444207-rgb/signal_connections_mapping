@@ -447,7 +447,7 @@ selected_pins: ["PIN_P", "PIN_N"]
 intermediate/signal_shape_inference.jsonl
 ```
 
-同时把 `signal_shape`、`expected_physical_pin_count`、`signal_shape_info` 写回 normalized connection。该阶段只判断 scalar / bus / differential 和预计物理 pin 数，不选择具体 pin。
+同时把 `signal_shape`、`expected_physical_pin_count`、`signal_shape_info` 写回 normalized connection。若判断一条原始连接对应多个物理 pin，会在该阶段展开为多个 normalized row，`line_id` / `connection_id` 使用 `原ID#数字`。该阶段不选择具体 pin。
 
 ### intermediate/combined_mapping_rules.md
 

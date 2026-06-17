@@ -69,9 +69,7 @@ python script/run_pipeline.py \
 
 不要再因为 link_family、mapping_family 或 target_device_signature 不同而拆新的 subagent；这些信息已经在同一个源端器件 context_group 内作为上下文提供。只有 hard_case 或未知源端器件需要额外隔离。
 
-每个 subagent 必须拥有互不重叠的 `TASK_xxx.json` 列表。不要让两个 subagent 处理同一个 `line_id`。
-
-如果环境允许并且当前用户请求允许使用 subagent，应启动隔离 subagent。若当前环境不能启动 subagent，则执行模型必须自己逐个读取 `TASK_xxx.json` 完成同等语义分析，并在最终说明“未使用外部 subagent”。
+每个 subagent 必须拥有互不重叠的 `TASK_xxx.json` 列表。**必须启动隔离 subagent**去分析TASK_xxx.json。
 
 ### 4. 给 subagent 的任务必须包含这些约束
 
@@ -117,11 +115,10 @@ python script/run_pipeline.py \
 
 ```text
 1. assigned_line_ids == output_line_ids
-2. 没有重复 line_id
-3. 没有额外 line_id
-4. 非空 selected_pin / selected_pins 都逐字来自该 line_id 源端器件编码对应的可用 pin 列表
-5. 同一 physical_device_instance_id 内，没有未经说明的重复 selected_pin。
-6. 输出字段符合 schemas/mapping_decision.schema.json
+2. 没有额外 line_id
+3. 非空 selected_pin / selected_pins 都逐字来自该 line_id 源端器件编码对应的可用 pin 列表
+4. 同一 physical_device_instance_id 内，没有未经说明的重复 selected_pin。
+5. 输出字段符合 schemas/mapping_decision.schema.json
 ```
 
 如果某批次失败，必须重新启动失败 subagent 分析并写入对应 output_file，不能直接 finish。
@@ -133,8 +130,8 @@ python script/run_pipeline.py \
 ```text
 1. 输出文件必须存在。
 2. 必须是 JSONL，每行一个 object。
-3. line_id 集合必须等于该 TASK 的 line_ids。
-4. 不得遗漏、重复或额外输出 line_id。
+3. 每个 TASK line_id 必须被同名 line_id 覆盖；如果上下文判断需要展开，可由 parent_line_id=TASK line_id 且 line_id=TASK line_id#数字 的多行 decision 覆盖。
+4. 不得遗漏 TASK line_id；不得输出无合法 parent_line_id 的额外 line_id；不得重复输出 line_id。
 ```
 
 检查通过后，主控流程自动合并所有 subagent 输出为：
@@ -197,19 +194,4 @@ python script/run_pipeline.py \
 5. model_resolved_decisions.jsonl 没有覆盖 needs_model_resolution.jsonl 中的 line_id。
 6. validation_report.json 不是 PASS。
 7. 大部分行是 unresolved，但没有说明这是脚本兜底结果。
-```
-
-## 弱模型易错点
-
-```text
-1. 把 stage=all 误认为完整流程。
-2. 没有读 subagent_task_plan.md/json。
-3. 没有启动或模拟隔离 subagent。
-4. 把所有器件放进一个上下文里分析。
-5. selected_pin 编造了 pin_info 中不存在的 pin。
-6. 一条逻辑连接对应多个 pin 时自行新增 line_id，而不是输出 selected_pins。
-7. pin_info.json 缺少源端器件编码时仍强行让模型分析该器件。
-8. 把 pin 名按经验改写、翻译、补全、调整大小写或替换下划线。
-9. finish 前没有检查 subagent output_file，就手工拼接 model_resolved_decisions.jsonl。
-10. 失败 subagent 没有重启分析，只把聊天里的 JSON 当作完成。
 ```

@@ -68,18 +68,18 @@ def run_prepare(task_dir: Path, connections: str, pins: str, project_rules: str 
         connections,
         intermediate / "normalized_connections.jsonl"
     )
-    generate_candidates(
-        intermediate / "normalized_connections.jsonl",
-        pins,
-        intermediate / "candidate_mappings.jsonl"
-    )
     infer_signal_shapes(
         intermediate / "normalized_connections.jsonl",
-        intermediate / "candidate_mappings.jsonl",
+        "",
         pins,
         intermediate / "normalized_connections.jsonl",
         intermediate / "signal_shape_inference.jsonl",
         rules_path,
+    )
+    generate_candidates(
+        intermediate / "normalized_connections.jsonl",
+        pins,
+        intermediate / "candidate_mappings.jsonl"
     )
     build_analysis_context_groups(
         intermediate / "normalized_connections.jsonl",

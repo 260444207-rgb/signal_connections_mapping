@@ -24,18 +24,39 @@ def shared_signal_key(row):
     base=str(row.get('base_connection_id','') or '').strip()
     if base: return f"CONNECTION:{base}"
     return ''
+def inferred_parent_line_id(line_id):
+    text=str(line_id or '')
+    if '#' not in text: return ''
+    parent,suffix=text.rsplit('#',1)
+    return parent if parent and suffix.isdigit() else ''
+def decision_parent_line_id(decision):
+    return str(decision.get('parent_line_id','') or '').strip() or inferred_parent_line_id(decision.get('line_id',''))
+def decision_source_row(decision,normalized_by_id):
+    line=str(decision.get('line_id','') or '')
+    if line in normalized_by_id: return normalized_by_id[line]
+    parent=decision_parent_line_id(decision)
+    return normalized_by_id.get(parent,{})
+def is_legal_expanded_decision(decision,normalized_by_id):
+    line=str(decision.get('line_id','') or '')
+    if line in normalized_by_id: return True
+    parent=decision_parent_line_id(decision)
+    return bool(parent and parent in normalized_by_id and line.startswith(parent+'#'))
 def validate_mapping(normalized_path,decisions_path,pins_path,report_path):
     normalized=list(iter_jsonl(normalized_path)); decisions=list(iter_jsonl(decisions_path)); catalog=load_pin_catalog(pins_path)
     normalized_by_id={r['line_id']:r for r in normalized}
     nids={r['line_id'] for r in normalized}; dids=[d['line_id'] for d in decisions]; dset=set(dids)
+    expanded_parent_ids={decision_parent_line_id(d) for d in decisions if d.get('line_id') not in nids and is_legal_expanded_decision(d,normalized_by_id)}
     errors=[]; warnings=[]; pin_usage={}
-    for x in sorted(nids-dset): errors.append({'severity':'ERROR','line_id':x,'message':'missing mapping decision'})
-    for x in sorted(dset-nids): errors.append({'severity':'ERROR','line_id':x,'message':'decision line_id not in normalized connections'})
+    for x in sorted(nids-dset-expanded_parent_ids): errors.append({'severity':'ERROR','line_id':x,'message':'missing mapping decision'})
+    for d in decisions:
+        line=d.get('line_id','')
+        if not is_legal_expanded_decision(d,normalized_by_id):
+            errors.append({'severity':'ERROR','line_id':line,'message':'decision line_id not in normalized connections and is not legal parent_line_id#number expansion'})
     for x in sorted({x for x in dids if dids.count(x)>1}): errors.append({'severity':'ERROR','line_id':x,'message':'duplicate mapping decision'})
     for d in decisions:
         line=d.get('line_id',''); conf=d.get('confidence',''); pins=selected_pins(d); net_names=selected_net_names(d)
         if conf not in VALID_CONFIDENCE: errors.append({'severity':'ERROR','line_id':line,'message':f'invalid confidence: {conf}'})
-        row=normalized_by_id.get(line,{})
+        row=decision_source_row(d,normalized_by_id)
         source_part_id=row.get('source_part_id','')
         source_pins=set(pins_for_part(catalog,source_part_id))
         for pin in pins:
