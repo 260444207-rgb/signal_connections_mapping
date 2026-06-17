@@ -18,8 +18,9 @@ description: 基于输入框图 Excel、pin_info.json 和自然语言硬件规�
    prepare/model_tasks
      -> 阅读 subagent_task_plan.md/json
      -> 按 context_group 启动或等价执行隔离语义分析
-     -> 写入 intermediate/model_resolved_decisions.jsonl
+     -> 每个 TASK 写入 output_contract.output_file
      -> stage=finish
+     -> 主控检查 subagent output_file 并合并 intermediate/model_resolved_decisions.jsonl
      -> 检查 validation_report.json。
 4. 如果环境允许并且当前用户请求允许使用 subagent，必须按 subagent_task_plan 启动隔离 subagent；一个 context_group 代表一个源端器件 pin 体系，不要再按链路族/信号族/目标上下文重新拆 subagent。
 5. 如果环境不能启动 subagent，执行模型必须自己逐个处理 TASK_xxx.json，并明确说明没有使用外部 subagent。
@@ -36,7 +37,7 @@ RUNBOOK.md
 根据输入框图连接事实、源端器件 pin 列表、自然语言硬件规则，生成：
 
 ```text
-output/signal_interface.xlsx
+output/signal_interface_YYYYMMDD_HHMMSS.xlsx
 ```
 
 输出必须严格沿用输入 Excel 的 sheet 结构：
@@ -68,6 +69,35 @@ merge_decisions
 validate_mapping
   ↓
 render_template_sheets
+```
+
+运行阶段框图：
+
+```mermaid
+flowchart TD
+    A["输入 Excel / JSON / CSV"] --> B["normalize_connections"]
+    P["pin_info.json / csv / xlsx"] --> C["generate_candidates"]
+    B --> C
+    R["默认规则 + project/user rules"] --> R2["combined_mapping_rules.md"]
+    B --> D["infer_signal_shapes"]
+    C --> D
+    P --> D
+    R2 --> D
+    D --> E["build_analysis_context_groups"]
+    E --> F["pre_resolve_candidates"]
+    C --> F
+    F --> G["build_model_resolution_tasks"]
+    E --> G
+    P --> G
+    R2 --> G
+    G --> H["semantic subagent resolution"]
+    H --> C2["check_subagent_outputs"]
+    C2 --> I["merge_decisions"]
+    F --> I
+    I --> J["validate_mapping"]
+    J --> K["render_template_sheets"]
+    A --> K
+    K --> L["output/signal_interface_YYYYMMDD_HHMMSS.xlsx"]
 ```
 
 脚本负责事实整理、候选生成、信号形态前置判断、任务隔离、校验和渲染。
@@ -113,6 +143,14 @@ workflows/main_pipeline.md
 ```text
 rules/natural_language_mapping_rules_template.md
 ```
+
+运行命令可通过 `--project-rules` / `--user-rules` 追加外部自然语言规则。默认规则和外部规则会合并为：
+
+```text
+intermediate/combined_mapping_rules.md
+```
+
+前置 `infer_signal_shapes` 和后续 `build_model_resolution_tasks` 必须读取同一份 combined rules。
 
 可选链路信息入口：
 
@@ -173,6 +211,14 @@ intermediate/model_resolution_tasks/subagent_task_plan.json
 
 模型任务计划会持久化到本地，展示每个任务的可读文件名、器件类型、源端器件编码、context_group、link family、line 数量和任务目标。任务 JSON/prompt 位于 `intermediate/model_resolution_tasks/tasks/`，文件名格式为 `TASK_序号_器件类型_器件编码_链路范围_hash`，便于用户检查。
 
+每个 TASK 都包含 `output_contract`，其中 `output_file` 指向：
+
+```text
+intermediate/subagent_outputs/TASK_xxx.jsonl
+```
+
+subagent 必须把 mapping_decision 写成 JSONL 到该文件。只在聊天中输出 JSON 或分析说明、不写入该文件，视为失败。`stage=finish` 会先运行主控检查：文件不存在、JSONL 非法、line_id 缺失/重复/额外都会生成 `intermediate/failed_subagent_rerun_plan.md` 并中止，必须重新启动失败 subagent 后再 finish。
+
 规则层级：
 
 ```text
@@ -188,6 +234,7 @@ script/generate_candidates.py
 script/build_analysis_context_groups.py
 script/pre_resolve_candidates.py
 script/build_model_resolution_tasks.py
+script/check_subagent_outputs.py
 script/merge_decisions.py
 script/validate_mapping.py
 script/render_template_sheets.py
@@ -219,6 +266,12 @@ python script/run_pipeline.py \
 ```
 
 模型分析后，将结果写入：
+
+```text
+data/{uuid}/intermediate/subagent_outputs/TASK_xxx.jsonl
+```
+
+`stage=finish` 会检查所有 subagent output_file，全部通过后自动合并为：
 
 ```text
 data/{uuid}/intermediate/model_resolved_decisions.jsonl

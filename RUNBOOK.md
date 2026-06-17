@@ -6,7 +6,7 @@
 
 ```text
 stage=all 只能做脚本冒烟验证；它不会调用语义 subagent。
-真正的信号接口列表必须经过 model_tasks -> 语义分析 -> 合并 -> finish。
+真正的信号接口列表必须经过 model_tasks -> 语义分析写入 output_contract.output_file -> finish 前主控检查 -> 合并 -> finish。
 ```
 
 如果最终 `mapping_decisions.jsonl` 中大部分都是 `unresolved`，不能把它当作已经完成的信号接口列表。
@@ -85,7 +85,7 @@ python script/run_pipeline.py \
 5. 不得输出 output_sheet_name/source_sheet_name。
 6. 多物理 pin 使用 selected_pins，不要新增 line_id。
 7. 信息不足必须 unresolved，不得硬猜。
-8. 输出 JSONL 到指定 batch 文件，每行一个 mapping_decision object。
+8. 输出 JSONL 到 TASK JSON 中 `output_contract.output_file` 指定的文件；每行一个 mapping_decision object。
 9. 链路族、信号族、目标上下文只作为组内分析上下文，不作为要求用户重新拆 subagent 的理由。
 10. 必须先阅读 task_json.diagram_link_context；这里是框图信息表中的链路上下文。
 11. 必须阅读 task_json.matched_rule_sections；这里是脚本召回的候选自然语言规则块，但不能替代逐行语义判断。
@@ -97,19 +97,19 @@ python script/run_pipeline.py \
 17. 如果 pin_info.json 没有当前源端器件编码对应的 pin 列表，该器件不启动语义分析，相关行保持 unresolved，等待用户补充 pin 信息。
 ```
 
-推荐输出目录：
+自动输出目录：
 
 ```text
 <task_dir>/intermediate/subagent_outputs/
 ```
 
-推荐文件名：
+每个 TASK 的 `output_contract.output_file` 会指向类似：
 
 ```text
-batch_a.jsonl
-batch_b.jsonl
-batch_c.jsonl
+<task_dir>/intermediate/subagent_outputs/TASK_01_xxx.jsonl
 ```
+
+只在聊天中粘贴 JSON、没有写入该文件，视为 subagent 失败。
 
 ### 5. 校验 subagent 批次输出
 
@@ -124,17 +124,33 @@ batch_c.jsonl
 6. 输出字段符合 schemas/mapping_decision.schema.json
 ```
 
-如果某批次失败，必须修复该批次输出，不能直接 finish。
+如果某批次失败，必须重新启动失败 subagent 分析并写入对应 output_file，不能直接 finish。
 
-### 6. 合并模型结果
+### 6. 主控检查并合并模型结果
 
-把所有 batch JSONL 合并为：
+运行 `stage=finish` 时，主控流程会先检查所有 TASK 的 `output_contract.output_file`：
+
+```text
+1. 输出文件必须存在。
+2. 必须是 JSONL，每行一个 object。
+3. line_id 集合必须等于该 TASK 的 line_ids。
+4. 不得遗漏、重复或额外输出 line_id。
+```
+
+检查通过后，主控流程自动合并所有 subagent 输出为：
 
 ```text
 <task_dir>/intermediate/model_resolved_decisions.jsonl
 ```
 
-合并时必须检查全局 line_id 不重复。
+检查失败时，主控流程会生成：
+
+```text
+<task_dir>/intermediate/subagent_output_check.json
+<task_dir>/intermediate/failed_subagent_rerun_plan.md
+```
+
+并直接中止，不进入 merge/validate/render。必须按 `failed_subagent_rerun_plan.md` 重新启动失败 subagent，再重新运行 `stage=finish`。
 
 ### 7. 渲染最终 Excel
 
@@ -151,7 +167,7 @@ python script/run_pipeline.py \
 最终输出：
 
 ```text
-<task_dir>/output/signal_interface.xlsx
+<task_dir>/output/signal_interface_YYYYMMDD_HHMMSS.xlsx
 ```
 
 ### 8. 最终检查
@@ -175,10 +191,12 @@ python script/run_pipeline.py \
 
 ```text
 1. 只跑了 stage=all，且没有执行语义分析。
-2. 没有生成 model_resolved_decisions.jsonl。
-3. model_resolved_decisions.jsonl 没有覆盖 needs_model_resolution.jsonl 中的 line_id。
-4. validation_report.json 不是 PASS。
-5. 大部分行是 unresolved，但没有说明这是脚本兜底结果。
+2. subagent 没有写入 TASK JSON 中指定的 output_contract.output_file。
+3. subagent_output_check.json 不是 PASS。
+4. 没有生成 model_resolved_decisions.jsonl。
+5. model_resolved_decisions.jsonl 没有覆盖 needs_model_resolution.jsonl 中的 line_id。
+6. validation_report.json 不是 PASS。
+7. 大部分行是 unresolved，但没有说明这是脚本兜底结果。
 ```
 
 ## 弱模型易错点
@@ -192,5 +210,6 @@ python script/run_pipeline.py \
 6. 一条逻辑连接对应多个 pin 时自行新增 line_id，而不是输出 selected_pins。
 7. pin_info.json 缺少源端器件编码时仍强行让模型分析该器件。
 8. 把 pin 名按经验改写、翻译、补全、调整大小写或替换下划线。
-9. finish 前没有合并 model_resolved_decisions.jsonl。
+9. finish 前没有检查 subagent output_file，就手工拼接 model_resolved_decisions.jsonl。
+10. 失败 subagent 没有重启分析，只把聊天里的 JSON 当作完成。
 ```

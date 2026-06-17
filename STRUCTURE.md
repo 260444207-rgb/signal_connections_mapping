@@ -74,8 +74,8 @@ Codex 调用该 skill 时最先读取的入口说明。它描述：
 
 ```text
 1. stage=all 不是完整语义流程。
-2. 正式输出必须经过 model_tasks、subagent 语义分析、model_resolved_decisions.jsonl、finish。
-3. subagent 批次如何规划、如何约束输出、如何合并和校验。
+2. 正式输出必须经过 model_tasks、subagent 写入 output_contract.output_file、主控检查、model_resolved_decisions.jsonl、finish。
+3. subagent 批次如何规划、如何约束输出、失败如何重启、如何合并和校验。
 ```
 
 ### STRUCTURE.md
@@ -101,9 +101,9 @@ init_task
   ↓
 normalize_connections
   ↓
-build_analysis_context_groups
-  ↓
 generate_candidates
+  ↓
+infer_signal_shapes
   ↓
 pre_resolve_candidates
   ↓
@@ -112,6 +112,8 @@ build_analysis_context_groups
 build_model_resolution_tasks
   ↓
 semantic subagent resolution
+  ↓
+check_subagent_outputs
   ↓
 merge_decisions
   ↓
@@ -123,7 +125,7 @@ render_template_sheets
 阶段命令：
 
 ```text
-prepare:     生成 normalized_connections、analysis_context_groups、candidate_mappings
+prepare:     生成 normalized_connections、candidate_mappings、signal_shape_inference、analysis_context_groups
 apply:       生成 pre_resolved_decisions 和 needs_model_resolution
 model_tasks: 生成按源端器件 pin 体系隔离的 subagent 任务包和 subagent_task_plan
 finish:      合并模型/人工结果，校验并渲染 Excel
@@ -375,6 +377,23 @@ TASK_03_TXVGA_47151290_RF_TX_CHAIN_98e63e8c1e3a.json
 
 后出现的文件可覆盖前面的同 line_id 结果。
 
+### script/check_subagent_outputs.py
+
+`finish` 前的主控门禁脚本。
+
+职责：
+
+```text
+1. 读取 model_resolution_tasks/subagent_task_plan.json。
+2. 按每个 TASK 的 output_contract.output_file 检查 subagent 输出文件是否存在。
+3. 校验输出是 JSONL、每行一个 mapping_decision object。
+4. 校验每个 TASK 的 line_id 集合完全覆盖，不得遗漏、重复或额外输出。
+5. 全部通过后合并为 intermediate/model_resolved_decisions.jsonl。
+6. 任一 TASK 失败时生成 subagent_output_check.json 和 failed_subagent_rerun_plan.md，并阻断 finish。
+```
+
+失败的 subagent 必须按 `failed_subagent_rerun_plan.md` 重新启动分析，写入对应 output_file 后再运行 finish。
+
 ### script/validate_mapping.py
 
 校验合并后的 `mapping_decisions.jsonl`。
@@ -429,6 +448,10 @@ intermediate/signal_shape_inference.jsonl
 ```
 
 同时把 `signal_shape`、`expected_physical_pin_count`、`signal_shape_info` 写回 normalized connection。该阶段只判断 scalar / bus / differential 和预计物理 pin 数，不选择具体 pin。
+
+### intermediate/combined_mapping_rules.md
+
+运行时规则合并文件。由默认 `rules/natural_language_mapping_rules_template.md` 加可选 `--project-rules`、`--user-rules` 生成。`infer_signal_shapes.py` 和 `build_model_resolution_tasks.py` 都读取这份文件。
 
 ### script/generate_net_name.py
 
@@ -569,19 +592,23 @@ task_dir/
 │   ├── candidate_mappings.jsonl
 │   ├── pre_resolved_decisions.jsonl
 │   ├── needs_model_resolution.jsonl
+│   ├── subagent_output_check.json
+│   ├── failed_subagent_rerun_plan.md
 │   ├── model_resolved_decisions.jsonl
 │   ├── manual_override_decisions.jsonl
 │   ├── mapping_decisions.jsonl
 │   ├── validation_report.json
-│   └── model_resolution_tasks/
+│   ├── model_resolution_tasks/
 │       ├── manifest.json
 │       ├── subagent_task_plan.md
 │       ├── subagent_task_plan.json
 │       ├── subagent_task_prompt.md
 │       └── tasks/
 │           └── TASK_xxx.json
+│   └── subagent_outputs/
+│       └── TASK_xxx.jsonl
 └── output/
-    └── signal_interface.xlsx
+    └── signal_interface_YYYYMMDD_HHMMSS.xlsx
 ```
 
 ## 10. 扩展方式
@@ -634,7 +661,58 @@ rules/natural_language_mapping_rules_template.md
 
 不要把灵活硬件语义固化到脚本里。
 
-## 11. 已清理的旧结构
+## 11. 结构校验框图与表
+
+### 运行阶段框图
+
+```mermaid
+flowchart TD
+    A["输入 Excel / JSON / CSV"] --> B["normalize_connections"]
+    P["pin_info.json / csv / xlsx"] --> C["generate_candidates"]
+    B --> C
+    R["默认规则 + project/user rules"] --> R2["combined_mapping_rules.md"]
+    B --> D["infer_signal_shapes"]
+    C --> D
+    P --> D
+    R2 --> D
+    D --> E["build_analysis_context_groups"]
+    E --> F["pre_resolve_candidates"]
+    C --> F
+    F --> G["build_model_resolution_tasks"]
+    E --> G
+    P --> G
+    R2 --> G
+    G --> H["semantic subagent resolution"]
+    H --> C2["check_subagent_outputs"]
+    C2 --> I["merge_decisions"]
+    F --> I
+    I --> J["validate_mapping"]
+    J --> K["render_template_sheets"]
+    A --> K
+    K --> L["output/signal_interface_YYYYMMDD_HHMMSS.xlsx"]
+```
+
+### 分层职责表
+
+| 层级 | 文件/目录 | 事实依据 | 不应承担 |
+|------|-----------|----------|----------|
+| Skill 入口 | `SKILL.md`, `README.md`, `RUNBOOK.md` | 执行契约、正式流程、完成条件 | 具体器件 pin 裁决 |
+| 工作流说明 | `workflows/` | 阶段顺序、context 隔离、单连接分析方式 | 与 `run_pipeline.py` 不一致的旧流程 |
+| 规则与 prompt | `rules/`, `prompts/` | 自然语言硬件规则、模型分析边界 | Python 脚本里的硬编码语义 |
+| 数据契约 | `schemas/` | JSON/JSONL 字段形状和最终 13 列 | 运行时临时状态 |
+| 脚本管线 | `script/` | 输入解析、候选、形态判断、任务构建、合并校验渲染 | 未经 pin_info 支持的模型猜测 |
+
+### 契约验证点
+
+| 验证点 | 当前实现依据 |
+|--------|--------------|
+| `infer_signal_shapes` 使用合并规则 | `run_pipeline.py` 先生成 `intermediate/combined_mapping_rules.md`，再传给 `infer_signal_shapes.py` |
+| subagent 任务使用同一份规则 | `run_pipeline.py` 调用 `build_model_resolution_tasks(..., combined_mapping_rules.md)` |
+| pin catalog 加载口径一致 | `generate_candidates.py`、`infer_signal_shapes.py`、`build_model_resolution_tasks.py`、`validate_mapping.py` 都使用 `load_pin_catalog()` |
+| 缺少源端器件 pin 时不启动语义任务 | `pre_resolve_candidates.py` 保持 unresolved，`build_model_resolution_tasks.py` 记录 skipped task |
+| 最终 sheet 结构不由模型决定 | `render_template_sheets.py` 以输入 workbook 为模板，连接 sheet 重建为标准 13 列 |
+
+## 12. 已清理的旧结构
 
 当前主流程已经不再使用：
 

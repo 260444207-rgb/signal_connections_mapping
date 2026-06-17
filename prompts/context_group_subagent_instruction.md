@@ -50,7 +50,7 @@ prompts/semantic_mapping_resolver.md
 
 ```text
 1. subagent 必须读取分配给自己的所有 TASK_xxx.json。
-2. subagent 必须把结果写入调用方指定的 batch JSONL 文件。
+2. subagent 必须把结果写入 TASK JSON 中 `output_contract.output_file` 指定的 JSONL 文件。
 3. JSONL 每行一个 mapping_decision object，不要 Markdown 包裹。
 4. 输出前必须自检：assigned_line_ids == output_line_ids。
 5. 输出前必须自检：没有重复 line_id，没有额外 line_id。
@@ -65,22 +65,10 @@ prompts/semantic_mapping_resolver.md
 
 ## 输出格式
 
-只输出 JSON 数组：
+必须写入 `output_contract.output_file`，每行一个 JSON object。只在聊天中输出 JSON 数组或分析说明、不写入 output_file，视为未完成。
 
 ```json
-[
-  {
-    "line_id": "",
-    "selected_pin": "",
-    "selected_pins": [],
-    "decision_type": "model_resolved|unresolved",
-    "confidence": "High|Medium|Low",
-    "analysis": "",
-    "net_name": "",
-    "net_names": [],
-    "needs_human_review": false
-  }
-]
+{"line_id":"","selected_pin":"","selected_pins":[],"decision_type":"model_resolved|unresolved","confidence":"High|Medium|Low","analysis":"","net_name":"","net_names":[],"needs_human_review":false}
 ```
 
 一条逻辑连接对应多个物理 pin 时，使用 `selected_pins`、`net_names`、`analyses`、`confidences` 数组；不要在模型输出里新增 `line_id`。渲染阶段会按 `主连线ID#数字` 展开输出行。

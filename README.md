@@ -31,21 +31,25 @@ stage=all 只做脚本冒烟验证，不会自动调用语义 subagent。
    按 block_info 中的器件 code/料号，从 pin_info.json 取源端 pin 列表并生成候选。
    如果 pin_info.json 没有当前源端器件编码对应的 pin 列表，该器件后续不进入语义模型分析，相关行保持 unresolved。
 
-3. build_analysis_context_groups
+3. infer_signal_shapes
+   在语义映射前判断 scalar / bus / differential，输出 signal_shape_inference.jsonl，并把 signal_shape_info 写回 normalized_connections。
+   总线只按明确位宽自动展开；差分可根据源端 pin 列表中的 P/N 对和本地规则提示识别。
+
+4. build_analysis_context_groups
    按源端器件 pin 体系和 hard-case 状态隔离模型上下文。
    链路族、对端器件、映射族作为组内上下文传给 subagent，不再作为硬切分维度。
 
-4. pre_resolve_candidates
+5. pre_resolve_candidates
    仅做轻量预裁决：候选分数高且明显领先时自动输出，其余进入模型分析。
 
-5. build_model_resolution_tasks
+6. build_model_resolution_tasks
    为每个 context_group 导出隔离 subagent 任务包，并把同一 link_family 的共享链路语义整理为 link_family_profiles。
 
-6. semantic subagent resolution
+7. semantic subagent resolution
    模型读取任务包，结合框图表链路上下文、自然语言规则和 pin 列表做语义映射。
 
-7. merge_decisions / validate_mapping / render_template_sheets
-   合并、校验并渲染 output/signal_interface.xlsx。
+8. merge_decisions / validate_mapping / render_template_sheets
+   合并、校验并渲染 output/signal_interface_YYYYMMDD_HHMMSS.xlsx。
 ```
 
 ## 规则维护
@@ -55,6 +59,14 @@ stage=all 只做脚本冒烟验证，不会自动调用语义 subagent。
 ```text
 rules/natural_language_mapping_rules_template.md
 ```
+
+运行时可通过 `--project-rules` / `--user-rules` 追加外部规则文件。脚本会合并为：
+
+```text
+intermediate/combined_mapping_rules.md
+```
+
+`infer_signal_shapes` 和 `build_model_resolution_tasks` 会读取同一份 combined rules，保证前置形态判断和 subagent 规则召回使用一致的规则上下文。
 
 规则分四层：
 
@@ -141,7 +153,7 @@ intermediate/model_resolution_tasks/subagent_task_plan.json
 输出 Excel：
 
 ```text
-output/signal_interface.xlsx
+output/signal_interface_YYYYMMDD_HHMMSS.xlsx
 ```
 
 约束：
@@ -184,9 +196,9 @@ output/signal_interface.xlsx
 1. 运行 model_tasks，生成 subagent_task_plan 和 TASK_xxx.json。
 2. 检查 intermediate/signal_shape_inference.jsonl，确认 bus/differential 的前置判断是否合理。
 3. 阅读 subagent_task_plan.md/json，按 context_group 规划 subagent 批次。
-4. 让 subagent 分别读取分配到的 TASK_xxx.json，先看 signal_shape_info、diagram_link_context、sheet_device_context、pin_allocation_context 和 link_family_profiles，再输出 batch JSONL。
-5. 合并 batch JSONL 为 intermediate/model_resolved_decisions.jsonl。
-6. 运行 finish，输出 output/signal_interface.xlsx。
+4. 让 subagent 分别读取分配到的 TASK_xxx.json，先看 signal_shape_info、diagram_link_context、sheet_device_context、pin_allocation_context 和 link_family_profiles，再写入 TASK 的 output_contract.output_file。
+5. 运行 finish；主控流程会先检查所有 subagent output_file，失败则生成 failed_subagent_rerun_plan.md 并中止。
+6. 检查通过后自动合并为 intermediate/model_resolved_decisions.jsonl，并输出 output/signal_interface_YYYYMMDD_HHMMSS.xlsx。
 7. 检查 validation_report.json 和 unresolved 列表。
 ```
 
@@ -210,7 +222,13 @@ python script/run_pipeline.py \
   --stage model_tasks
 ```
 
-模型分析后，把结果写入：
+模型分析后，把每个 TASK 的结果写入：
+
+```text
+data/{uuid}/intermediate/subagent_outputs/TASK_xxx.jsonl
+```
+
+`stage=finish` 会检查并合并所有 TASK 输出，生成：
 
 ```text
 data/{uuid}/intermediate/model_resolved_decisions.jsonl

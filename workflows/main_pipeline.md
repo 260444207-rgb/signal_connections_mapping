@@ -20,6 +20,8 @@ normalize_connections
   ↓
 generate_candidates
   ↓
+infer_signal_shapes
+  ↓
 build_analysis_context_groups
   ↓
 pre_resolve_candidates
@@ -27,6 +29,8 @@ pre_resolve_candidates
 build_model_resolution_tasks
   ↓
 semantic subagent resolution
+  ↓
+check_subagent_outputs
   ↓
 merge_decisions
   ↓
@@ -60,6 +64,12 @@ render_template_sheets
 候选分数只用于辅助，不代表最终语义判断。
 
 `available_pins` 必须来自入参 `pin_info.json` 中当前源端器件编码对应的 pin 列表。如果找不到该编码，`available_pins` 为空，该器件后续跳过语义模型分析，相关连接保持 unresolved。
+
+### infer_signal_shapes
+
+读取 `normalized_connections.jsonl`、`candidate_mappings.jsonl`、`pin_info.json` 和合并后的自然语言规则，生成 `signal_shape_inference.jsonl`，并把 `signal_shape`、`expected_physical_pin_count`、`signal_shape_info` 写回 `normalized_connections.jsonl`。
+
+该阶段只判断 scalar / bus / differential 和预计物理 pin 数，不选择具体 pin；后续 subagent 必须结合当前源端器件 pin 列表和语义上下文独立裁决 `selected_pin` / `selected_pins`。
 
 ### build_analysis_context_groups
 
@@ -127,8 +137,6 @@ intermediate/model_resolution_tasks/
 
 `link_family_profiles` 会把同一 link_family 的共享链路语义注入到所有相关 source_device subagent 中。它用于借鉴链路拓扑、方向、实例索引和用户说明，不用于脚本裁决 pin。
 
-`infer_signal_shapes` 在语义映射前输出 `intermediate/signal_shape_inference.jsonl`，并把每条连接的 `signal_shape_info` 写回 `normalized_connections.jsonl`。它会用自动总线宽度识别、源端 pin 列表 P/N 对和本地自然语言规则提示，先判断连接是 scalar、bus 还是 differential。
-
 `sheet_device_context` 会告诉 subagent：一个连接 sheet 表示一个物理器件实例，sheet 内不同 block_id/block_name 只是该器件的逻辑块/端口视图。`pin_allocation_context` 会告诉 subagent：前置 signal_shape_info、同一 pin 空间、以及普通 scalar 的 pin 默认不可被不同语义 line_id 重复使用，除非同一源端口扇出到多个目标端口、同网、同 base_connection、多端口别名或用户规则明确允许。
 
 在真正启动 subagent 前，应先阅读本地持久化的 `subagent_task_plan.md`，确认每个 subagent/context group 的源端器件、组内链路族、目标上下文、line 数量和任务文件名。不要再因为同一个源端器件内部的链路族或目标不同而拆分 subagent。
@@ -142,17 +150,26 @@ subagent 使用 `prompts/semantic_mapping_resolver.md`。
 模型输出写入：
 
 ```text
-intermediate/model_resolved_decisions.jsonl
+intermediate/subagent_outputs/TASK_xxx.jsonl
 ```
 
 信息不足时输出 `unresolved`。
 
-### merge / validate / render
+### check / merge / validate / render
 
-合并脚本预裁决和模型裁决，校验后渲染正式 Excel：
+`finish` 前先运行 `check_subagent_outputs`。它按 `subagent_task_plan.json` 检查每个 TASK 的 `output_contract.output_file` 是否存在、是否为 JSONL、line_id 是否完整覆盖。检查失败会生成：
 
 ```text
-output/signal_interface.xlsx
+intermediate/subagent_output_check.json
+intermediate/failed_subagent_rerun_plan.md
+```
+
+并中止，不进入合并、校验和渲染。失败 subagent 必须重新启动分析并写入对应 output_file。
+
+全部通过后自动合并为 `intermediate/model_resolved_decisions.jsonl`，再合并脚本预裁决和模型裁决，校验后渲染正式 Excel：
+
+```text
+output/signal_interface_YYYYMMDD_HHMMSS.xlsx
 ```
 
 ## 4. 正式输出约束
@@ -190,6 +207,14 @@ output/signal_interface.xlsx
 ```text
 rules/natural_language_mapping_rules_template.md
 ```
+
+命令行 `--project-rules` / `--user-rules` 会追加外部自然语言规则。运行 prepare/model_tasks/finish 时，脚本会在 task 目录中生成：
+
+```text
+intermediate/combined_mapping_rules.md
+```
+
+前置 `infer_signal_shapes` 和 subagent 任务构建都读取这份合并后的规则，避免两个阶段看到不同规则。
 
 通用硬件规则：
 

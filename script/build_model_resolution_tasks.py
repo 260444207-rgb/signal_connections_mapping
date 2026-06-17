@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from build_analysis_context_groups import infer_link_family, infer_mapping_family
-from common import ensure_dir, iter_jsonl, pins_for_part, read_json, resolve_catalog_key, write_json
+from common import ensure_dir, iter_jsonl, load_pin_catalog, pins_for_part, read_json, resolve_catalog_key, write_json
 
 
 def load_by_line_id(path: str | Path) -> Dict[str, Dict[str, Any]]:
@@ -40,6 +40,8 @@ def cleanup_model_task_output_dir(output_dir: Path) -> None:
             for path in tasks_dir.glob(pattern):
                 if path.is_file():
                     path.unlink()
+    subagent_outputs_dir = output_dir.parent / "subagent_outputs"
+    subagent_outputs_dir.mkdir(parents=True, exist_ok=True)
 
 
 def source_part_label(group: Dict[str, Any]) -> str:
@@ -598,15 +600,16 @@ def render_subagent_task_plan(tasks: List[Dict[str, Any]], skipped_tasks: List[D
         "",
         "在启动语义 subagent 前，先按本计划检查每个任务包。每个 subagent 只处理自己的 task_json 中列出的 line_id。",
         "",
-        "| # | task | 器件类型 | 源端器件编码 | context_group | link_family | lines | task_json | prompt | 要做什么 |",
-        "|---|---|---|---|---|---|---:|---|---|---|",
+        "| # | task | 器件类型 | 源端器件编码 | context_group | link_family | lines | task_json | output_file | prompt | 要做什么 |",
+        "|---|---|---|---|---|---|---:|---|---|---|---|",
     ]
     for i, task in enumerate(tasks, start=1):
         family_label = ", ".join(task.get("link_family_ids", [])[:4]) or task.get("link_family_id", "")
         task_json = Path(task.get("task_json", ""))
+        output_file = Path(task.get("output_file", ""))
         prompt_file = Path(task.get("prompt_file", ""))
         lines.append(
-            "| {i} | {task_name} | {device} | {part} | {context} | {family} | {lines_count} | {task_json} | {prompt} | {goal} |".format(
+            "| {i} | {task_name} | {device} | {part} | {context} | {family} | {lines_count} | {task_json} | {output_file} | {prompt} | {goal} |".format(
                 i=i,
                 task_name=task.get("task_display_name", ""),
                 device=task.get("readable_device_type", ""),
@@ -615,6 +618,7 @@ def render_subagent_task_plan(tasks: List[Dict[str, Any]], skipped_tasks: List[D
                 family=family_label,
                 lines_count=task.get("line_count", 0),
                 task_json=f"{task_json.parent.name}/{task_json.name}" if task_json.parent.name else task_json.name,
+                output_file=f"{output_file.parent.name}/{output_file.name}" if output_file.parent.name else output_file.name,
                 prompt=f"{prompt_file.parent.name}/{prompt_file.name}" if prompt_file.parent.name else prompt_file.name,
                 goal=str(task.get("task_goal", "")).replace("|", "/"),
             )
@@ -776,7 +780,8 @@ def render_shared_prompt() -> str:
         "",
         "你是当前 TASK JSON 的硬件信号接口映射专家。只能分析被分配的 task_json 中列出的 line_id。",
         "请按 prompts/semantic_mapping_resolver.md 的语义分析方法处理，优先使用链路族语义理解全局功能，再在链路约束下复用器件类型局部 pin 规则。",
-        "本任务的结果必须回写给调用方指定的 JSON/JSONL；只在聊天回复中解释而不产出 mapping_decision 文件，视为未完成。",
+        "本任务的结果必须写入 task_json.output_contract.output_file。只在聊天回复中解释或输出 JSON、但不写入该文件，视为未完成。",
+        "最终聊天回复只能报告 status、output_file、decision_count；不要把完整 JSON 结果贴在聊天中代替写文件。",
         "",
         "## 必须遵守",
         "",
@@ -785,7 +790,7 @@ def render_shared_prompt() -> str:
         "3. 每个输入 line_id 必须输出一个 mapping_decision。",
         "4. 一条逻辑连接对应多个物理 pin 时，在同一个 decision 中输出 selected_pins 数组；不要自行新增 line_id。",
         "5. 信息不足时输出 selected_pin 为空、decision_type=unresolved、confidence=Low、needs_human_review=true。",
-        "6. 输出必须是 JSON 数组，不要 Markdown 包裹。",
+        "6. 输出文件格式必须是 JSONL：每行一个 mapping_decision object，不要 Markdown 包裹，不要 JSON 数组。",
         "7. 当前 context_group 代表同一个源端器件 pin 体系；可以共享该器件的 pin 功能理解，但每条 line_id 的实例编号、对端端口和网络名必须独立判断。",
         "8. 必须先阅读 task_json.diagram_link_context；它来自输入框图表/link_info/链路信息 sheet，用于判断链路归属、上下游角色、实例编号和特殊连接方式。",
         "9. 必须阅读 task_json.matched_rule_sections；它只是脚本召回的候选自然语言规则块，不能替代逐行语义判断。",
@@ -803,22 +808,13 @@ def render_shared_prompt() -> str:
         "21. LINE_xxx、line、包含 line 的连线名称是画图工具默认连线名，不是有效网络名；不得直接复制到 net_name/net_names，需要网络名时必须结合信号语义生成。",
         "22. 一条逻辑连接对应多个物理 pin 时只输出 selected_pins/net_names 数组；渲染阶段会按 主连线ID#数字 展开输出行。",
         "23. signal_shape / signal_shape_info 是进入映射分析前的前置形态判断结果，来自自动规则、pin 列表 P/N 对识别和本地自然语言规则提示。必须先读取它；只有 needs_model_shape_review=true、证据冲突或明显不符合连接语义时，才在 analysis 中说明并修正判断。",
+        "24. 写文件前自检：输出行数必须等于 task_json.output_contract.expected_line_ids 数量；写入后必须重新读取 output_file 并确认 line_id 集合完全一致。",
         "",
         "## 输出格式",
         "",
-        "[",
-        "  {",
-        '    "line_id": "",',
-        '    "selected_pin": "",',
-        '    "selected_pins": [],',
-        '    "decision_type": "model_resolved|unresolved",',
-        '    "confidence": "High|Medium|Low",',
-        '    "analysis": "",',
-        '    "net_name": "",',
-        '    "net_names": [],',
-        '    "needs_human_review": false',
-        "  }",
-        "]",
+        "写入 task_json.output_contract.output_file，每行一个 JSON object：",
+        "",
+        '{"line_id":"","selected_pin":"","selected_pins":[],"decision_type":"model_resolved|unresolved","confidence":"High|Medium|Low","analysis":"","net_name":"","net_names":[],"needs_human_review":false}',
         "",
         "## 输入文件",
         "",
@@ -835,22 +831,25 @@ def build_model_resolution_tasks(
     needs_model_path: str | Path,
     output_dir: str | Path,
     pins_path: str | Path | None = None,
+    rules_path: str | Path | None = None,
 ) -> Dict[str, Any]:
     output_dir = ensure_dir(output_dir)
     cleanup_model_task_output_dir(output_dir)
     tasks_dir = ensure_dir(output_dir / "tasks")
+    subagent_outputs_dir = ensure_dir(output_dir.parent / "subagent_outputs")
     shared_prompt_path = output_dir / "subagent_task_prompt.md"
     shared_prompt_path.write_text(render_shared_prompt(), encoding="utf-8")
     normalized_by_id = load_by_line_id(normalized_path)
     candidates_by_id = load_by_line_id(candidates_path)
 
-    # 加载 block_info_pin.json，构建 code -> [pin_list] 映射
+    # Use the same pin catalog loader as candidate generation and validation so
+    # TASK payloads support native JSON, {"pins": ...}, CSV, JSONL, and Excel.
     device_pins: Dict[str, List[str]] = {}
     if pins_path and Path(pins_path).exists():
-        device_pins = read_json(pins_path, {})
+        device_pins = load_pin_catalog(pins_path)
     skill_root = Path(__file__).resolve().parents[1]
-    rules_path = skill_root / "rules" / "natural_language_mapping_rules_template.md"
-    rules_text = rules_path.read_text(encoding="utf-8") if rules_path.exists() else ""
+    resolved_rules_path = Path(rules_path) if rules_path else skill_root / "rules" / "natural_language_mapping_rules_template.md"
+    rules_text = resolved_rules_path.read_text(encoding="utf-8") if resolved_rules_path.exists() else ""
     rule_blocks = extract_rule_blocks(rules_text)
     needs_rows = list(iter_jsonl(needs_model_path))
     needs_by_id = {row["line_id"]: row for row in needs_rows}
@@ -894,6 +893,15 @@ def build_model_resolution_tasks(
             continue
 
         task_display_name = f"{readable_device_type(group)} / {source_part_label(group)} / {readable_family_scope(group)}"
+        output_file = subagent_outputs_dir / f"{file_stem}.jsonl"
+        output_contract = {
+            "must_write_file": True,
+            "output_file": str(output_file),
+            "format": "jsonl",
+            "one_mapping_decision_per_line": True,
+            "expected_line_ids": line_ids,
+            "failure_policy": "如果该文件不存在、不是 JSONL、line_id 缺失/重复/额外，主控流程必须判定该 subagent 失败并重新启动该 TASK 分析；不得进入 finish。",
+        }
         task_payload = {
             "task_id": file_stem,
             "task_display_name": task_display_name,
@@ -917,15 +925,17 @@ def build_model_resolution_tasks(
             ],
             "source_device_pins": source_pins_map,
             "rule_source": {
-                "file": str(rules_path),
+                "file": str(resolved_rules_path),
                 "usage": "TASK JSON 只内嵌 matched_rule_sections；完整自然语言规则从该文件读取。",
             },
             "matched_rule_sections": match_rule_sections(rule_blocks, group, group_nc),
             "needs_model_resolution": [slim_need_row(needs_by_id[line_id]) for line_id in line_ids],
+            "output_contract": output_contract,
             "required_output": {
-                "type": "json_array",
+                "type": "jsonl_file",
                 "schema": "schemas/mapping_decision.schema.json",
                 "one_decision_per_line_id": True,
+                "write_to_file": str(output_file),
             },
         }
         task_json = tasks_dir / f"{file_stem}.json"
@@ -938,6 +948,8 @@ def build_model_resolution_tasks(
             "line_ids": line_ids,
             "line_count": len(line_ids),
             "task_json": str(task_json),
+            "output_file": str(output_file),
+            "output_contract": output_contract,
             "prompt_file": str(shared_prompt_path),
             "recommended_subagent": group.get("recommended_subagent", "semantic-mapping-subagent"),
             "readable_device_type": readable_device_type(group),
@@ -969,6 +981,7 @@ def build_model_resolution_tasks(
         "skipped_task_count": len(skipped_tasks),
         "skipped_line_count": sum(t["line_count"] for t in skipped_tasks),
         "tasks_dir": str(tasks_dir),
+        "subagent_outputs_dir": str(subagent_outputs_dir),
         "skipped_tasks": skipped_tasks,
         "tasks": tasks,
     }
@@ -986,6 +999,7 @@ def build_model_resolution_tasks(
         "subagent_task_plan_md": str(plan_md),
         "subagent_task_prompt_md": str(shared_prompt_path),
         "tasks_dir": str(tasks_dir),
+        "subagent_outputs_dir": str(subagent_outputs_dir),
         "tasks": [
             {
                 "task_id": task.get("task_id", ""),
@@ -995,6 +1009,7 @@ def build_model_resolution_tasks(
                 "source_part_id": task.get("source_part_id", ""),
                 "line_count": task.get("line_count", 0),
                 "task_json": task.get("task_json", ""),
+                "output_file": task.get("output_file", ""),
                 "prompt_file": task.get("prompt_file", ""),
             }
             for task in tasks
@@ -1012,6 +1027,7 @@ def main() -> None:
     parser.add_argument("--needs-model", required=True)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--pins", default=None, help="block_info_pin.json 路径，用于注入源器件真实 pin 列表")
+    parser.add_argument("--rules", default=None, help="自然语言规则文件路径；默认使用 skill 内置模板")
     args = parser.parse_args()
     result = build_model_resolution_tasks(
         args.context_groups,
@@ -1020,6 +1036,7 @@ def main() -> None:
         args.needs_model,
         args.output_dir,
         args.pins,
+        args.rules,
     )
     print(f"[OK] model resolution tasks: {result['task_count']} groups, {result['line_count']} lines -> {args.output_dir}")
 

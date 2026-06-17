@@ -108,22 +108,20 @@ TX 控制链路规定 SROC 的 TX_SW0 控制 TXVGA0 的 EN_CHA/EN_CHB。
 
 ## 输出
 
-只输出 JSON 数组，不要 Markdown 包裹。
+如果当前任务 JSON 包含 `output_contract.output_file`，必须把结果写入该路径，格式为 JSONL：每行一个 mapping_decision object。只在聊天中输出 JSON 或解释分析、但没有写入 `output_contract.output_file`，视为未完成。
+
+写入后必须重新读取输出文件自检：
+
+```text
+1. line_id 集合必须等于 task_json.output_contract.expected_line_ids。
+2. 不得遗漏、重复或额外输出 line_id。
+3. 每一行必须是一个 JSON object，不得写成 JSON 数组。
+```
+
+聊天回复只报告 `status`、`output_file`、`decision_count` 和是否通过自检。
 
 ```json
-[
-  {
-    "line_id": "",
-    "selected_pin": "",
-    "selected_pins": [],
-    "decision_type": "model_resolved",
-    "confidence": "High|Medium|Low",
-    "analysis": "",
-    "net_name": "",
-    "net_names": [],
-    "needs_human_review": false
-  }
-]
+{"line_id":"","selected_pin":"","selected_pins":[],"decision_type":"model_resolved|unresolved","confidence":"High|Medium|Low","analysis":"","net_name":"","net_names":[],"needs_human_review":false}
 ```
 
 ## 示例判断

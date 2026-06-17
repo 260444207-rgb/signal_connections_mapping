@@ -16,6 +16,19 @@ from common import (
     write_jsonl,
 )
 
+GENERIC_RULE_TERMS = {
+    "LINE",
+    "INPUT",
+    "OUTPUT",
+    "GPIO",
+    "ALERT",
+    "OUT",
+    "IN",
+    "CLK",
+    "CTRL",
+    "SIG",
+}
+
 
 def load_candidate_map(path: str | Path) -> Dict[str, Dict[str, Any]]:
     return {row["line_id"]: row for row in iter_jsonl(path)}
@@ -156,6 +169,17 @@ def looks_like_differential_function(row: Dict[str, Any]) -> bool:
     return bool(re.search(r"\b(RFIN|RFOUT|RF_IN|RF_OUT|DAC|ADC|AFE|IQ|CLK)\d*", blob))
 
 
+def iter_rule_sections(rule_text: str) -> List[str]:
+    starts = [m.start() for m in re.finditer(r"^### RULE:\s*", rule_text, flags=re.MULTILINE)]
+    sections: List[str] = []
+    for idx, start in enumerate(starts):
+        next_rule = starts[idx + 1] if idx + 1 < len(starts) else len(rule_text)
+        next_heading = re.search(r"^##\s+", rule_text[start + 1:], flags=re.MULTILINE)
+        end = min(next_rule, start + 1 + next_heading.start() if next_heading else next_rule)
+        sections.append(rule_text[start:end].strip())
+    return sections
+
+
 def matching_rule_hint(row: Dict[str, Any], rule_text: str) -> Dict[str, Any]:
     """
     自然语言规则只用于前置形态提示，不在脚本里做 pin 裁决。
@@ -163,23 +187,31 @@ def matching_rule_hint(row: Dict[str, Any], rule_text: str) -> Dict[str, Any]:
     """
     if not rule_text:
         return {}
-    sections = re.split(r"(?=^### RULE:\s*)", rule_text, flags=re.MULTILINE)
-    row_terms = [
-        normalize_text(row.get("source_part_id", "")),
-        normalize_text(row.get("source_port", "")),
-        normalize_text(row.get("target_port", "")),
-        normalize_text(row.get("connection_name", "")),
-        normalize_text(row.get("link_family_id", "")),
+    sections = iter_rule_sections(rule_text)
+    raw_terms = [
+        ("part", normalize_text(row.get("source_part_id", ""))),
+        ("source_port", normalize_text(row.get("source_port", ""))),
+        ("target_port", normalize_text(row.get("target_port", ""))),
+        ("connection_name", normalize_text(row.get("connection_name", ""))),
+        ("link_family", normalize_text(row.get("link_family_id", ""))),
     ]
-    row_terms = [x.upper() for x in row_terms if len(x) >= 3]
+    row_terms = []
+    for kind, value in raw_terms:
+        term = value.upper()
+        if len(term) < 3:
+            continue
+        if term.startswith("LINE"):
+            continue
+        if term.isdigit():
+            continue
+        row_terms.append((kind, term))
     matched_terms: List[str] = []
     hints: List[str] = []
     matched_rule_titles: List[str] = []
+    strong_hint = False
     for section in sections:
-        if not section.lstrip().startswith("### RULE:"):
-            continue
         upper_section = section.upper()
-        section_terms = [term for term in row_terms if term and term in upper_section]
+        section_terms = [(kind, term) for kind, term in row_terms if term and term in upper_section]
         if not section_terms:
             continue
         section_hints = []
@@ -189,7 +221,14 @@ def matching_rule_hint(row: Dict[str, Any], rule_text: str) -> Dict[str, Any]:
             section_hints.append("bus")
         if not section_hints:
             continue
-        matched_terms.extend(section_terms)
+        specific_terms = [
+            term for kind, term in section_terms
+            if kind in {"source_port", "target_port", "connection_name", "link_family"}
+            and term not in GENERIC_RULE_TERMS
+        ]
+        if specific_terms:
+            strong_hint = True
+        matched_terms.extend(term for _, term in section_terms)
         hints.extend(section_hints)
         title = section.splitlines()[0].strip() if section.splitlines() else ""
         if title:
@@ -200,6 +239,7 @@ def matching_rule_hint(row: Dict[str, Any], rule_text: str) -> Dict[str, Any]:
         "matched_terms": sorted(set(matched_terms))[:8],
         "matched_rule_titles": matched_rule_titles[:5],
         "shape_hints": sorted(set(hints)),
+        "strong_shape_hint": strong_hint,
         "basis": "matched_natural_language_rule_block_contains_shape_hint",
     }
 
@@ -234,7 +274,7 @@ def infer_signal_shape_for_row(
         expected_count = 2
         reasons.append("RF/DAC/ADC-like connection and source pin list has matching P/N pair")
         evidence["matched_differential_pin_pair"] = diff_pair
-    elif "differential" in rule_hint.get("shape_hints", []) and diff_pair:
+    elif rule_hint.get("strong_shape_hint") and "differential" in rule_hint.get("shape_hints", []) and diff_pair:
         shape = "differential"
         expected_count = 2
         confidence = "rule_hint"
@@ -251,7 +291,7 @@ def infer_signal_shape_for_row(
     else:
         evidence["source_pins_available"] = True
 
-    if shape == "scalar" and rule_hint.get("shape_hints"):
+    if shape == "scalar" and rule_hint.get("strong_shape_hint"):
         confidence = "model_hint"
         needs_model_shape_review = True
         reasons.append("natural language rule has shape hint but automatic evidence is insufficient")
