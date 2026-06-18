@@ -49,8 +49,10 @@ prompts/semantic_mapping_resolver.md
 ## 执行要求
 
 ```text
-1. subagent 必须读取分配给自己的所有 TASK_xxx.json。
-2. subagent 必须把结果写入 TASK JSON 中 `output_contract.output_file` 指定的 JSONL 文件。
+1. 平衡模式下，一个源端器件 subagent 可以顺序读取同一 `subagent_session_id` 下的多个小 `TASK_xxx.json`；不要因为 TASK 变小就为同一源端器件启动多个互不共享状态的 subagent。
+2. subagent 必须先读取 `task_scope.global_link_plan_file` 和 `task_scope.pin_allocation_state_file`，再处理当前 TASK。
+3. subagent 必须把结果写入 TASK JSON 中 `output_contract.output_file` 指定的 JSONL 文件。
+4. 每完成一个 TASK，必须更新 `task_scope.pin_allocation_state_file`，记录已用 pin、允许复用 pin、冲突和 completed_task_ids。
 3. JSONL 每行一个 mapping_decision object，不要 Markdown 包裹。
 4. 输出前必须自检：assigned_line_ids == output_line_ids。
 5. 输出前必须自检：没有重复 line_id，没有额外 line_id。

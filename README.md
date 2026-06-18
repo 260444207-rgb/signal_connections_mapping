@@ -144,11 +144,15 @@ matched_rule_sections
 导出 `model_tasks` 时会先生成全局任务规划：
 
 ```text
+intermediate/model_resolution_tasks/global_link_plan.md
+intermediate/model_resolution_tasks/global_link_plan.json
+intermediate/model_resolution_tasks/subagent_session_plan.md
+intermediate/model_resolution_tasks/subagent_session_plan.json
 intermediate/model_resolution_tasks/subagent_task_plan.md
 intermediate/model_resolution_tasks/subagent_task_plan.json
 ```
 
-这里会持久化列出每个 subagent/context group 要处理的源端器件、组内 link families、link_family_source、目标上下文、line 数量、任务目标和任务文件名。任务包放在 `intermediate/model_resolution_tasks/tasks/`，文件名类似 `TASK_01_SROC_302078562_MULTI_LINK_61889c68782d.json`，方便用户按器件类型检查。所有任务共用 `intermediate/model_resolution_tasks/subagent_task_prompt.md`，不再为每个器件重复生成一份几乎相同的 md。
+这里会持久化列出全局 link_family 摘要、每个 source_device subagent session、session 内小 TASK 的顺序、pin_allocation_state_file、line 数量、任务目标和任务文件名。平衡模式下，小 TASK 先按源端物理器件实例切分，再按链路/信号语义切分，最后才按 50 条左右的数量上限截断；数量不是第一切分依据。subagent 数量仍按源端器件 pin 体系控制，同一个 session 的多个 TASK 由同一个 subagent 顺序处理。任务包放在 `intermediate/model_resolution_tasks/tasks/`，文件名类似 `TASK_01_SROC_302078562_MULTI_LINK_61889c68782d_PART01.json`，方便用户按器件类型和批次检查。所有任务共用 `intermediate/model_resolution_tasks/subagent_task_prompt.md`，不再为每个器件重复生成一份几乎相同的 md。
 
 ## 输出约束
 
@@ -197,8 +201,8 @@ output/signal_interface_YYYYMMDD_HHMMSS.xlsx
 ```text
 1. 运行 model_tasks，生成 subagent_task_plan 和 TASK_xxx.json。
 2. 检查 intermediate/signal_shape_inference.jsonl，确认 bus/differential 的前置判断是否合理。
-3. 阅读 subagent_task_plan.md/json，按 context_group 规划 subagent 批次。
-4. 让 subagent 分别读取分配到的 TASK_xxx.json，先看 signal_shape_info、diagram_link_context、sheet_device_context、pin_allocation_context 和 link_family_profiles，再写入 TASK 的 output_contract.output_file。
+3. 阅读 global_link_plan.md/json、subagent_session_plan.md/json 和 subagent_task_plan.md/json，按 source_device session 规划 subagent 批次。
+4. 让每个 subagent 顺序读取同一 session 下的 TASK_xxx.json，先看 task_scope、signal_shape_info、diagram_link_context、sheet_device_context、pin_allocation_context、link_family_profiles 和 pin_allocation_state_file，再写入 TASK 的 output_contract.output_file，并更新 state 文件。
 5. 运行 finish；主控流程会先检查所有 subagent output_file，失败则生成 failed_subagent_rerun_plan.md 并中止。
 6. 检查通过后自动合并为 intermediate/model_resolved_decisions.jsonl，并输出 output/signal_interface_YYYYMMDD_HHMMSS.xlsx。
 7. 检查 validation_report.json 和 unresolved 列表。

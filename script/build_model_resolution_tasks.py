@@ -4,12 +4,15 @@
 from __future__ import annotations
 
 import argparse
+from collections import defaultdict
 import re
 from pathlib import Path
 from typing import Any, Dict, List
 
-from build_analysis_context_groups import infer_link_family, infer_mapping_family
+from build_analysis_context_groups import analysis_strategy_for_group, infer_link_family, infer_mapping_family
 from common import ensure_dir, iter_jsonl, load_pin_catalog, pins_for_part, read_json, resolve_catalog_key, write_json
+
+DEFAULT_MAX_LINES_PER_MODEL_TASK = 50
 
 
 def load_by_line_id(path: str | Path) -> Dict[str, Dict[str, Any]]:
@@ -25,8 +28,12 @@ def cleanup_model_task_output_dir(output_dir: Path) -> None:
         "TASK_*.prompt.md",
         "global_subagent_plan.json",
         "global_subagent_plan.md",
+        "global_link_plan.json",
+        "global_link_plan.md",
         "subagent_task_plan.json",
         "subagent_task_plan.md",
+        "subagent_session_plan.json",
+        "subagent_session_plan.md",
         "index.json",
         "manifest.json",
         "subagent_task_prompt.md",
@@ -42,6 +49,12 @@ def cleanup_model_task_output_dir(output_dir: Path) -> None:
                     path.unlink()
     subagent_outputs_dir = output_dir.parent / "subagent_outputs"
     subagent_outputs_dir.mkdir(parents=True, exist_ok=True)
+    subagent_state_dir = output_dir.parent / "subagent_state"
+    if subagent_state_dir.exists():
+        for path in subagent_state_dir.glob("*.json"):
+            if path.is_file():
+                path.unlink()
+    subagent_state_dir.mkdir(parents=True, exist_ok=True)
 
 
 def source_part_label(group: Dict[str, Any]) -> str:
@@ -98,6 +111,163 @@ def task_file_stem(task_index: int, group: Dict[str, Any], context_id: str) -> s
     family = readable_family_scope(group)
     context_hash = context_id.replace("CTX_", "")
     return f"TASK_{task_index:02d}_{device}_{part}_{family}_{context_hash}"
+
+def line_family_for_row(row: Dict[str, Any], fallback_family_id: str) -> str:
+    family_ids = link_family_ids_for_row(row, fallback_family_id)
+    return family_ids[0] if family_ids else fallback_family_id
+
+
+def physical_device_instance_id(row: Dict[str, Any]) -> str:
+    sheet = row.get("source_sheet_name") or row.get("output_sheet_name") or "UNKNOWN_SHEET"
+    part_id = row.get("source_part_id", "") or "UNKNOWN_PART"
+    return f"SHEET:{sheet}|PART:{part_id}"
+
+
+def line_scope_key(row: Dict[str, Any], group: Dict[str, Any]) -> tuple[str, str, str]:
+    """
+    小 TASK 的切分维度。
+
+    subagent 仍按源端器件 pin 体系执行；这里仅把同一个 subagent 里的输入切小。
+    小 TASK 必须先守住 physical_device_instance_id 边界，再按链路族和映射族切分。
+    link_instance_id 不作为硬切分维度，只用于排序和上下文；否则重复链路会产生过多碎片 TASK。
+    """
+    fallback_family = group.get("link_family_id") or "LOCAL_DEVICE_MAPPING"
+    return (
+        normalize_match_text(physical_device_instance_id(row)),
+        normalize_match_text(line_family_for_row(row, fallback_family)),
+        normalize_match_text(infer_mapping_family(row)),
+    )
+
+
+def chunk_items(items: List[str], size: int) -> List[List[str]]:
+    if size <= 0:
+        return [items]
+    return [items[i:i + size] for i in range(0, len(items), size)]
+
+
+def split_balanced_line_tasks(
+    group: Dict[str, Any],
+    rows: List[Dict[str, Any]],
+    max_lines_per_task: int = DEFAULT_MAX_LINES_PER_MODEL_TASK,
+) -> List[List[str]]:
+    buckets: Dict[tuple[str, str, str], List[Dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        buckets[line_scope_key(row, group)].append(row)
+
+    keyed_chunks: List[tuple[str, List[str]]] = []
+    for key in sorted(buckets):
+        bucket_rows = sorted(
+            buckets[key],
+            key=lambda row: (
+                normalize_match_text(row.get("source_block_name")),
+                normalize_match_text(row.get("source_port")),
+                normalize_match_text(row.get("link_instance_id")),
+                normalize_match_text(row.get("target_block_name")),
+                normalize_match_text(row.get("target_port")),
+                normalize_match_text(row.get("connection_id")),
+                normalize_match_text(row.get("line_id")),
+            ),
+        )
+        instance_id = key[0]
+        for chunk in chunk_items([row["line_id"] for row in bucket_rows], max_lines_per_task):
+            keyed_chunks.append((instance_id, chunk))
+
+    packed: List[List[str]] = []
+    current: List[str] = []
+    current_instance = ""
+    for instance_id, chunk in keyed_chunks:
+        if current and instance_id != current_instance:
+            packed.append(current)
+            current = []
+            current_instance = ""
+        if len(chunk) >= max_lines_per_task:
+            if current:
+                packed.append(current)
+                current = []
+                current_instance = ""
+            packed.append(chunk)
+            continue
+        if current and len(current) + len(chunk) > max_lines_per_task:
+            packed.append(current)
+            current = []
+            current_instance = ""
+        if not current:
+            current_instance = instance_id
+        current.extend(chunk)
+    if current:
+        packed.append(current)
+    return packed
+
+
+def scoped_group(group: Dict[str, Any], rows: List[Dict[str, Any]], line_ids: List[str]) -> Dict[str, Any]:
+    scoped = dict(group)
+    fallback_family = group.get("link_family_id") or "LOCAL_DEVICE_MAPPING"
+    families = sorted({family for row in rows for family in link_family_ids_for_row(row, fallback_family) if family})
+    mapping_families = sorted({infer_mapping_family(row) for row in rows if infer_mapping_family(row)})
+    link_sources = sorted({
+        "explicit_link_info" if row.get("link_family_id") else (
+            "fallback_device_context" if (families == ["LOCAL_DEVICE_MAPPING"]) else "inferred_from_connection"
+        )
+        for row in rows
+    })
+    target_signatures = sorted({
+        f"DEVICE_INFO:{str(row.get('target_part_id')).upper()}" if row.get("target_part_id")
+        else f"TARGET_CONTEXT:{normalize_match_text(row.get('target_block_name') or row.get('target_block_id') or 'UNKNOWN')}"
+        for row in rows
+    })
+    scoped.update({
+        "line_ids": line_ids,
+        "task_line_count": len(line_ids),
+        "parent_context_group_id": group.get("context_group_id", ""),
+        "link_family_ids": families or group.get("link_family_ids", []),
+        "link_family_id": (families[0] if len(families) == 1 else "SOURCE_DEVICE_CONTEXT") if families else group.get("link_family_id", ""),
+        "link_family_sources": link_sources or group.get("link_family_sources", []),
+        "link_family_source": (link_sources[0] if len(link_sources) == 1 else "mixed_context") if link_sources else group.get("link_family_source", ""),
+        "mapping_families": mapping_families or group.get("mapping_families", []),
+        "mapping_family": (mapping_families[0] if len(mapping_families) == 1 else "MIXED") if mapping_families else group.get("mapping_family", ""),
+        "target_device_signatures": target_signatures or group.get("target_device_signatures", []),
+        "target_device_signature": target_signatures[0] if len(target_signatures) == 1 else "MULTI_TARGET_CONTEXT",
+        "source_sheets": sorted({row.get("source_sheet_name") or row.get("output_sheet_name") or "" for row in rows if row.get("source_sheet_name") or row.get("output_sheet_name")}),
+        "source_block_ids": sorted({row.get("source_block_id", "") for row in rows if row.get("source_block_id")}),
+        "source_device_instances": sorted({
+            row.get("source_block_name") or row.get("source_block_id") or row.get("source_sheet_name") or ""
+            for row in rows
+            if row.get("source_block_name") or row.get("source_block_id") or row.get("source_sheet_name")
+        }),
+        "target_device_instances": sorted({
+            row.get("target_block_name") or row.get("target_block_id") or ""
+            for row in rows
+            if row.get("target_block_name") or row.get("target_block_id")
+        }),
+        "link_instance_ids": sorted({row.get("link_instance_id", "") for row in rows if row.get("link_instance_id")}),
+        "link_member_sheets": sorted({sheet for row in rows for sheet in (row.get("link_member_sheets") or []) if sheet}),
+        "user_link_infos": sorted({row.get("user_link_info", "") for row in rows if row.get("user_link_info")}),
+        "device_role_infos": sorted({row.get("device_role_info", "") for row in rows if row.get("device_role_info")}),
+        "analysis_strategy": analysis_strategy_for_group(
+            families or group.get("link_family_ids", []),
+            mapping_families or group.get("mapping_families", []),
+            group.get("isolation_level", "source_device_context"),
+        ),
+        "notes": "balanced mode: context_group 仍表示源端器件 pin 体系；当前 TASK 是该 subagent 会话内的一个小批次。",
+    })
+    return scoped
+
+
+def pin_state_instances(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    instances: Dict[str, Dict[str, Any]] = {}
+    for row in rows:
+        instance_id = physical_device_instance_id(row)
+        instance = instances.setdefault(instance_id, {
+            "physical_device_instance_id": instance_id,
+            "source_sheet_name": row.get("source_sheet_name") or row.get("output_sheet_name") or "",
+            "source_part_id": row.get("source_part_id", ""),
+            "line_ids": [],
+            "used_pins": [],
+            "allowed_shared_pin_groups": [],
+            "unresolved_conflicts": [],
+        })
+        instance["line_ids"].append(row.get("line_id", ""))
+    return list(instances.values())
 
 
 def build_link_family_summary(groups: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -598,10 +768,10 @@ def render_subagent_task_plan(tasks: List[Dict[str, Any]], skipped_tasks: List[D
     lines = [
         "# Subagent Task Plan",
         "",
-        "在启动语义 subagent 前，先按本计划检查每个任务包。每个 subagent 只处理自己的 task_json 中列出的 line_id。",
+        "在启动语义 subagent 前，先按本计划检查每个任务包。平衡模式下，一个源端器件 subagent 可以顺序处理同一 session 下的多个小 TASK；每个 TASK 只处理自己的 task_json 中列出的 line_id。",
         "",
-        "| # | task | 器件类型 | 源端器件编码 | context_group | link_family | lines | task_json | output_file | prompt | 要做什么 |",
-        "|---|---|---|---|---|---|---:|---|---|---|---|",
+        "| # | task | session | 器件类型 | 源端器件编码 | context_group | link_family | lines | task_json | output_file | prompt | 要做什么 |",
+        "|---|---|---|---|---|---|---|---:|---|---|---|---|",
     ]
     for i, task in enumerate(tasks, start=1):
         family_label = ", ".join(task.get("link_family_ids", [])[:4]) or task.get("link_family_id", "")
@@ -609,9 +779,10 @@ def render_subagent_task_plan(tasks: List[Dict[str, Any]], skipped_tasks: List[D
         output_file = Path(task.get("output_file", ""))
         prompt_file = Path(task.get("prompt_file", ""))
         lines.append(
-            "| {i} | {task_name} | {device} | {part} | {context} | {family} | {lines_count} | {task_json} | {output_file} | {prompt} | {goal} |".format(
+            "| {i} | {task_name} | {session} | {device} | {part} | {context} | {family} | {lines_count} | {task_json} | {output_file} | {prompt} | {goal} |".format(
                 i=i,
                 task_name=task.get("task_display_name", ""),
+                session=task.get("subagent_session_id", ""),
                 device=task.get("readable_device_type", ""),
                 part=task.get("source_part_id", ""),
                 context=task.get("context_group_id", ""),
@@ -642,6 +813,117 @@ def render_subagent_task_plan(tasks: List[Dict[str, Any]], skipped_tasks: List[D
                     reason=item.get("reason", ""),
                 )
             )
+    return "\n".join(lines) + "\n"
+
+
+def render_subagent_session_plan(sessions: List[Dict[str, Any]]) -> str:
+    lines = [
+        "# Subagent Session Plan",
+        "",
+        "平衡模式：subagent 按源端器件 pin 体系启动；每个 subagent 顺序处理自己的多个小 TASK。这样减少单次推理上下文，但不会因为 TASK 变小而启动几十个互不相干的 subagent。",
+        "",
+        "| # | session | 源端器件 | lines | tasks | pin_state | 执行顺序 |",
+        "|---|---|---|---:|---:|---|---|",
+    ]
+    for idx, session in enumerate(sessions, start=1):
+        task_names = [
+            Path(task.get("task_json", "")).name
+            for task in session.get("tasks", [])
+        ]
+        lines.append(
+            "| {idx} | {session_id} | {source} | {lines_count} | {task_count} | {state} | {tasks} |".format(
+                idx=idx,
+                session_id=str(session.get("subagent_session_id", "")).replace("|", "/"),
+                source=str(session.get("source_device_signature", "")).replace("|", "/"),
+                lines_count=session.get("line_count", 0),
+                task_count=len(session.get("tasks", [])),
+                state=str(Path(session.get("pin_allocation_state_file", "")).name).replace("|", "/"),
+                tasks="<br>".join(task_names).replace("|", "/"),
+            )
+        )
+    lines.extend([
+        "",
+        "执行要求：同一个 session 由一个 subagent 顺序处理全部 TASK；每处理完一个 TASK，写入 TASK 的 output_file，并更新 pin_allocation_state_file 中已用 pin、允许复用 pin 和 unresolved 冲突说明。后续 TASK 必须读取该 state 再继续分析。",
+    ])
+    return "\n".join(lines) + "\n"
+
+
+def build_global_link_plan(
+    link_family_summaries: Dict[str, Any],
+    link_family_profiles: Dict[str, Dict[str, Any]],
+    sessions: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    families = []
+    for family_id, summary in sorted(link_family_summaries.items()):
+        profile = link_family_profiles.get(family_id, {})
+        families.append({
+            "link_family_id": family_id,
+            "purpose": "给各 source_device subagent 共享链路级语义；不得作为 pin 裁决结果。",
+            "line_count": summary.get("line_count", 0),
+            "context_group_count": summary.get("context_group_count", 0),
+            "source_device_signatures": summary.get("source_device_signatures", []),
+            "target_device_signatures": summary.get("target_device_signatures", []),
+            "mapping_families": summary.get("mapping_families", []),
+            "analysis_strategies": summary.get("analysis_strategies", []),
+            "link_family_sources": summary.get("link_family_sources", []),
+            "link_instance_ids": profile.get("link_instance_ids", []),
+            "member_sheets": profile.get("member_sheets", []),
+            "user_link_infos": profile.get("user_link_infos", []),
+            "device_role_infos": profile.get("device_role_infos", []),
+            "shared_semantic_hints": profile.get("shared_semantic_hints", []),
+        })
+    return {
+        "execution_mode": "balanced_source_device_sessions",
+        "purpose": "先统一整理链路族/链路实例/器件角色语义，再让各源端器件 subagent 在小 TASK 内逐条选择源端 pin。",
+        "rules": [
+            "global_link_plan 只提供链路级语义和执行规划，不选择 pin。",
+            "每个 subagent_session 对应一个源端器件 pin 体系，可以顺序处理多个小 TASK。",
+            "小 TASK 用于降低单次推理负担；不要因为 TASK 变多就为同一个源端器件启动互不共享 state 的 subagent。",
+            "跨 TASK 的 pin 占用、允许复用和冲突必须通过 pin_allocation_state_file 传递。",
+        ],
+        "link_families": families,
+        "subagent_sessions": [
+            {
+                "subagent_session_id": session.get("subagent_session_id", ""),
+                "source_device_signature": session.get("source_device_signature", ""),
+                "line_count": session.get("line_count", 0),
+                "task_count": len(session.get("tasks", [])),
+                "pin_allocation_state_file": session.get("pin_allocation_state_file", ""),
+            }
+            for session in sessions
+        ],
+    }
+
+
+def render_global_link_plan(plan: Dict[str, Any]) -> str:
+    lines = [
+        "# Global Link Plan",
+        "",
+        plan.get("purpose", ""),
+        "",
+        "## Execution Rules",
+        "",
+    ]
+    for rule in plan.get("rules", []):
+        lines.append(f"- {rule}")
+    lines.extend([
+        "",
+        "## Link Families",
+        "",
+        "| link_family | lines | contexts | sources | mapping_families | user_info |",
+        "|---|---:|---:|---|---|---|",
+    ])
+    for family in plan.get("link_families", []):
+        lines.append(
+            "| {family_id} | {lines_count} | {contexts} | {sources} | {mapping} | {info} |".format(
+                family_id=str(family.get("link_family_id", "")).replace("|", "/"),
+                lines_count=family.get("line_count", 0),
+                contexts=family.get("context_group_count", 0),
+                sources=", ".join(family.get("source_device_signatures", [])[:4]).replace("|", "/"),
+                mapping=", ".join(family.get("mapping_families", [])[:4]).replace("|", "/"),
+                info="; ".join(family.get("user_link_infos", [])[:2]).replace("|", "/"),
+            )
+        )
     return "\n".join(lines) + "\n"
 
 
@@ -778,10 +1060,10 @@ def render_shared_prompt() -> str:
     lines = [
         "# Subagent Model Resolution Task Prompt",
         "",
-        "你是当前 TASK JSON 的硬件信号接口映射专家。只能分析被分配的 task_json 中列出的 line_id。",
+        "你是当前 subagent session 的硬件信号接口映射专家。平衡模式下，一个 source_device subagent 可以顺序处理同一 session 下的多个小 TASK；每个小 TASK 只能分析自己的 task_json 中列出的 line_id。",
         "请按 prompts/semantic_mapping_resolver.md 的语义分析方法处理，优先使用链路族语义理解全局功能，再在链路约束下复用器件类型局部 pin 规则。",
         "本任务的结果必须写入 task_json.output_contract.output_file。只在聊天回复中解释或输出 JSON、但不写入该文件，视为未完成。",
-        "最终聊天回复只能报告 status、output_file、decision_count；不要把完整 JSON 结果贴在聊天中代替写文件。",
+        "最终聊天回复只能报告 status、output_file、decision_count、是否已更新 pin_allocation_state_file；不要把完整 JSON 结果贴在聊天中代替写文件。",
         "",
         "## 必须遵守",
         "",
@@ -792,6 +1074,11 @@ def render_shared_prompt() -> str:
         "5. 信息不足时输出 selected_pin 为空、decision_type=unresolved、confidence=Low、needs_human_review=true。",
         "6. 输出文件格式必须是 JSONL：每行一个 mapping_decision object，不要 Markdown 包裹，不要 JSON 数组。",
         "7. 当前 context_group 代表同一个源端器件 pin 体系；可以共享该器件的 pin 功能理解，但每条 line_id 的实例编号、对端端口和网络名必须独立判断。",
+        "7a. 必须阅读 task_json.task_scope。task_scope 会给出 subagent_session_id、global_link_plan_file、pin_allocation_state_file、physical_device_instance_ids、previous_task_outputs 和当前小 TASK 在 session 中的顺序。",
+        "7b. 同一个 subagent_session 下的多个 TASK 必须由同一个 subagent 顺序处理；不要因为 TASK 文件变多就为同一个源端器件启动多个互不共享 state 的 subagent。",
+        "7c. 处理当前 TASK 前必须读取 pin_allocation_state_file；pin 占用必须按 physical_device_instance_id 分开记录。同名 pin 在不同 physical_device_instance_id 下可以各自使用，不算冲突。",
+        "7c-1. 处理完成后必须把本 TASK 的已用 pin、允许复用 pin、冲突和 completed_task_ids 写回对应 physical_device_instance_id 的 state，供同一物理器件实例的后续 TASK 使用。",
+        "7d. 必须阅读 global_link_plan_file，用它统一理解 link_family、link_instance、器件角色和共享链路语义；global_link_plan 不选择 pin，不能当作裁决结果。",
         "8. 必须先阅读 task_json.diagram_link_context；它来自输入框图表/link_info/链路信息 sheet，用于判断链路归属、上下游角色、实例编号和特殊连接方式。",
         "9. 必须阅读 task_json.matched_rule_sections；它只是脚本召回的候选自然语言规则块，不能替代逐行语义判断。",
         "10. 必须阅读 task_json.link_family_profiles；它是同一 link_family 跨 subagent 共享的链路级语义上下文，用于借鉴拓扑、方向、实例索引和用户说明。",
@@ -806,11 +1093,12 @@ def render_shared_prompt() -> str:
         "19. 如果 task_json.source_device_pins 没有当前源端器件编码，或 source_device_pins 中没有可用 pin，必须输出 unresolved，并说明入参 pin_info 缺少该器件 pin 信息。",
         "20. 如果 selected_pin/selected_pins 为空，net_name/net_names 必须为空；没有原理图 pin 时不得生成网络名。",
         "21. LINE_xxx、line、包含 line 的连线名称是画图工具默认连线名，不是有效网络名；不得直接复制到 net_name/net_names，需要网络名时必须结合信号语义生成。",
-        "22. 一条逻辑连接对应多个物理 pin 时只输出 selected_pins/net_names 数组；渲染阶段会按 主连线ID#数字 展开输出行。",
+        "22. 一条逻辑连接对应多个物理 pin 时，优先输出多行 parent_line_id#数字 decision，每行一个 selected_pin；只有兼容旧任务时才使用 selected_pins/net_names 数组。",
         "23. signal_shape / signal_shape_info 是进入映射分析前的前置形态判断结果，来自自动规则、pin 列表 P/N 对识别和本地自然语言规则提示。必须先读取它；只有 needs_model_shape_review=true、证据冲突或明显不符合连接语义时，才在 analysis 中说明并修正判断。",
         "24. 如果 normalized_connection.signal_shape_info.is_expanded_member=true，说明该差分/总线成员已经在映射前展开为独立 line_id（例如 1868#1、1868#2）；该行只输出单个 selected_pin，不得再输出 selected_pins 数组。",
         "25. 如果某条未展开 line 需要结合上下文才知道是差分/总线，则可以在本 TASK 内直接输出展开后的多行 decision：line_id 使用 原line_id#数字，parent_line_id 写原 line_id，每行一个 selected_pin；不要使用 selected_pins 数组。",
         "26. 写文件前自检：每个 task_json.output_contract.expected_line_ids 都必须被同名 line_id 或 parent_line_id 覆盖；写入后必须重新读取 output_file 校验覆盖关系。",
+        "27. 写入 output_file 并自检通过后，必须更新 task_json.task_scope.pin_allocation_state_file：按 physical_device_instance_id 追加 completed_task_ids、used_pins、allowed_shared_pin_groups 和 unresolved_conflicts。只有 selected_pin 非空且来自 source_device_pins 时才写入 used_pins。",
         "",
         "## 输出格式",
         "",
@@ -862,19 +1150,23 @@ def build_model_resolution_tasks(
     link_family_summaries = build_link_family_summary(context_groups)
     link_family_profiles = build_link_family_profiles(context_groups, normalized_by_id)
     tasks: List[Dict[str, Any]] = []
+    sessions_by_id: Dict[str, Dict[str, Any]] = {}
     skipped_tasks: List[Dict[str, Any]] = []
+    subagent_state_dir = ensure_dir(output_dir.parent / "subagent_state")
 
     for group in context_groups:
-        line_ids = [line_id for line_id in group.get("line_ids", []) if line_id in needed_ids]
-        if not line_ids:
+        group_line_ids = [line_id for line_id in group.get("line_ids", []) if line_id in needed_ids]
+        if not group_line_ids:
             continue
         context_id = group.get("context_group_id") or f"CTX_{len(tasks)+1}"
-        task_number = len(tasks) + 1
-        file_stem = task_file_stem(task_number, group, context_id)
-        # 收集本组所有 normalized_connections 中的 source_part_id -> 真实 pin 列表
-        group_nc = [normalized_by_id[lid] for lid in line_ids if lid in normalized_by_id]
+        session_id = f"SESSION_{filename_slug(readable_device_type(group), 'DEVICE', 24)}_{filename_slug(source_part_label(group), 'UNKNOWN_PART', 24)}_{context_id.replace('CTX_', '')}"
+        session_state_file = subagent_state_dir / f"{session_id}.pin_allocation_state.json"
+
+        # 收集本组所有 normalized_connections 中的 source_part_id -> 真实 pin 列表。
+        # pin_info 缺失时整个源端器件 session 跳过，不生成语义模型任务。
+        full_group_nc = [normalized_by_id[lid] for lid in group_line_ids if lid in normalized_by_id]
         source_pins_map: Dict[str, List[str]] = {}
-        for nc in group_nc:
+        for nc in full_group_nc:
             code = nc.get("source_part_id", "")
             if code and code not in source_pins_map:
                 source_pins_map[code] = pins_for_part(device_pins, code)
@@ -885,107 +1177,199 @@ def build_model_resolution_tasks(
         if not any(source_pins_map.values()):
             skipped_tasks.append({
                 "context_group_id": context_id,
-                "line_ids": line_ids,
-                "line_count": len(line_ids),
+                "line_ids": group_line_ids,
+                "line_count": len(group_line_ids),
                 "source_device_signature": group.get("source_device_signature", ""),
-                "source_part_ids": sorted({nc.get("source_part_id", "") for nc in group_nc if nc.get("source_part_id")}),
+                "source_part_ids": sorted({nc.get("source_part_id", "") for nc in full_group_nc if nc.get("source_part_id")}),
                 "reason": "pin_info_missing_for_source_device",
                 "message": "入参 pin_info.json 中没有对应源端器件编码的 pin 列表，按约束跳过该器件的语义模型分析；最终保留 pre_resolve 的 unresolved 结果。",
             })
             continue
 
-        task_display_name = f"{readable_device_type(group)} / {source_part_label(group)} / {readable_family_scope(group)}"
-        output_file = subagent_outputs_dir / f"{file_stem}.jsonl"
-        output_contract = {
-            "must_write_file": True,
-            "output_file": str(output_file),
-            "format": "jsonl",
-            "one_mapping_decision_per_line": True,
-            "expected_line_ids": line_ids,
-            "line_id_coverage_policy": "每个 expected_line_ids 必须被同名 line_id 覆盖；若上下文判断需要展开，可由 parent_line_id=expected_line_id 且 line_id=expected_line_id#数字 的多行 decision 覆盖。",
-            "failure_policy": "如果该文件不存在、不是 JSONL、expected_line_ids 未被 line_id/parent_line_id 覆盖、存在重复 line_id 或存在无合法 parent_line_id 的额外 line_id，主控流程必须判定该 subagent 失败并重新启动该 TASK 分析；不得进入 finish。",
-        }
-        task_payload = {
-            "task_id": file_stem,
-            "task_display_name": task_display_name,
-            "context_group": group,
-            "sheet_device_context": build_sheet_device_context(group_nc),
-            "pin_allocation_context": build_pin_allocation_context(group_nc, candidates_by_id),
-            "diagram_link_context": build_diagram_link_context(group, group_nc),
-            "link_family_summaries": {
-                family_id: link_family_summaries.get(family_id, {})
-                for family_id in (group.get("link_family_ids") or [group.get("link_family_id") or "LOCAL_DEVICE_MAPPING"])
-            },
-            "link_family_profiles": {
-                family_id: link_family_profiles.get(family_id, {})
-                for family_id in (group.get("link_family_ids") or [group.get("link_family_id") or "LOCAL_DEVICE_MAPPING"])
-            },
-            "line_ids": line_ids,
-            "normalized_connections": group_nc,
-            "candidate_mappings": [
-                slim_candidate_mapping(candidates_by_id.get(line_id, {"line_id": line_id, "candidates": []}))
-                for line_id in line_ids
-            ],
-            "source_device_pins": source_pins_map,
-            "rule_source": {
-                "file": str(resolved_rules_path),
-                "usage": "TASK JSON 只内嵌 matched_rule_sections；完整自然语言规则从该文件读取。",
-            },
-            "matched_rule_sections": match_rule_sections(rule_blocks, group, group_nc),
-            "needs_model_resolution": [slim_need_row(needs_by_id[line_id]) for line_id in line_ids],
-            "output_contract": output_contract,
-            "required_output": {
-                "type": "jsonl_file",
-                "schema": "schemas/mapping_decision.schema.json",
-                "one_decision_per_line_id": True,
-                "write_to_file": str(output_file),
-            },
-        }
-        task_json = tasks_dir / f"{file_stem}.json"
-        write_json(task_json, task_payload)
-
-        task_info = {
-            "task_id": file_stem,
-            "task_display_name": task_display_name,
+        session = sessions_by_id.setdefault(session_id, {
+            "subagent_session_id": session_id,
             "context_group_id": context_id,
-            "line_ids": line_ids,
-            "line_count": len(line_ids),
-            "task_json": str(task_json),
-            "output_file": str(output_file),
-            "output_contract": output_contract,
-            "prompt_file": str(shared_prompt_path),
             "recommended_subagent": group.get("recommended_subagent", "semantic-mapping-subagent"),
+            "prompt_file": str(shared_prompt_path),
+            "source_device_signature": group.get("source_device_signature", ""),
             "readable_device_type": readable_device_type(group),
             "source_part_id": source_part_label(group),
-            "device_category": group.get("device_category", ""),
-            "link_family_id": group.get("link_family_id", ""),
-            "link_family_source": group.get("link_family_source", ""),
-            "link_family_ids": group.get("link_family_ids", []),
-            "link_family_sources": group.get("link_family_sources", []),
-            "analysis_strategy": group.get("analysis_strategy", ""),
-            "source_device_signature": group.get("source_device_signature", ""),
-            "target_device_signature": group.get("target_device_signature", ""),
-            "target_device_signatures": group.get("target_device_signatures", []),
-            "link_instance_ids": group.get("link_instance_ids", []),
-            "link_member_sheets": group.get("link_member_sheets", []),
-            "user_link_infos": group.get("user_link_infos", []),
-            "device_role_infos": group.get("device_role_infos", []),
-            "mapping_family": group.get("mapping_family", ""),
-            "mapping_families": group.get("mapping_families", []),
-            "source_sheets": group.get("source_sheets", []),
-            "link_family_profile_ids": list((group.get("link_family_ids") or [group.get("link_family_id") or "LOCAL_DEVICE_MAPPING"])),
-        }
-        task_info["task_goal"] = describe_subagent_task(task_info, group)
-        tasks.append(task_info)
+            "line_ids": [],
+            "line_count": 0,
+            "pin_allocation_state_file": str(session_state_file),
+            "global_link_plan_file": str(output_dir / "global_link_plan.json"),
+            "tasks": [],
+        })
 
-    subagent_plan = {
+        if not session_state_file.exists():
+            write_json(session_state_file, {
+                "subagent_session_id": session_id,
+                "source_device_signature": group.get("source_device_signature", ""),
+                "source_part_id": source_part_label(group),
+                "purpose": "同一源端器件 subagent 跨多个小 TASK 共享的 pin 分配状态；pin 占用必须按 physical_device_instance_id 分开记录；subagent 每完成一个 TASK 后更新。",
+                "pin_usage_scope": "per_physical_device_instance_id",
+                "physical_device_instances": pin_state_instances(full_group_nc),
+                "used_pins": [],
+                "allowed_shared_pin_groups": [],
+                "unresolved_conflicts": [],
+                "completed_task_ids": [],
+            })
+
+        task_chunks = split_balanced_line_tasks(group, full_group_nc, DEFAULT_MAX_LINES_PER_MODEL_TASK)
+        previous_task_outputs: List[str] = []
+        for chunk_index, line_ids in enumerate(task_chunks, start=1):
+            group_nc = [normalized_by_id[lid] for lid in line_ids if lid in normalized_by_id]
+            task_group = scoped_group(group, group_nc, line_ids)
+            task_number = len(tasks) + 1
+            file_stem = task_file_stem(task_number, task_group, context_id)
+            if len(task_chunks) > 1:
+                file_stem = f"{file_stem}_PART{chunk_index:02d}"
+            task_display_name = f"{readable_device_type(task_group)} / {source_part_label(task_group)} / {readable_family_scope(task_group)} / part {chunk_index} of {len(task_chunks)}"
+            output_file = subagent_outputs_dir / f"{file_stem}.jsonl"
+            output_contract = {
+                "must_write_file": True,
+                "output_file": str(output_file),
+                "format": "jsonl",
+                "one_mapping_decision_per_line": True,
+                "expected_line_ids": line_ids,
+                "line_id_coverage_policy": "每个 expected_line_ids 必须被同名 line_id 覆盖；若上下文判断需要展开，可由 parent_line_id=expected_line_id 且 line_id=expected_line_id#数字 的多行 decision 覆盖。",
+                "failure_policy": "如果该文件不存在、不是 JSONL、expected_line_ids 未被 line_id/parent_line_id 覆盖、存在重复 line_id 或存在无合法 parent_line_id 的额外 line_id，主控流程必须判定该 TASK 失败并重新分析；不得进入 finish。",
+            }
+            task_scope = {
+                "execution_mode": "balanced_source_device_session",
+                "subagent_session_id": session_id,
+                "parent_context_group_id": context_id,
+                "subtask_index_in_session": chunk_index,
+                "subtask_count_in_session": len(task_chunks),
+                "max_lines_per_task": DEFAULT_MAX_LINES_PER_MODEL_TASK,
+                "split_policy": "source physical device instance first; link/mapping semantics second; line-count cap last",
+                "physical_device_instance_ids": sorted({physical_device_instance_id(row) for row in group_nc}),
+                "pin_allocation_state_file": str(session_state_file),
+                "global_link_plan_file": str(output_dir / "global_link_plan.json"),
+                "previous_task_outputs": list(previous_task_outputs),
+                "next_step": "写入 output_contract.output_file 后，更新 pin_allocation_state_file，再处理同 session 的下一个 TASK。",
+            }
+            task_payload = {
+                "task_id": file_stem,
+                "task_display_name": task_display_name,
+                "task_scope": task_scope,
+                "context_group": task_group,
+                "sheet_device_context": build_sheet_device_context(group_nc),
+                "pin_allocation_context": build_pin_allocation_context(group_nc, candidates_by_id),
+                "diagram_link_context": build_diagram_link_context(task_group, group_nc),
+                "link_family_summaries": {
+                    family_id: link_family_summaries.get(family_id, {})
+                    for family_id in (task_group.get("link_family_ids") or [task_group.get("link_family_id") or "LOCAL_DEVICE_MAPPING"])
+                },
+                "link_family_profiles": {
+                    family_id: link_family_profiles.get(family_id, {})
+                    for family_id in (task_group.get("link_family_ids") or [task_group.get("link_family_id") or "LOCAL_DEVICE_MAPPING"])
+                },
+                "line_ids": line_ids,
+                "normalized_connections": group_nc,
+                "candidate_mappings": [
+                    slim_candidate_mapping(candidates_by_id.get(line_id, {"line_id": line_id, "candidates": []}))
+                    for line_id in line_ids
+                ],
+                "source_device_pins": source_pins_map,
+                "rule_source": {
+                    "file": str(resolved_rules_path),
+                    "usage": "TASK JSON 只内嵌 matched_rule_sections；完整自然语言规则从该文件读取。",
+                },
+                "matched_rule_sections": match_rule_sections(rule_blocks, task_group, group_nc),
+                "needs_model_resolution": [slim_need_row(needs_by_id[line_id]) for line_id in line_ids],
+                "output_contract": output_contract,
+                "required_output": {
+                    "type": "jsonl_file",
+                    "schema": "schemas/mapping_decision.schema.json",
+                    "one_decision_per_line_id": True,
+                    "write_to_file": str(output_file),
+                },
+            }
+            task_json = tasks_dir / f"{file_stem}.json"
+            write_json(task_json, task_payload)
+
+            task_info = {
+                "task_id": file_stem,
+                "task_display_name": task_display_name,
+                "context_group_id": context_id,
+                "subagent_session_id": session_id,
+                "task_scope": task_scope,
+                "line_ids": line_ids,
+                "line_count": len(line_ids),
+                "task_json": str(task_json),
+                "output_file": str(output_file),
+                "output_contract": output_contract,
+                "prompt_file": str(shared_prompt_path),
+                "pin_allocation_state_file": str(session_state_file),
+                "physical_device_instance_ids": task_scope["physical_device_instance_ids"],
+                "recommended_subagent": task_group.get("recommended_subagent", "semantic-mapping-subagent"),
+                "readable_device_type": readable_device_type(task_group),
+                "source_part_id": source_part_label(task_group),
+                "device_category": task_group.get("device_category", ""),
+                "link_family_id": task_group.get("link_family_id", ""),
+                "link_family_source": task_group.get("link_family_source", ""),
+                "link_family_ids": task_group.get("link_family_ids", []),
+                "link_family_sources": task_group.get("link_family_sources", []),
+                "analysis_strategy": task_group.get("analysis_strategy", ""),
+                "source_device_signature": task_group.get("source_device_signature", ""),
+                "target_device_signature": task_group.get("target_device_signature", ""),
+                "target_device_signatures": task_group.get("target_device_signatures", []),
+                "link_instance_ids": task_group.get("link_instance_ids", []),
+                "link_member_sheets": task_group.get("link_member_sheets", []),
+                "user_link_infos": task_group.get("user_link_infos", []),
+                "device_role_infos": task_group.get("device_role_infos", []),
+                "mapping_family": task_group.get("mapping_family", ""),
+                "mapping_families": task_group.get("mapping_families", []),
+                "source_sheets": task_group.get("source_sheets", []),
+                "link_family_profile_ids": list((task_group.get("link_family_ids") or [task_group.get("link_family_id") or "LOCAL_DEVICE_MAPPING"])),
+            }
+            task_info["task_goal"] = describe_subagent_task(task_info, task_group)
+            tasks.append(task_info)
+            session["tasks"].append(task_info)
+            session["line_ids"].extend(line_ids)
+            session["line_count"] += len(line_ids)
+            previous_task_outputs.append(str(output_file))
+
+    sessions = list(sessions_by_id.values())
+    global_link_plan = build_global_link_plan(link_family_summaries, link_family_profiles, sessions)
+    global_link_plan_json = output_dir / "global_link_plan.json"
+    global_link_plan_md = output_dir / "global_link_plan.md"
+    write_json(global_link_plan_json, global_link_plan)
+    global_link_plan_md.write_text(render_global_link_plan(global_link_plan), encoding="utf-8")
+
+    session_plan = {
+        "execution_mode": "balanced_source_device_sessions",
+        "session_count": len(sessions),
         "task_count": len(tasks),
         "line_count": sum(t["line_count"] for t in tasks),
+        "max_lines_per_task": DEFAULT_MAX_LINES_PER_MODEL_TASK,
+        "global_link_plan_json": str(global_link_plan_json),
+        "global_link_plan_md": str(global_link_plan_md),
+        "sessions": sessions,
+    }
+    session_plan_json = output_dir / "subagent_session_plan.json"
+    session_plan_md = output_dir / "subagent_session_plan.md"
+    write_json(session_plan_json, session_plan)
+    session_plan_md.write_text(render_subagent_session_plan(sessions), encoding="utf-8")
+
+    subagent_plan = {
+        "execution_mode": "balanced_source_device_sessions",
+        "task_count": len(tasks),
+        "line_count": sum(t["line_count"] for t in tasks),
+        "session_count": len(sessions),
+        "max_lines_per_task": DEFAULT_MAX_LINES_PER_MODEL_TASK,
         "skipped_task_count": len(skipped_tasks),
         "skipped_line_count": sum(t["line_count"] for t in skipped_tasks),
         "tasks_dir": str(tasks_dir),
         "subagent_outputs_dir": str(subagent_outputs_dir),
+        "subagent_state_dir": str(subagent_state_dir),
+        "global_link_plan_json": str(global_link_plan_json),
+        "global_link_plan_md": str(global_link_plan_md),
+        "subagent_session_plan_json": str(session_plan_json),
+        "subagent_session_plan_md": str(session_plan_md),
         "skipped_tasks": skipped_tasks,
+        "sessions": sessions,
         "tasks": tasks,
     }
     plan_json = output_dir / "subagent_task_plan.json"
@@ -994,20 +1378,29 @@ def build_model_resolution_tasks(
     plan_md.write_text(render_subagent_task_plan(tasks, skipped_tasks), encoding="utf-8")
 
     manifest = {
+        "execution_mode": "balanced_source_device_sessions",
         "task_count": len(tasks),
         "line_count": sum(t["line_count"] for t in tasks),
+        "session_count": len(sessions),
+        "max_lines_per_task": DEFAULT_MAX_LINES_PER_MODEL_TASK,
         "skipped_task_count": len(skipped_tasks),
         "skipped_line_count": sum(t["line_count"] for t in skipped_tasks),
+        "global_link_plan_json": str(global_link_plan_json),
+        "global_link_plan_md": str(global_link_plan_md),
+        "subagent_session_plan_json": str(session_plan_json),
+        "subagent_session_plan_md": str(session_plan_md),
         "subagent_task_plan_json": str(plan_json),
         "subagent_task_plan_md": str(plan_md),
         "subagent_task_prompt_md": str(shared_prompt_path),
         "tasks_dir": str(tasks_dir),
         "subagent_outputs_dir": str(subagent_outputs_dir),
+        "subagent_state_dir": str(subagent_state_dir),
         "tasks": [
             {
                 "task_id": task.get("task_id", ""),
                 "task_display_name": task.get("task_display_name", ""),
                 "context_group_id": task.get("context_group_id", ""),
+                "subagent_session_id": task.get("subagent_session_id", ""),
                 "readable_device_type": task.get("readable_device_type", ""),
                 "source_part_id": task.get("source_part_id", ""),
                 "line_count": task.get("line_count", 0),

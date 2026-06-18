@@ -56,10 +56,24 @@ def validate_task_output(task: Dict[str, Any], plan_path: Path) -> Dict[str, Any
     expected_set = set(expected_ids)
     rows, parse_errors = read_jsonl_with_errors(output_file)
     line_ids = [str(row.get("line_id", "")) for row in rows]
+    parent_line_ids = [str(row.get("parent_line_id", "")) for row in rows]
     actual_set = set(line_ids)
     duplicate_ids = sorted({line_id for line_id in line_ids if line_ids.count(line_id) > 1 and line_id})
-    missing_ids = sorted(expected_set - actual_set)
-    extra_ids = sorted(actual_set - expected_set)
+    covered_expected = set()
+    extra_ids = []
+    for row in rows:
+        line_id = str(row.get("line_id", ""))
+        parent_line_id = str(row.get("parent_line_id", ""))
+        if line_id in expected_set:
+            covered_expected.add(line_id)
+            continue
+        if parent_line_id in expected_set:
+            covered_expected.add(parent_line_id)
+            continue
+        if line_id:
+            extra_ids.append(line_id)
+    missing_ids = sorted(expected_set - covered_expected)
+    extra_ids = sorted(set(extra_ids))
     blank_line_ids = sum(1 for line_id in line_ids if not line_id)
 
     errors = list(parse_errors)
@@ -82,9 +96,11 @@ def validate_task_output(task: Dict[str, Any], plan_path: Path) -> Dict[str, Any
         "output_file": str(output_file),
         "expected_line_count": len(expected_ids),
         "actual_line_count": len(rows),
+        "covered_expected_line_count": len(covered_expected),
         "missing_line_ids": missing_ids,
         "extra_line_ids": extra_ids,
         "duplicate_line_ids": duplicate_ids,
+        "parent_line_ids": sorted({x for x in parent_line_ids if x}),
         "errors": errors,
     }
 

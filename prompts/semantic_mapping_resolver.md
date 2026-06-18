@@ -19,6 +19,7 @@
 控制 / 时钟 / 电源 / 总线：优先按映射族分析。
 没有链路级数据：按源/目的器件类型、源Block名称、源Port 和 mapping_family 启动器件级分析。
 context_group 表示同一个源端器件 pin 体系；链路族、信号族、目标上下文是组内分析标签，不是重新切分 subagent 的理由。
+平衡模式：同一个 source_device subagent 可以顺序处理多个小 TASK_xxx.json；小 TASK 先按源端物理器件实例切分，再按链路/信号语义切分，最后才按数量上限截断。
 异常或上下文不足：进入 unresolved / hard case，不要硬套器件模板。
 ```
 
@@ -26,6 +27,7 @@ context_group 表示同一个源端器件 pin 体系；链路族、信号族、�
 
 ```json
 {
+  "task_scope": {},
   "context_group": {},
   "sheet_device_context": {},
   "pin_allocation_context": {},
@@ -45,28 +47,29 @@ context_group 表示同一个源端器件 pin 体系；链路族、信号族、�
 
 对每条 line_id：
 
-1. 先查看 context_group.source_device_signature 和 source_device_pins，建立当前源端器件的 pin 功能理解。
-2. 必须查看 diagram_link_context。它来自输入框图表中的 link_info / 链路信息 sheet 和连接行，用于理解用户标注的链路类型、链路编号、涉及 sheet、器件角色说明、相关连线 ID 和逐行链路上下文。
-3. 再查看 matched_rule_sections。它是脚本按源端器件、链路族、信号族、目标、端口关键词召回的候选自然语言规则块；只能作为阅读重点，不能直接当作脚本裁决结果。
-4. 必须查看 link_family_profiles。它是同一 link_family 跨多个 source_device subagent 共享的链路级上下文，用来借鉴链路拓扑、上下游角色、实例索引、差分/总线展开规律和用户链路说明。
-5. 必须查看 sheet_device_context。它说明输入 Excel 的 sheet 语义：同一个 source_sheet_name 表示同一个物理器件实例；sheet 内多个 source_block_id/source_block_name 是这个器件的逻辑块、功能块或端口视图，不是多个独立器件。
-6. 必须查看 pin_allocation_context。它说明同一物理器件实例内哪些 line_id 共享同一个 pin 空间、每条连接的前置 signal_shape_info，以及 pin 复用约束。
-7. 再查看 context_group.link_family_ids、mapping_families、target_device_signatures、link_contexts 和 link_family_summaries，把链路信息作为当前源端器件的组内上下文。
-8. 在逐行裁决前，先对同一个 physical_device_instance_id 内的所有 line_id 做一次整体 pin 分配计划，识别可能竞争同一个 pin 的连接。
-9. 对每条 line_id，判断它属于哪条业务链路或信号族，例如 TX 控制链路、TX RF 链路、反馈链路、SPI 控制链路。
-10. 如果属于重复链路族，先理解代表链路的整体功能、方向、上下游角色、通道编号、bit 传播和差分 P/N 传播，不要孤立按器件类型裁决。
-11. 根据链路级规则确定拓扑关系：源/目的器件、方向、通道编号、实例索引、链路中该信号承担的作用。
-12. 再查器件级规则，理解源端器件有哪些 pin 承担这个作用；器件类型规则只能在链路语义约束下复用。
-13. 再用通用信号规则处理 SPI、差分、电源、总线等协议或信号族。
-14. 最后才参考 pin 名称相似度。
-15. 如果一个框图逻辑信号对应多个物理 pin，优先输出多行 decision：`line_id=原line_id#数字`、`parent_line_id=原line_id`、每行一个 `selected_pin`；兼容旧任务时才使用 `selected_pins` 数组。
-16. 对差分信号，确认 P/N 是否能由 `expansion_index`、`#数字`、链路族模板或链路规则确定。
-17. 对总线信号，必须知道总线编号、片选、数据方向或用户规则后才能选择具体 pin。
-18. 当多个 pin 都可能承担同样作用，且没有额外上下文区分时，必须输出 unresolved。
-19. 同一 context_group 中的同类型不同实例和不同链路可以共享源端器件 pin 功能分析逻辑；同一 link_family 下不同 source_device subagent 可以共享链路级语义；但每条 line_id 的链路归属、实例编号、对端端口、网络命名必须按该行 normalized_connection 独立判断，不能互相套用。
-20. context_group 的源端器件类型来自 block_info 的器件信息；源Block名称和源Port用于判断该连接在电路中的作用，不用于改写器件类型。目的端不在 block_info 中时，目的Block名称只作为上下文隔离和语义分析线索。
-21. 同一个器件 sheet 可以同时参与多条链路。遇到 `diagram_link_context`、`link_family_profiles`、`link_contexts`、`link_instance_id`、`device_role_info` 时，必须结合链路编号、链路类型、器件角色说明和当前连接的源/目的端口判断归属；不能因为某个 sheet 出现在多条链路里，就把所有连接都归入同一条链路。
-22. 如果多个 link_contexts 都可能适用，且端口/方向/用户链路说明无法区分，应输出 unresolved 或在 analysis 中说明需要用户补充相关连线ID/角色说明。
+1. 先查看 task_scope。若存在 subagent_session_id、global_link_plan_file、pin_allocation_state_file、physical_device_instance_ids 和 previous_task_outputs，说明当前 TASK 是同一个 source_device subagent 会话中的小批次；处理前必须读取 state，处理后必须按 physical_device_instance_id 更新 state。
+2. 再查看 context_group.source_device_signature 和 source_device_pins，建立当前源端器件的 pin 功能理解。
+3. 必须查看 diagram_link_context。它来自输入框图表中的 link_info / 链路信息 sheet 和连接行，用于理解用户标注的链路类型、链路编号、涉及 sheet、器件角色说明、相关连线 ID 和逐行链路上下文。
+4. 再查看 matched_rule_sections。它是脚本按源端器件、链路族、信号族、目标、端口关键词召回的候选自然语言规则块；只能作为阅读重点，不能直接当作脚本裁决结果。
+5. 必须查看 link_family_profiles。它是同一 link_family 跨多个 source_device subagent 共享的链路级上下文，用来借鉴链路拓扑、上下游角色、实例索引、差分/总线展开规律和用户链路说明。
+6. 必须查看 sheet_device_context。它说明输入 Excel 的 sheet 语义：同一个 source_sheet_name 表示同一个物理器件实例；sheet 内多个 source_block_id/source_block_name 是这个器件的逻辑块、功能块或端口视图，不是多个独立器件。
+7. 必须查看 pin_allocation_context。它说明同一物理器件实例内哪些 line_id 共享同一个 pin 空间、每条连接的前置 signal_shape_info，以及 pin 复用约束。
+8. 再查看 context_group.link_family_ids、mapping_families、target_device_signatures、link_contexts 和 link_family_summaries，把链路信息作为当前源端器件的组内上下文。
+9. 在逐行裁决前，先对当前 TASK 内同一个 physical_device_instance_id 的所有 line_id 做一次整体 pin 分配计划，并结合 pin_allocation_state_file 中该 physical_device_instance_id 的前序 TASK 已用 pin，识别可能竞争同一个 pin 的连接。不同 physical_device_instance_id 的同名 pin 可以各自使用，不算冲突。
+10. 对每条 line_id，判断它属于哪条业务链路或信号族，例如 TX 控制链路、TX RF 链路、反馈链路、SPI 控制链路。
+11. 如果属于重复链路族，先理解代表链路的整体功能、方向、上下游角色、通道编号、bit 传播和差分 P/N 传播，不要孤立按器件类型裁决。
+12. 根据链路级规则确定拓扑关系：源/目的器件、方向、通道编号、实例索引、链路中该信号承担的作用。
+13. 再查器件级规则，理解源端器件有哪些 pin 承担这个作用；器件类型规则只能在链路语义约束下复用。
+14. 再用通用信号规则处理 SPI、差分、电源、总线等协议或信号族。
+15. 最后才参考 pin 名称相似度。
+16. 如果一个框图逻辑信号对应多个物理 pin，优先输出多行 decision：`line_id=原line_id#数字`、`parent_line_id=原line_id`、每行一个 `selected_pin`；兼容旧任务时才使用 `selected_pins` 数组。
+17. 对差分信号，确认 P/N 是否能由 `expansion_index`、`#数字`、链路族模板或链路规则确定。
+18. 对总线信号，必须知道总线编号、片选、数据方向或用户规则后才能选择具体 pin。
+19. 当多个 pin 都可能承担同样作用，且没有额外上下文区分时，必须输出 unresolved。
+20. 同一 context_group 中的同类型不同实例和不同链路可以共享源端器件 pin 功能分析逻辑；同一 link_family 下不同 source_device subagent 可以共享链路级语义；但每条 line_id 的链路归属、实例编号、对端端口、网络命名必须按该行 normalized_connection 独立判断，不能互相套用。
+21. context_group 的源端器件类型来自 block_info 的器件信息；源Block名称和源Port用于判断该连接在电路中的作用，不用于改写器件类型。目的端不在 block_info 中时，目的Block名称只作为上下文隔离和语义分析线索。
+22. 同一个器件 sheet 可以同时参与多条链路。遇到 `diagram_link_context`、`link_family_profiles`、`link_contexts`、`link_instance_id`、`device_role_info` 时，必须结合链路编号、链路类型、器件角色说明和当前连接的源/目的端口判断归属；不能因为某个 sheet 出现在多条链路里，就把所有连接都归入同一条链路。
+23. 如果多个 link_contexts 都可能适用，且端口/方向/用户链路说明无法区分，应输出 unresolved 或在 analysis 中说明需要用户补充相关连线ID/角色说明。
 
 ## 规则优先级
 

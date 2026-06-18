@@ -258,6 +258,27 @@ def build_block_part_aliases(
             add_block_part_alias(aliases, pick(row, "source_block_name"), part)
     return aliases
 
+def header_field_hits(cells: list[str]) -> set[str]:
+    hits: set[str] = set()
+    normalized_cells = {normalize_text(cell) for cell in cells if normalize_text(cell)}
+    for field, aliases in FIELD_ALIASES.items():
+        if any(alias in normalized_cells for alias in aliases):
+            hits.add(field)
+    return hits
+
+def looks_like_connection_header(cells: list[str]) -> bool:
+    hits = header_field_hits(cells)
+    if "source_port" not in hits:
+        return False
+    endpoint_hits = {
+        "source_block_id",
+        "source_block_name",
+        "target_block_id",
+        "target_block_name",
+        "target_port",
+    }
+    return "connection_id" in hits or bool(endpoint_hits & hits)
+
 def read_excel_sheets(path: str | Path) -> Iterable[tuple[str, list[dict[str, Any]]]]:
     """
     读取输入框图 Excel 的原始 sheet。
@@ -273,15 +294,22 @@ def read_excel_sheets(path: str | Path) -> Iterable[tuple[str, list[dict[str, An
         if not rows:
             continue
 
-        # 找第一行非空作为表头
         header_idx = None
-        headers = None
-        for i, r in enumerate(rows):
+        headers: list[str] | None = None
+        first_non_empty_idx = None
+        first_non_empty_headers: list[str] | None = None
+        for i, r in enumerate(rows[:30]):
             values = [normalize_text(v) for v in r]
-            if any(values):
+            if any(values) and first_non_empty_idx is None:
+                first_non_empty_idx = i
+                first_non_empty_headers = values
+            if looks_like_connection_header(values):
                 header_idx = i
                 headers = values
                 break
+        if header_idx is None:
+            header_idx = first_non_empty_idx
+            headers = first_non_empty_headers
         if header_idx is None or not headers:
             continue
 

@@ -16,13 +16,14 @@ description: 基于输入框图 Excel、pin_info.json 和自然语言硬件规�
 2. 如果 stage=all 后大部分 decision 是 unresolved，不能宣称最终结果已完成。
 3. 完整语义输出必须执行：
    prepare/model_tasks
-     -> 阅读 subagent_task_plan.md/json
-     -> 按 context_group 启动或等价执行隔离语义分析
+     -> 阅读 global_link_plan.md/json、subagent_session_plan.md/json、subagent_task_plan.md/json
+     -> 按 source_device session 启动或等价执行隔离语义分析
+     -> 同一个 session 内顺序处理多个小 TASK，并更新 pin_allocation_state_file
      -> 每个 TASK 写入 output_contract.output_file
      -> stage=finish
      -> 主控检查 subagent output_file 并合并 intermediate/model_resolved_decisions.jsonl
      -> 检查 validation_report.json。
-4. 必须按 subagent_task_plan 启动隔离 subagent；一个 context_group 代表一个源端器件 pin 体系，不要再按链路族/信号族/目标上下文重新拆 subagent。
+4. 必须按 subagent_session_plan 启动隔离 subagent；一个 session/context_group 代表一个源端器件 pin 体系。小 TASK 只是降低单次推理负担，不代表要为同一源端器件启动多个互不共享状态的 subagent。
 
 ```
 

@@ -46,17 +46,21 @@ python script/run_pipeline.py \
 ```text
 <task_dir>/intermediate/needs_model_resolution.jsonl
 <task_dir>/intermediate/model_resolution_tasks/manifest.json
+<task_dir>/intermediate/model_resolution_tasks/global_link_plan.md
+<task_dir>/intermediate/model_resolution_tasks/global_link_plan.json
+<task_dir>/intermediate/model_resolution_tasks/subagent_session_plan.md
+<task_dir>/intermediate/model_resolution_tasks/subagent_session_plan.json
 <task_dir>/intermediate/model_resolution_tasks/subagent_task_plan.md
 <task_dir>/intermediate/model_resolution_tasks/subagent_task_plan.json
 <task_dir>/intermediate/model_resolution_tasks/subagent_task_prompt.md
 <task_dir>/intermediate/model_resolution_tasks/tasks/TASK_器件类型_器件编码_链路范围_hash.json
 ```
 
-必须先阅读持久化到本地的 `subagent_task_plan.md/json`，再启动语义分析。`subagent_task_plan.md` 是给用户审阅的任务表；`subagent_task_plan.json` 是给脚本或模型读取的结构化任务计划；`subagent_task_prompt.md` 是所有 TASK 共享的模型分析说明。
+必须先阅读持久化到本地的 `global_link_plan.md/json`、`subagent_session_plan.md/json` 和 `subagent_task_plan.md/json`，再启动语义分析。`global_link_plan` 是链路族全局摘要；`subagent_session_plan` 说明每个源端器件 subagent 要顺序处理哪些小 TASK；`subagent_task_plan` 是给脚本检查输出的扁平任务表；`subagent_task_prompt.md` 是所有 TASK 共享的模型分析说明。
 
 ### 3. 规划 subagent 批次
 
-按 `subagent_task_plan.json` 中的任务分组。当前设计下，一个 context_group 就是一个源端器件 pin 体系的 subagent 分析单元。推荐优先按以下维度检查任务：
+按 `subagent_session_plan.json` 中的 session 分组。平衡模式下，一个 session 就是一个源端器件 pin 体系的 subagent 分析单元；同一个 session 可以包含多个小 `TASK_xxx.json`，由同一个 subagent 顺序处理。推荐优先按以下维度检查任务：
 
 ```text
 1. source_device_signature
@@ -67,21 +71,21 @@ python script/run_pipeline.py \
 6. line_count
 ```
 
-不要再因为 link_family、mapping_family 或 target_device_signature 不同而拆新的 subagent；这些信息已经在同一个源端器件 context_group 内作为上下文提供。只有 hard_case 或未知源端器件需要额外隔离。
+不要再因为小 TASK 数量变多、link_family、mapping_family 或 target_device_signature 不同而启动多个互不共享状态的 subagent；这些信息已经作为同一源端器件 session 的上下文提供。只有 hard_case 或未知源端器件需要额外隔离。
 
-每个 subagent 必须拥有互不重叠的 `TASK_xxx.json` 列表。**必须启动隔离 subagent**去分析TASK_xxx.json。
+每个 subagent 必须拥有互不重叠的 `TASK_xxx.json` 列表。**必须启动隔离 subagent**去分析这些 TASK；同一个 session 内的 TASK 需要顺序执行，并通过 `pin_allocation_state_file` 按 `physical_device_instance_id` 传递已用 pin、允许复用 pin 和冲突信息。TASK 分片原则是源端物理器件实例优先、链路/信号语义其次、数量上限最后。
 
 ### 4. 给 subagent 的任务必须包含这些约束
 
 每个 subagent prompt 至少要写清楚：
 
 ```text
-1. 只处理分配给自己的 TASK_xxx.json。
+1. 只处理分配给自己的 session/TASK_xxx.json；同一 session 的多个 TASK 由同一个 subagent 顺序处理。
 2. 只输出这些任务包内的 line_id。
 3. selected_pin / selected_pins 必须逐字来自入参 pin_info.json 中当前源端器件编码对应的 source_device_pins；candidate_mappings 只保留 top candidates。
 4. 不得修改 normalized_connection。
 5. 不得输出 output_sheet_name/source_sheet_name。
-6. 多物理 pin 使用 selected_pins，不要新增 line_id。
+6. 多物理 pin 优先输出 `parent_line_id=原line_id` 且 `line_id=原line_id#数字` 的多行 decision；兼容旧任务时才使用 selected_pins。
 7. 信息不足必须 unresolved，不得硬猜。
 8. 输出 JSONL 到 TASK JSON 中 `output_contract.output_file` 指定的文件；每行一个 mapping_decision object。
 9. 链路族、信号族、目标上下文只作为组内分析上下文，不作为要求用户重新拆 subagent 的理由。
@@ -93,6 +97,7 @@ python script/run_pipeline.py \
 15. 必须阅读 task_json.pin_allocation_context；先判断连接是 scalar、bus 还是 differential。同一 physical_device_instance_id 内普通 scalar 的同一个 pin 默认不能分配给多个不同语义 line_id，除非同一源端口扇出到多个目标端口、同网、同 base_connection、多端口别名或用户规则明确允许。
 16. 不得翻译、补全、改写、大小写规范化 pin 名；`原理图Pin脚` 必须保持 pin_info.json 中的原始 pin 字符串。
 17. 如果 pin_info.json 没有当前源端器件编码对应的 pin 列表，该器件不启动语义分析，相关行保持 unresolved，等待用户补充 pin 信息。
+18. 必须阅读 task_json.task_scope.global_link_plan_file 和 task_json.task_scope.pin_allocation_state_file；每完成一个 TASK 后按 physical_device_instance_id 更新 state 文件。
 ```
 
 自动输出目录：

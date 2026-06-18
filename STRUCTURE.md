@@ -272,30 +272,53 @@ fallback_device_context: 无显式链路族和明确映射族，按器件上下�
 ```text
 intermediate/model_resolution_tasks/
 ├── manifest.json
+├── global_link_plan.md
+├── global_link_plan.json
+├── subagent_session_plan.md
+├── subagent_session_plan.json
 ├── subagent_task_plan.md
 ├── subagent_task_plan.json
 ├── subagent_task_prompt.md
 └── tasks/
-    └── TASK_01_SROC_302078562_MULTI_LINK_61889c68782d.json
+    └── TASK_01_SROC_302078562_MULTI_LINK_61889c68782d_PART01.json
 ```
 
 任务包包含：
 
 ```text
-1. context_group
-2. sheet_device_context
-3. pin_allocation_context
-4. diagram_link_context
-5. link_family_profiles
-6. matched_rule_sections
-7. link_family_summaries
-8. normalized_connections
-9. candidate_mappings（只保留 top candidates，不重复完整 pin 列表）
-10. source_device_pins
-11. rule_source
-12. needs_model_resolution
-13. required_output
+1. task_scope
+2. context_group
+3. sheet_device_context
+4. pin_allocation_context
+5. diagram_link_context
+6. link_family_profiles
+7. matched_rule_sections
+8. link_family_summaries
+9. normalized_connections
+10. candidate_mappings（只保留 top candidates，不重复完整 pin 列表）
+11. source_device_pins
+12. rule_source
+13. needs_model_resolution
+14. required_output
 ```
+
+平衡模式下，`subagent_session_plan` 控制实际 subagent 启动粒度：一个 source_device session 对应一个源端器件 pin 体系；同一 session 下可以有多个小 TASK。小 TASK 的分片原则是源端物理器件实例优先、链路/信号语义其次、数量上限最后，默认每个 TASK 不超过 50 条 line。小 TASK 用于降低单次推理上下文，不表示要为同一源端器件启动多个互不共享状态的 subagent。
+
+`task_scope` 包含：
+
+```text
+execution_mode
+subagent_session_id
+parent_context_group_id
+subtask_index_in_session
+subtask_count_in_session
+pin_allocation_state_file
+physical_device_instance_ids
+global_link_plan_file
+previous_task_outputs
+```
+
+subagent 必须按同一 session 顺序处理 TASK，处理前读取 `pin_allocation_state_file`，处理后按 `physical_device_instance_id` 写回已用 pin、允许复用 pin、冲突和 completed_task_ids。不同 physical_device_instance_id 的同名 pin 可以各自使用，不算冲突。
 
 `diagram_link_context` 是从输入框图表/link_info/链路信息 sheet 和逐行连接事实整理出的链路上下文，包含：
 
@@ -327,7 +350,7 @@ physical_device_pin_spaces
 potential_shared_pin_groups
 ```
 
-默认规则是：同一个 `physical_device_instance_id` 内，普通 scalar 连接的同一个物理 pin 只能分配给一个不同语义的 line_id。总线/差分需要先识别为 bus/differential，并用 `selected_pins` 表达多个物理 pin。只有相同源端口扇出到多个目标端口、相同网络名、相同 base_connection_id、多端口别名，或用户/规则明确说明一个器件引脚给多个端口时，才允许多个 line_id 共用同一个 pin 和网络名。不同 sheet 表示不同物理器件实例，因此可以使用相同 pin 名。
+默认规则是：同一个 `physical_device_instance_id` 内，普通 scalar 连接的同一个物理 pin 只能分配给一个不同语义的 line_id。总线/差分需要先识别为 bus/differential，并优先输出 `parent_line_id=原line_id` 且 `line_id=原line_id#数字` 的多行 decision，每行一个 selected_pin。只有相同源端口扇出到多个目标端口、相同网络名、相同 base_connection_id、多端口别名，或用户/规则明确说明一个器件引脚给多个端口时，才允许多个 line_id 共用同一个 pin 和网络名。不同 sheet 表示不同物理器件实例，因此可以使用相同 pin 名。
 
 `link_family_profiles` 是同一 link_family 跨 source_device subagent 共享的链路级上下文，包含：
 
@@ -349,7 +372,7 @@ shared_semantic_hints
 
 `matched_rule_sections` 是从 `rules/natural_language_mapping_rules_template.md` 的 `### RULE:` 块中召回的候选规则文本。召回只基于源端器件、链路族、信号族、目标上下文、端口关键词等做相关性筛选，不做 pin 裁决。
 
-启动 subagent 前应先读 `subagent_task_plan.md`，确认每个 context group 的源端器件、组内链路族、目标上下文和 line 数量。不要再按链路族/信号族/目标上下文把同一个源端器件任务拆开。
+启动 subagent 前应先读 `global_link_plan.md`、`subagent_session_plan.md` 和 `subagent_task_plan.md`，确认每个 source_device session 的源端器件、组内链路族、目标上下文、line 数量、小 TASK 顺序和 state 文件。不要因为 TASK 文件变多就为同一个源端器件启动多个互不共享状态的 subagent。
 
 任务 JSON/prompt 使用可读文件名，而不是裸 `CTX_xxx`：
 

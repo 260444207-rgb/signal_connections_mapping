@@ -174,7 +174,7 @@ SPI 通常可拆成 CLK、CS、DI、DIO 或 CLK、CS、MOSI、MISO。
 
 规则摘要：
 带 P/N、_P/_N、DP/DN 或 AFE 差分语义的信号需要成对判断。
-如果一个逻辑端口对应 P/N 两个物理 pin，应使用 selected_pins，不要新增 line_id。
+如果一个逻辑端口对应 P/N 两个物理 pin，应优先输出 `parent_line_id=原line_id` 且 `line_id=原line_id#数字` 的多行 decision；兼容旧任务时才使用 selected_pins。
 
 ### RULE: GENERAL_POWER 通用电源
 

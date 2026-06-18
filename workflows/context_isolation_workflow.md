@@ -8,6 +8,7 @@
 
 ```text
 以源端器件类型为 subagent 分析单元
+同一个源端器件 subagent 可以顺序处理多个小 TASK，以降低单次推理上下文
 链路族/链路级信息作为组内上下文
 同一 link_family 会生成共享 link_family_profiles，注入给相关 source_device subagent
 同一源端器件下的不同实例共享 pin 功能理解
@@ -59,7 +60,7 @@ link_contexts / link_instance_ids / user_link_infos / device_role_infos
 prompts/semantic_mapping_resolver.md
 ```
 
-subagent 只能读取当前任务包：
+subagent 按 `subagent_session_plan` 启动。一个 session 对应一个源端器件 pin 体系；同一 session 下可以有多个小任务包：
 
 ```text
 intermediate/model_resolution_tasks/tasks/TASK_器件类型_器件编码_链路范围_hash.json
@@ -68,19 +69,22 @@ intermediate/model_resolution_tasks/tasks/TASK_器件类型_器件编码_链路�
 任务包包含当前组的：
 
 ```text
-1. context_group
-2. sheet_device_context
-3. pin_allocation_context
-4. diagram_link_context
-5. link_family_profiles
-6. matched_rule_sections
-7. link_family_summaries
-8. normalized_connections
-9. candidate_mappings top candidates
-10. source_device_pins
-11. rule_source 指向 natural_language_mapping_rules_template.md
-12. needs_model_resolution 原因
+1. task_scope
+2. context_group
+3. sheet_device_context
+4. pin_allocation_context
+5. diagram_link_context
+6. link_family_profiles
+7. matched_rule_sections
+8. link_family_summaries
+9. normalized_connections
+10. candidate_mappings top candidates
+11. source_device_pins
+12. rule_source 指向 natural_language_mapping_rules_template.md
+13. needs_model_resolution 原因
 ```
+
+`task_scope` 指向 `global_link_plan_file` 和 `pin_allocation_state_file`。同一个 session 的 TASK 必须顺序处理：处理前读取 state，处理后更新 state，记录已用 pin、允许复用 pin、冲突和 completed_task_ids。
 
 `link_family_profiles` 是跨 subagent 共享的链路语义上下文。它让同一 link_family 下的 SROC、TXVGA、91fbsw 等不同源端器件 subagent 借鉴拓扑、方向、实例索引、差分/总线展开规律和用户说明，但不能直接复制其他 line_id 或其他源端器件的 selected_pin。
 
