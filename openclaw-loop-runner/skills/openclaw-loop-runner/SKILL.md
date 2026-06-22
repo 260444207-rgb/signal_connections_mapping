@@ -90,11 +90,11 @@ Final chat reply only: status, output_file, record_count, unresolved_count.
 Use the runtime CLI:
 
 ```bash
-python scripts/openclaw_loop.py --state-dir .openclaw-loop init
-python scripts/openclaw_loop.py --state-dir .openclaw-loop status
-python scripts/openclaw_loop.py --state-dir .openclaw-loop next
-python scripts/openclaw_loop.py --state-dir .openclaw-loop run
-python scripts/openclaw_loop.py --state-dir .openclaw-loop check
+powershell -ExecutionPolicy Bypass -File .\scripts\openclaw_loop.ps1 -StateDir .openclaw-loop init
+powershell -ExecutionPolicy Bypass -File .\scripts\openclaw_loop.ps1 -StateDir .openclaw-loop status
+powershell -ExecutionPolicy Bypass -File .\scripts\openclaw_loop.ps1 -StateDir .openclaw-loop next
+powershell -ExecutionPolicy Bypass -File .\scripts\openclaw_loop.ps1 -StateDir .openclaw-loop run
+powershell -ExecutionPolicy Bypass -File .\scripts\openclaw_loop.ps1 -StateDir .openclaw-loop check
 ```
 
 For already generated task plans, use the standalone guard:

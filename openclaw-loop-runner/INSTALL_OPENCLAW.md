@@ -55,7 +55,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install_to_openclaw.ps1 -Open
 Inside the OpenClaw workspace/project where you want loop state:
 
 ```powershell
-python D:\path\to\openclaw\plugins\openclaw-loop-runner\scripts\openclaw_loop.py --state-dir .openclaw-loop init
+powershell -ExecutionPolicy Bypass -File D:\path\to\openclaw\plugins\openclaw-loop-runner\scripts\openclaw_loop.ps1 -StateDir .openclaw-loop init
 ```
 
 This creates:
@@ -76,7 +76,7 @@ Edit `.openclaw-loop/prd.json` and replace the template task with your real task
 Without an OpenClaw agent command, the runtime dispatches prompt files into `.openclaw-loop/iterations/`:
 
 ```powershell
-python D:\path\to\openclaw\plugins\openclaw-loop-runner\scripts\openclaw_loop.py --state-dir .openclaw-loop run
+powershell -ExecutionPolicy Bypass -File D:\path\to\openclaw\plugins\openclaw-loop-runner\scripts\openclaw_loop.ps1 -StateDir .openclaw-loop run
 ```
 
 With an OpenClaw agent command, pass it through `--agent-command`.
@@ -84,7 +84,7 @@ With an OpenClaw agent command, pass it through `--agent-command`.
 Example placeholder form:
 
 ```powershell
-python D:\path\to\openclaw\plugins\openclaw-loop-runner\scripts\openclaw_loop.py --state-dir .openclaw-loop run `
+powershell -ExecutionPolicy Bypass -File D:\path\to\openclaw\plugins\openclaw-loop-runner\scripts\openclaw_loop.ps1 -StateDir .openclaw-loop run `
   --agent-command "openclaw agent run --prompt-file {prompt_file}"
 ```
 
@@ -101,9 +101,9 @@ Replace the command with the actual OpenClaw agent invocation used by your insta
 ## 5. Check Status
 
 ```powershell
-python D:\path\to\openclaw\plugins\openclaw-loop-runner\scripts\openclaw_loop.py --state-dir .openclaw-loop status
-python D:\path\to\openclaw\plugins\openclaw-loop-runner\scripts\openclaw_loop.py --state-dir .openclaw-loop next
-python D:\path\to\openclaw\plugins\openclaw-loop-runner\scripts\openclaw_loop.py --state-dir .openclaw-loop check
+powershell -ExecutionPolicy Bypass -File D:\path\to\openclaw\plugins\openclaw-loop-runner\scripts\openclaw_loop.ps1 -StateDir .openclaw-loop status
+powershell -ExecutionPolicy Bypass -File D:\path\to\openclaw\plugins\openclaw-loop-runner\scripts\openclaw_loop.ps1 -StateDir .openclaw-loop next
+powershell -ExecutionPolicy Bypass -File D:\path\to\openclaw\plugins\openclaw-loop-runner\scripts\openclaw_loop.ps1 -StateDir .openclaw-loop check
 ```
 
 ## 6. Completion Rule

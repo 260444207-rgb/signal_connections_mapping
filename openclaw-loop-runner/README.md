@@ -39,25 +39,25 @@ openclaw-loop-runner/
 Initialize state:
 
 ```bash
-python scripts/openclaw_loop.py --state-dir .openclaw-loop init
+powershell -ExecutionPolicy Bypass -File .\scripts\openclaw_loop.ps1 -StateDir .openclaw-loop init
 ```
 
 Check status:
 
 ```bash
-python scripts/openclaw_loop.py --state-dir .openclaw-loop status
+powershell -ExecutionPolicy Bypass -File .\scripts\openclaw_loop.ps1 -StateDir .openclaw-loop status
 ```
 
 Pick next runnable task:
 
 ```bash
-python scripts/openclaw_loop.py --state-dir .openclaw-loop next
+powershell -ExecutionPolicy Bypass -File .\scripts\openclaw_loop.ps1 -StateDir .openclaw-loop next
 ```
 
 Run the loop. Without `--agent-command`, it writes dispatch prompts under `.openclaw-loop/iterations/` and evaluates the declared output contracts. With an OpenClaw agent command, placeholders are available:
 
 ```bash
-python scripts/openclaw_loop.py --state-dir .openclaw-loop run \
+powershell -ExecutionPolicy Bypass -File .\scripts\openclaw_loop.ps1 -StateDir .openclaw-loop run `
   --agent-command "openclaw agent run --prompt-file {prompt_file}"
 ```
 
@@ -72,7 +72,7 @@ Available placeholders:
 Check all task output contracts:
 
 ```bash
-python scripts/openclaw_loop.py --state-dir .openclaw-loop check
+powershell -ExecutionPolicy Bypass -File .\scripts\openclaw_loop.ps1 -StateDir .openclaw-loop check
 ```
 
 ## Standalone Guard Script
