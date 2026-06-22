@@ -73,7 +73,7 @@ python script/run_pipeline.py \
 
 不要再因为小 TASK 数量变多、link_family、mapping_family 或 target_device_signature 不同而启动多个互不共享状态的 subagent；这些信息已经作为同一源端器件 session 的上下文提供。只有 hard_case 或未知源端器件需要额外隔离。
 
-每个 subagent 必须拥有互不重叠的 `TASK_xxx.json` 列表。**必须启动隔离 subagent**去分析这些 TASK；同一个 session 内的 TASK 需要顺序执行，并通过 `pin_allocation_state_file` 按 `physical_device_instance_id` 传递已用 pin、允许复用 pin 和冲突信息。TASK 分片原则是源端物理器件实例优先、链路/信号语义其次、数量上限最后。
+每个 subagent 必须拥有互不重叠的 `TASK_xxx.json` 列表。**必须启动隔离 subagent**去分析这些 TASK；同一个 session 内的 TASK 需要顺序执行。处理每个 TASK 前先看 `task_scope.session_state_snapshot`，再读取 session 级 `pin_allocation_context_file` 和权威 `pin_allocation_state_file`；前者提供跨 TASK 的 potential_shared_pin_groups，后者按 `physical_device_instance_id` 传递已用 pin、允许复用 pin 和冲突信息。TASK 分片原则是源端物理器件实例优先、链路/信号语义其次、数量上限最后。
 
 ### 4. 给 subagent 的任务必须包含这些约束
 
@@ -82,7 +82,7 @@ python script/run_pipeline.py \
 ```text
 1. 只处理分配给自己的 session/TASK_xxx.json；同一 session 的多个 TASK 由同一个 subagent 顺序处理。
 2. 只输出这些任务包内的 line_id。
-3. selected_pin / selected_pins 必须逐字来自入参 pin_info.json 中当前源端器件编码对应的 source_device_pins；candidate_mappings 只保留 top candidates。
+3. selected_pin / selected_pins 必须逐字来自入参 pin_info.json 中当前源端器件编码对应的 source_device_pins；candidate_mappings 只是粗糙搜索提示，不是候选闭集，不是答案列表，score 不是置信度。
 4. 不得修改 normalized_connection。
 5. 不得输出 output_sheet_name/source_sheet_name。
 6. 多物理 pin 优先输出 `parent_line_id=原line_id` 且 `line_id=原line_id#数字` 的多行 decision；兼容旧任务时才使用 selected_pins。

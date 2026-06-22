@@ -34,8 +34,9 @@ context_group 表示同一个源端器件 pin 体系；链路族、信号族、�
   "diagram_link_context": {},
   "link_family_profiles": {},
   "normalized_connections": [],
-  "candidate_mappings": [],
   "source_device_pins": [],
+  "pin_selection_policy": {},
+  "candidate_mappings": [],
   "matched_rule_sections": [],
   "rule_source": {},
   "link_family_summaries": {},
@@ -47,13 +48,13 @@ context_group 表示同一个源端器件 pin 体系；链路族、信号族、�
 
 对每条 line_id：
 
-1. 先查看 task_scope。若存在 subagent_session_id、global_link_plan_file、pin_allocation_state_file、physical_device_instance_ids 和 previous_task_outputs，说明当前 TASK 是同一个 source_device subagent 会话中的小批次；处理前必须读取 state，处理后必须按 physical_device_instance_id 更新 state。
-2. 再查看 context_group.source_device_signature 和 source_device_pins，建立当前源端器件的 pin 功能理解。
+1. 先查看 task_scope。若存在 subagent_session_id、global_link_plan_file、pin_allocation_state_file、session_state_snapshot、session_pin_allocation_context_file、physical_device_instance_ids 和 previous_task_outputs，说明当前 TASK 是同一个 source_device subagent 会话中的小批次；处理前必须先查看 task 内嵌 snapshot，再读取 session 级 pin_allocation_context 和权威 state 文件，处理后必须按 physical_device_instance_id 更新 state。
+2. 再查看 context_group.source_device_signature、source_device_pins 和 pin_selection_policy，建立当前源端器件的 pin 功能理解。source_device_pins 是唯一权威 pin 来源。
 3. 必须查看 diagram_link_context。它来自输入框图表中的 link_info / 链路信息 sheet 和连接行，用于理解用户标注的链路类型、链路编号、涉及 sheet、器件角色说明、相关连线 ID 和逐行链路上下文。
 4. 再查看 matched_rule_sections。它是脚本按源端器件、链路族、信号族、目标、端口关键词召回的候选自然语言规则块；只能作为阅读重点，不能直接当作脚本裁决结果。
 5. 必须查看 link_family_profiles。它是同一 link_family 跨多个 source_device subagent 共享的链路级上下文，用来借鉴链路拓扑、上下游角色、实例索引、差分/总线展开规律和用户链路说明。
 6. 必须查看 sheet_device_context。它说明输入 Excel 的 sheet 语义：同一个 source_sheet_name 表示同一个物理器件实例；sheet 内多个 source_block_id/source_block_name 是这个器件的逻辑块、功能块或端口视图，不是多个独立器件。
-7. 必须查看 pin_allocation_context。它说明同一物理器件实例内哪些 line_id 共享同一个 pin 空间、每条连接的前置 signal_shape_info，以及 pin 复用约束。
+7. 必须查看 pin_allocation_context。它说明当前 TASK 内同一物理器件实例哪些 line_id 共享同一个 pin 空间、每条连接的前置 signal_shape_info，以及 pin 复用约束。若 task_scope.session_pin_allocation_context_file 存在，还必须读取该 session 级文件，它包含跨 TASK 的 potential_shared_pin_groups。
 8. 再查看 context_group.link_family_ids、mapping_families、target_device_signatures、link_contexts 和 link_family_summaries，把链路信息作为当前源端器件的组内上下文。
 9. 在逐行裁决前，先对当前 TASK 内同一个 physical_device_instance_id 的所有 line_id 做一次整体 pin 分配计划，并结合 pin_allocation_state_file 中该 physical_device_instance_id 的前序 TASK 已用 pin，识别可能竞争同一个 pin 的连接。不同 physical_device_instance_id 的同名 pin 可以各自使用，不算冲突。
 10. 对每条 line_id，判断它属于哪条业务链路或信号族，例如 TX 控制链路、TX RF 链路、反馈链路、SPI 控制链路。
@@ -61,7 +62,7 @@ context_group 表示同一个源端器件 pin 体系；链路族、信号族、�
 12. 根据链路级规则确定拓扑关系：源/目的器件、方向、通道编号、实例索引、链路中该信号承担的作用。
 13. 再查器件级规则，理解源端器件有哪些 pin 承担这个作用；器件类型规则只能在链路语义约束下复用。
 14. 再用通用信号规则处理 SPI、差分、电源、总线等协议或信号族。
-15. 最后才参考 pin 名称相似度。
+15. 最后才参考 candidate_mappings / rough_pin_search_hints 的 pin 名称相似度。它们只是粗糙搜索提示，不是候选闭集，不是答案列表，score 不是置信度。
 16. 如果一个框图逻辑信号对应多个物理 pin，优先输出多行 decision：`line_id=原line_id#数字`、`parent_line_id=原line_id`、每行一个 `selected_pin`；兼容旧任务时才使用 `selected_pins` 数组。
 17. 对差分信号，确认 P/N 是否能由 `expansion_index`、`#数字`、链路族模板或链路规则确定。
 18. 对总线信号，必须知道总线编号、片选、数据方向或用户规则后才能选择具体 pin。
@@ -94,7 +95,7 @@ TX 控制链路规定 SROC 的 TX_SW0 控制 TXVGA0 的 EN_CHA/EN_CHB。
 ## 关键约束
 
 1. 只能输出输入中已有的 line_id。
-2. selected_pin / selected_pins 必须逐字来自入参 pin_info.json 中当前源端器件编码对应的 pin 列表，也就是 task_json.source_device_pins；candidate_mappings 只提供 top candidates，不承载完整 pin 列表。不能编造 pin，不能改大小写，不能翻译，不能补全，不能使用目标器件或其他源端器件的 pin。
+2. selected_pin / selected_pins 必须逐字来自入参 pin_info.json 中当前源端器件编码对应的 pin 列表，也就是 task_json.source_device_pins。candidate_mappings 只提供粗糙搜索提示，不承载完整 pin 列表，也不限制可选 pin 范围。不能编造 pin，不能改大小写，不能翻译，不能补全，不能使用目标器件或其他源端器件的 pin。
 3. 不得修改前 9 列连接事实字段。
 4. 不得输出 output_sheet_name。
 5. 信息不足时不要硬猜，输出 unresolved/Low/needs_human_review=true。
@@ -105,6 +106,7 @@ TX 控制链路规定 SROC 的 TX_SW0 控制 TXVGA0 的 EN_CHA/EN_CHB。
 10. 在同一个 physical_device_instance_id 内，同一个 selected_pin 默认只能用于一个不同语义的 scalar line_id；只有 `pin_allocation_context.potential_shared_pin_groups`、相同源端口扇出到多个目标端口、相同网络/同一 base_connection_id、多端口别名或用户规则明确说明时，才允许复用。
 11. 如果两个不同语义 line_id 竞争同一个 pin，不能两个都输出 High；应给出最合理分配，无法区分时输出 unresolved 并说明 pin 冲突。
 12. 对每条连接必须先读取前置 signal_shape_info：bus/differential 如果已展开则逐行输出单个 selected_pin；如果需上下文展开则输出 parent_line_id#数字 多行 decision。普通 scalar 连接不能因为候选相似就重复使用别的端口已经占用的 pin。
+12a. 不得按 candidate_mappings 中最高 rough_lexical_score 直接选择 pin；候选与链路语义冲突时必须忽略候选，从 source_device_pins 全量列表重新判断，或输出 unresolved。
 13. 如果 selected_pin/selected_pins 为空，net_name/net_names 必须为空；没有原理图 pin 时不得生成网络名。
 14. `LINE_xxx`、`line`、包含 `line` 的连线名称是画图工具默认连线名，不是有效网络名；需要网络名时应结合信号语义生成，不得直接复制这类默认名称。
 15. signal_shape_info 是进入映射分析前生成的形态判断结果，来源包括自动总线宽度识别、源端 pin 列表中的 P/N 对识别，以及本地自然语言规则中的“差分/总线”提示。只有 needs_model_shape_review=true、证据冲突或明显不符合连接语义时，才修正该判断，并必须在 analysis 中说明原因。

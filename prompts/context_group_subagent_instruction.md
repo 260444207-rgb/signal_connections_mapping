@@ -20,8 +20,9 @@ prompts/semantic_mapping_resolver.md
   "link_family_summaries": {},
   "line_ids": [],
   "normalized_connections": [],
-  "candidate_mappings": [],
   "source_device_pins": {},
+  "pin_selection_policy": {},
+  "candidate_mappings": [],
   "matched_rule_sections": [],
   "rule_source": {},
   "needs_model_resolution": [],
@@ -33,7 +34,7 @@ prompts/semantic_mapping_resolver.md
 
 ```text
 1. 只处理当前任务包列出的 line_id。
-2. 先阅读 context_group.source_device_signature 和 source_device_pins，建立当前源端器件 pin 功能理解。
+2. 先阅读 context_group.source_device_signature、source_device_pins 和 pin_selection_policy，建立当前源端器件 pin 功能理解。source_device_pins 是唯一权威 pin 来源。
 3. 必须阅读 diagram_link_context。它来自框图信息表/link_info/链路信息 sheet，用来判断链路归属、链路实例、器件角色和特殊连接说明。
 4. 再阅读 matched_rule_sections。它是脚本召回的候选自然语言规则块，只能辅助阅读，不能直接替代逐行判断。
 5. 必须阅读 link_family_profiles。它是同一 link_family 跨多个 source_device subagent 共享的链路级上下文，用来借鉴拓扑、方向、实例索引、差分/总线展开规律和用户说明。
@@ -56,7 +57,7 @@ prompts/semantic_mapping_resolver.md
 3. JSONL 每行一个 mapping_decision object，不要 Markdown 包裹。
 4. 输出前必须自检：assigned_line_ids == output_line_ids。
 5. 输出前必须自检：没有重复 line_id，没有额外 line_id。
-6. 输出前必须自检：非空 selected_pin / selected_pins 都逐字来自入参 pin_info.json 中当前源端器件编码对应的 source_device_pins；candidate_mappings 只提供 top candidates，不承载完整 pin 列表。不得改写 pin 名、大小写、下划线或使用其他器件的 pin。
+6. 输出前必须自检：非空 selected_pin / selected_pins 都逐字来自入参 pin_info.json 中当前源端器件编码对应的 source_device_pins；candidate_mappings 只提供粗糙搜索提示，不是候选闭集，不是答案列表，score 不是置信度。不得改写 pin 名、大小写、下划线或使用其他器件的 pin。
 7. subagent 最终回复只能摘要输出条数、unresolved 条数和原因；真正结果以 JSONL 文件为准。
 8. 如果 source_device_pins 没有当前源端器件编码，必须输出 unresolved，并在 analysis 中说明入参 pin_info 缺少该器件 pin 信息。
 9. 输出前必须自检：同一个 physical_device_instance_id 内，除同一源端口扇出到多个目标端口、同一网络/同一 base_connection_id/多端口别名/用户规则明确允许外，不得让多个不同语义 scalar line_id 选择同一个 selected_pin。

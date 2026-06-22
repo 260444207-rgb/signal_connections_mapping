@@ -13,6 +13,7 @@ from build_analysis_context_groups import analysis_strategy_for_group, infer_lin
 from common import ensure_dir, iter_jsonl, load_pin_catalog, pins_for_part, read_json, resolve_catalog_key, write_json
 
 DEFAULT_MAX_LINES_PER_MODEL_TASK = 50
+DEFAULT_CANDIDATE_HINT_LIMIT = 3
 
 
 def load_by_line_id(path: str | Path) -> Dict[str, Dict[str, Any]]:
@@ -268,6 +269,34 @@ def pin_state_instances(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         })
         instance["line_ids"].append(row.get("line_id", ""))
     return list(instances.values())
+
+
+def session_state_snapshot(state_path: str | Path, physical_device_instance_ids: List[str]) -> Dict[str, Any]:
+    state = read_json(state_path, {})
+    instance_filter = set(physical_device_instance_ids)
+    instances = []
+    for instance in state.get("physical_device_instances", []) or []:
+        instance_id = instance.get("physical_device_instance_id", "")
+        if instance_filter and instance_id not in instance_filter:
+            continue
+        instances.append({
+            "physical_device_instance_id": instance_id,
+            "source_sheet_name": instance.get("source_sheet_name", ""),
+            "source_part_id": instance.get("source_part_id", ""),
+            "used_pins": instance.get("used_pins", []),
+            "allowed_shared_pin_groups": instance.get("allowed_shared_pin_groups", []),
+            "unresolved_conflicts": instance.get("unresolved_conflicts", []),
+        })
+    return {
+        "source": "pin_allocation_state_file_snapshot",
+        "authoritative_file": str(state_path),
+        "usage": "这是生成 TASK 时从 session pin_allocation_state_file 读取的状态摘要；subagent 仍必须读取 authoritative_file 获取最新状态，并在完成 TASK 后更新该文件。",
+        "completed_task_ids": state.get("completed_task_ids", []),
+        "physical_device_instances": instances,
+        "session_used_pins": state.get("used_pins", []),
+        "session_allowed_shared_pin_groups": state.get("allowed_shared_pin_groups", []),
+        "session_unresolved_conflicts": state.get("unresolved_conflicts", []),
+    }
 
 
 def build_link_family_summary(groups: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -570,7 +599,7 @@ def build_sheet_device_context(normalized_connections: List[Dict[str, Any]]) -> 
 
 def shared_signal_key(row: Dict[str, Any]) -> str:
     name = str(row.get("connection_name", "") or "").strip()
-    if name:
+    if name and "LINE" not in name.upper():
         return f"NET:{name}"
     base_connection = str(row.get("base_connection_id", "") or "").strip()
     if base_connection:
@@ -644,13 +673,22 @@ def slim_candidate_mapping(candidate_mapping: Dict[str, Any]) -> Dict[str, Any]:
         "line_id": candidate_mapping.get("line_id", ""),
         "source_part_id": candidate_mapping.get("source_part_id", ""),
         "resolved_part_id": candidate_mapping.get("resolved_part_id", ""),
+        "role": "rough_lexical_search_hint_only",
+        "usage_policy": [
+            "这些候选只来自端口名/pin名/索引的轻量相似度，不是答案列表。",
+            "selected_pin 可以且经常应该从 source_device_pins 的完整 pin 列表中选择，不限于这里的 candidates。",
+            "score 不是置信度；不得因为分数最高就直接选择，必须先完成链路语义、方向、signal_shape 和 pin 占用判断。",
+            "如果候选和语义判断冲突，忽略候选并从 source_device_pins 全量列表中选择，或输出 unresolved。",
+        ],
+        "candidate_hint_limit": DEFAULT_CANDIDATE_HINT_LIMIT,
         "candidates": [
             {
                 "pin": item.get("pin", ""),
-                "score": item.get("score", 0),
+                "rough_lexical_score": item.get("score", 0),
+                "score_is_confidence": False,
                 "basis": item.get("basis", []),
             }
-            for item in candidate_mapping.get("candidates", [])
+            for item in candidate_mapping.get("candidates", [])[:DEFAULT_CANDIDATE_HINT_LIMIT]
         ],
         "available_pins_count": len(candidate_mapping.get("available_pins", [])),
         "available_pins_ref": "source_device_pins[source_part_id]",
@@ -683,13 +721,14 @@ def build_pin_allocation_context(
         part_id = row.get("source_part_id", "")
         instance_key = f"SHEET:{sheet}|PART:{part_id or 'UNKNOWN_PART'}"
         candidate_mapping = candidates_by_id.get(line_id, {})
-        top_candidates = [
+        rough_pin_search_hints = [
             {
                 "pin": item.get("pin", ""),
-                "score": item.get("score", 0),
+                "rough_lexical_score": item.get("score", 0),
+                "score_is_confidence": False,
                 "basis": item.get("basis", []),
             }
-            for item in candidate_mapping.get("candidates", [])[:5]
+            for item in candidate_mapping.get("candidates", [])[:DEFAULT_CANDIDATE_HINT_LIMIT]
         ]
         instances.setdefault(instance_key, {
             "physical_device_instance_id": instance_key,
@@ -708,7 +747,8 @@ def build_pin_allocation_context(
             "connection_id": row.get("connection_id", ""),
             "connection_name": row.get("connection_name", ""),
             "available_pins_count": len(candidate_mapping.get("available_pins", [])),
-            "top_candidates": top_candidates,
+            "rough_pin_search_hints": rough_pin_search_hints,
+            "rough_pin_search_hints_policy": "只用于快速定位可能相关的 pin 名，不是候选闭集；最终必须从 source_device_pins 全量列表按语义选择。",
         })
 
         key = shared_signal_key(row)
@@ -837,13 +877,17 @@ def render_subagent_session_plan(sessions: List[Dict[str, Any]]) -> str:
                 source=str(session.get("source_device_signature", "")).replace("|", "/"),
                 lines_count=session.get("line_count", 0),
                 task_count=len(session.get("tasks", [])),
-                state=str(Path(session.get("pin_allocation_state_file", "")).name).replace("|", "/"),
+                state=(
+                    str(Path(session.get("pin_allocation_state_file", "")).name)
+                    + "<br>"
+                    + str(Path(session.get("pin_allocation_context_file", "")).name)
+                ).replace("|", "/"),
                 tasks="<br>".join(task_names).replace("|", "/"),
             )
         )
     lines.extend([
         "",
-        "执行要求：同一个 session 由一个 subagent 顺序处理全部 TASK；每处理完一个 TASK，写入 TASK 的 output_file，并更新 pin_allocation_state_file 中已用 pin、允许复用 pin 和 unresolved 冲突说明。后续 TASK 必须读取该 state 再继续分析。",
+        "执行要求：同一个 session 由一个 subagent 顺序处理全部 TASK；处理每个 TASK 前读取 session_pin_allocation_context_file 和 pin_allocation_state_file。每处理完一个 TASK，写入 TASK 的 output_file，并更新 pin_allocation_state_file 中已用 pin、允许复用 pin 和 unresolved 冲突说明。后续 TASK 必须读取该 state 再继续分析。",
     ])
     return "\n".join(lines) + "\n"
 
@@ -889,6 +933,7 @@ def build_global_link_plan(
                 "line_count": session.get("line_count", 0),
                 "task_count": len(session.get("tasks", [])),
                 "pin_allocation_state_file": session.get("pin_allocation_state_file", ""),
+                "pin_allocation_context_file": session.get("pin_allocation_context_file", ""),
             }
             for session in sessions
         ],
@@ -1074,22 +1119,24 @@ def render_shared_prompt() -> str:
         "5. 信息不足时输出 selected_pin 为空、decision_type=unresolved、confidence=Low、needs_human_review=true。",
         "6. 输出文件格式必须是 JSONL：每行一个 mapping_decision object，不要 Markdown 包裹，不要 JSON 数组。",
         "7. 当前 context_group 代表同一个源端器件 pin 体系；可以共享该器件的 pin 功能理解，但每条 line_id 的实例编号、对端端口和网络名必须独立判断。",
-        "7a. 必须阅读 task_json.task_scope。task_scope 会给出 subagent_session_id、global_link_plan_file、pin_allocation_state_file、physical_device_instance_ids、previous_task_outputs 和当前小 TASK 在 session 中的顺序。",
+        "7a. 必须阅读 task_json.task_scope。task_scope 会给出 subagent_session_id、global_link_plan_file、pin_allocation_state_file、session_state_snapshot、session_pin_allocation_context_file、physical_device_instance_ids、previous_task_outputs 和当前小 TASK 在 session 中的顺序。",
         "7b. 同一个 subagent_session 下的多个 TASK 必须由同一个 subagent 顺序处理；不要因为 TASK 文件变多就为同一个源端器件启动多个互不共享 state 的 subagent。",
-        "7c. 处理当前 TASK 前必须读取 pin_allocation_state_file；pin 占用必须按 physical_device_instance_id 分开记录。同名 pin 在不同 physical_device_instance_id 下可以各自使用，不算冲突。",
+        "7c. 处理当前 TASK 前必须先查看 task_scope.session_state_snapshot，再读取 pin_allocation_state_file 获取最新状态；pin 占用必须按 physical_device_instance_id 分开记录。同名 pin 在不同 physical_device_instance_id 下可以各自使用，不算冲突。",
         "7c-1. 处理完成后必须把本 TASK 的已用 pin、允许复用 pin、冲突和 completed_task_ids 写回对应 physical_device_instance_id 的 state，供同一物理器件实例的后续 TASK 使用。",
         "7d. 必须阅读 global_link_plan_file，用它统一理解 link_family、link_instance、器件角色和共享链路语义；global_link_plan 不选择 pin，不能当作裁决结果。",
         "8. 必须先阅读 task_json.diagram_link_context；它来自输入框图表/link_info/链路信息 sheet，用于判断链路归属、上下游角色、实例编号和特殊连接方式。",
         "9. 必须阅读 task_json.matched_rule_sections；它只是脚本召回的候选自然语言规则块，不能替代逐行语义判断。",
         "10. 必须阅读 task_json.link_family_profiles；它是同一 link_family 跨 subagent 共享的链路级语义上下文，用于借鉴拓扑、方向、实例索引和用户说明。",
         "11. 必须阅读 task_json.sheet_device_context；同一个 source_sheet_name 表示同一个物理器件实例，sheet 内不同 block_id/block_name 是该器件的逻辑块/端口视图。",
-        "12. 必须阅读 task_json.pin_allocation_context；先判断每条连接是 scalar、bus 还是 differential；同一物理器件实例内同一个 pin 默认不能被多个不同语义 line_id 重复使用，除非同一源端口扇出、同一网络、多端口别名或用户规则明确允许。",
+        "12. 必须阅读 task_json.pin_allocation_context 和 task_scope.session_pin_allocation_context_file；前者是当前小 TASK 局部视图，后者是同一 source_device session 的全量视图，包含跨 TASK 的 potential_shared_pin_groups。先判断每条连接是 scalar、bus 还是 differential；同一物理器件实例内同一个 pin 默认不能被多个不同语义 line_id 重复使用，除非同一源端口扇出、同一网络、多端口别名或用户规则明确允许。",
         "13. 借鉴 link_family_profiles 时，只能复用链路语义和分析方法，不能直接复制其他 line_id 或其他源端器件的 selected_pin。",
         "14. 如果 task_json 中存在 link_family_summaries，先用它们理解组内链路族、控制族、总线族和局部映射，再做单行 pin 选择。",
         "15. 如果没有显式 link_info/link_family 数据，必须按 context_group 的源/目的器件类型、源Block名称、源Port 和 mapping_family 继续分析，不得要求用户必须补充链路表。",
+        "15a. 必须先阅读 task_json.pin_selection_policy。source_device_pins 是唯一权威 pin 来源；candidate_mappings 和 rough_pin_search_hints 只是粗糙搜索提示，不是候选闭集，不是答案列表，score 不是置信度。",
+        "15b. selected_pin 可以选择任何出现在 source_device_pins 的 pin，即使它没有出现在 candidate_mappings。不得按候选最高分直接选择 pin；必须先完成语义判断再选 pin。",
         "16. 输出前自检：输出必须覆盖 task_json.line_ids；如果根据上下文判断某条原始 line 需要展开为差分/总线，可以不输出原始 line 的决策，改为输出 parent_line_id=原始line_id 且 line_id=原始line_id#数字 的多行决策；除此之外不得遗漏、重复或额外输出。",
         "17. 输出前自检：同一个 physical_device_instance_id 内，除 pin_allocation_context.potential_shared_pin_groups 或用户规则允许外，不得让多个不同语义 line_id 选择同一个 selected_pin。",
-        "18. selected_pin/selected_pins 必须逐字来自入参 pin_info.json 中当前源端器件编码对应的 task_json.source_device_pins；不能编造、改写、翻译、补全 pin，也不能使用其他器件的 pin。candidate_mappings 只保留 top candidates，不承载完整 pin 列表。",
+        "18. selected_pin/selected_pins 必须逐字来自入参 pin_info.json 中当前源端器件编码对应的 task_json.source_device_pins；不能编造、改写、翻译、补全 pin，也不能使用其他器件的 pin。candidate_mappings 不承载完整 pin 列表，不限制可选 pin 范围。",
         "19. 如果 task_json.source_device_pins 没有当前源端器件编码，或 source_device_pins 中没有可用 pin，必须输出 unresolved，并说明入参 pin_info 缺少该器件 pin 信息。",
         "20. 如果 selected_pin/selected_pins 为空，net_name/net_names 必须为空；没有原理图 pin 时不得生成网络名。",
         "21. LINE_xxx、line、包含 line 的连线名称是画图工具默认连线名，不是有效网络名；不得直接复制到 net_name/net_names，需要网络名时必须结合信号语义生成。",
@@ -1161,6 +1208,7 @@ def build_model_resolution_tasks(
         context_id = group.get("context_group_id") or f"CTX_{len(tasks)+1}"
         session_id = f"SESSION_{filename_slug(readable_device_type(group), 'DEVICE', 24)}_{filename_slug(source_part_label(group), 'UNKNOWN_PART', 24)}_{context_id.replace('CTX_', '')}"
         session_state_file = subagent_state_dir / f"{session_id}.pin_allocation_state.json"
+        session_pin_context_file = subagent_state_dir / f"{session_id}.pin_allocation_context.json"
 
         # 收集本组所有 normalized_connections 中的 source_part_id -> 真实 pin 列表。
         # pin_info 缺失时整个源端器件 session 跳过，不生成语义模型任务。
@@ -1197,9 +1245,19 @@ def build_model_resolution_tasks(
             "line_ids": [],
             "line_count": 0,
             "pin_allocation_state_file": str(session_state_file),
+            "pin_allocation_context_file": str(session_pin_context_file),
             "global_link_plan_file": str(output_dir / "global_link_plan.json"),
             "tasks": [],
         })
+
+        session_pin_allocation_context = build_pin_allocation_context(full_group_nc, candidates_by_id)
+        session_pin_allocation_context.update({
+            "scope": "session_level_full_source_device_context",
+            "subagent_session_id": session_id,
+            "context_group_id": context_id,
+            "usage": "这是同一个 source_device session 的全量 pin 分配上下文，包含跨小 TASK 的 potential_shared_pin_groups；subagent 处理每个 TASK 前都应读取它，再结合当前 TASK 内的 pin_allocation_context。",
+        })
+        write_json(session_pin_context_file, session_pin_allocation_context)
 
         if not session_state_file.exists():
             write_json(session_state_file, {
@@ -1226,6 +1284,7 @@ def build_model_resolution_tasks(
                 file_stem = f"{file_stem}_PART{chunk_index:02d}"
             task_display_name = f"{readable_device_type(task_group)} / {source_part_label(task_group)} / {readable_family_scope(task_group)} / part {chunk_index} of {len(task_chunks)}"
             output_file = subagent_outputs_dir / f"{file_stem}.jsonl"
+            task_physical_device_instance_ids = sorted({physical_device_instance_id(row) for row in group_nc})
             output_contract = {
                 "must_write_file": True,
                 "output_file": str(output_file),
@@ -1243,17 +1302,31 @@ def build_model_resolution_tasks(
                 "subtask_count_in_session": len(task_chunks),
                 "max_lines_per_task": DEFAULT_MAX_LINES_PER_MODEL_TASK,
                 "split_policy": "source physical device instance first; link/mapping semantics second; line-count cap last",
-                "physical_device_instance_ids": sorted({physical_device_instance_id(row) for row in group_nc}),
+                "physical_device_instance_ids": task_physical_device_instance_ids,
                 "pin_allocation_state_file": str(session_state_file),
+                "session_state_snapshot": session_state_snapshot(session_state_file, task_physical_device_instance_ids),
+                "session_pin_allocation_context_file": str(session_pin_context_file),
                 "global_link_plan_file": str(output_dir / "global_link_plan.json"),
                 "previous_task_outputs": list(previous_task_outputs),
-                "next_step": "写入 output_contract.output_file 后，更新 pin_allocation_state_file，再处理同 session 的下一个 TASK。",
+                "next_step": "写入 output_contract.output_file 后，更新 pin_allocation_state_file，再处理同 session 的下一个 TASK。跨 TASK 的潜在共享关系先查 session_pin_allocation_context_file。",
             }
             task_payload = {
                 "task_id": file_stem,
                 "task_display_name": task_display_name,
                 "task_scope": task_scope,
                 "context_group": task_group,
+                "source_device_pins": source_pins_map,
+                "pin_selection_policy": {
+                    "authoritative_pin_source": "source_device_pins",
+                    "candidate_mappings_role": "rough_search_hints_only",
+                    "rules": [
+                        "selected_pin / selected_pins 必须逐字来自 source_device_pins 中当前源端器件编码对应的完整 pin 列表。",
+                        "candidate_mappings 不是可选答案列表，也不是闭集；没有出现在 candidate_mappings 的 pin 仍然可以被选择。",
+                        "candidate_mappings 的 rough_lexical_score 不是置信度，不能按最高分直接选 pin。",
+                        "必须先判断链路语义、方向、source/target 角色、signal_shape、差分/总线展开和 pin 占用，再查 source_device_pins 选择同功能 pin。",
+                        "如果语义判断与候选提示冲突，忽略候选提示；如果 source_device_pins 中找不到同功能 pin，输出 unresolved。",
+                    ],
+                },
                 "sheet_device_context": build_sheet_device_context(group_nc),
                 "pin_allocation_context": build_pin_allocation_context(group_nc, candidates_by_id),
                 "diagram_link_context": build_diagram_link_context(task_group, group_nc),
@@ -1271,7 +1344,6 @@ def build_model_resolution_tasks(
                     slim_candidate_mapping(candidates_by_id.get(line_id, {"line_id": line_id, "candidates": []}))
                     for line_id in line_ids
                 ],
-                "source_device_pins": source_pins_map,
                 "rule_source": {
                     "file": str(resolved_rules_path),
                     "usage": "TASK JSON 只内嵌 matched_rule_sections；完整自然语言规则从该文件读取。",
@@ -1302,6 +1374,7 @@ def build_model_resolution_tasks(
                 "output_contract": output_contract,
                 "prompt_file": str(shared_prompt_path),
                 "pin_allocation_state_file": str(session_state_file),
+                "pin_allocation_context_file": str(session_pin_context_file),
                 "physical_device_instance_ids": task_scope["physical_device_instance_ids"],
                 "recommended_subagent": task_group.get("recommended_subagent", "semantic-mapping-subagent"),
                 "readable_device_type": readable_device_type(task_group),
@@ -1406,6 +1479,8 @@ def build_model_resolution_tasks(
                 "line_count": task.get("line_count", 0),
                 "task_json": task.get("task_json", ""),
                 "output_file": task.get("output_file", ""),
+                "pin_allocation_state_file": task.get("pin_allocation_state_file", ""),
+                "pin_allocation_context_file": task.get("pin_allocation_context_file", ""),
                 "prompt_file": task.get("prompt_file", ""),
             }
             for task in tasks

@@ -165,9 +165,10 @@ all:         只走脚本路径，不会自动调用真实 subagent；只适合�
 
 ```text
 task_dir/
-├── intermediate/
-└── output/
+└── intermediate/
 ```
+
+`output/` 只在 `finish` / render 阶段真正写出 Excel 时按需创建；不再初始化空的 `logs/`、`rules/` 等目录。
 
 ### script/normalize_connections.py
 
@@ -295,11 +296,12 @@ intermediate/model_resolution_tasks/
 7. matched_rule_sections
 8. link_family_summaries
 9. normalized_connections
-10. candidate_mappings（只保留 top candidates，不重复完整 pin 列表）
-11. source_device_pins
-12. rule_source
-13. needs_model_resolution
-14. required_output
+10. source_device_pins
+11. pin_selection_policy
+12. candidate_mappings（只保留粗糙搜索提示，不重复完整 pin 列表，不限制可选 pin 范围）
+13. rule_source
+14. needs_model_resolution
+15. required_output
 ```
 
 平衡模式下，`subagent_session_plan` 控制实际 subagent 启动粒度：一个 source_device session 对应一个源端器件 pin 体系；同一 session 下可以有多个小 TASK。小 TASK 的分片原则是源端物理器件实例优先、链路/信号语义其次、数量上限最后，默认每个 TASK 不超过 50 条 line。小 TASK 用于降低单次推理上下文，不表示要为同一源端器件启动多个互不共享状态的 subagent。
@@ -313,12 +315,14 @@ parent_context_group_id
 subtask_index_in_session
 subtask_count_in_session
 pin_allocation_state_file
+session_state_snapshot
+session_pin_allocation_context_file
 physical_device_instance_ids
 global_link_plan_file
 previous_task_outputs
 ```
 
-subagent 必须按同一 session 顺序处理 TASK，处理前读取 `pin_allocation_state_file`，处理后按 `physical_device_instance_id` 写回已用 pin、允许复用 pin、冲突和 completed_task_ids。不同 physical_device_instance_id 的同名 pin 可以各自使用，不算冲突。
+subagent 必须按同一 session 顺序处理 TASK。每个 TASK 内嵌 `session_state_snapshot`，这是生成任务时从 `pin_allocation_state_file` 读取的轻量摘要，用于降低模型漏读外部文件的风险；权威动态状态仍是 `pin_allocation_state_file`。处理前读取 `session_pin_allocation_context_file` 和权威 state 文件；session 级 pin_allocation_context 包含跨 TASK 的 `potential_shared_pin_groups`，TASK 内 `pin_allocation_context` 只是当前小批次视图。处理后按 `physical_device_instance_id` 写回已用 pin、允许复用 pin、冲突和 completed_task_ids。不同 physical_device_instance_id 的同名 pin 可以各自使用，不算冲突。
 
 `diagram_link_context` 是从输入框图表/link_info/链路信息 sheet 和逐行连接事实整理出的链路上下文，包含：
 

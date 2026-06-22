@@ -135,9 +135,11 @@ intermediate/model_resolution_tasks/
 7. 当前 matched_rule_sections
 8. 当前 link_family_summaries
 9. 当前 TASK normalized_connections
-10. 当前 TASK candidate_mappings top candidates
-11. rule_source 指向 natural_language_mapping_rules_template.md
-12. needs_model_resolution 原因
+10. 当前 TASK source_device_pins
+11. 当前 TASK pin_selection_policy
+12. 当前 TASK candidate_mappings rough search hints
+13. rule_source 指向 natural_language_mapping_rules_template.md
+14. needs_model_resolution 原因
 ```
 
 `link_family_profiles` 会把同一 link_family 的共享链路语义注入到所有相关 source_device subagent 中。它用于借鉴链路拓扑、方向、实例索引和用户说明，不用于脚本裁决 pin。

@@ -78,10 +78,11 @@ intermediate/model_resolution_tasks/tasks/TASK_器件类型_器件编码_链路�
 7. matched_rule_sections
 8. link_family_summaries
 9. normalized_connections
-10. candidate_mappings top candidates
-11. source_device_pins
-12. rule_source 指向 natural_language_mapping_rules_template.md
-13. needs_model_resolution 原因
+10. source_device_pins
+11. pin_selection_policy
+12. candidate_mappings rough search hints
+13. rule_source 指向 natural_language_mapping_rules_template.md
+14. needs_model_resolution 原因
 ```
 
 `task_scope` 指向 `global_link_plan_file` 和 `pin_allocation_state_file`。同一个 session 的 TASK 必须顺序处理：处理前读取 state，处理后更新 state，记录已用 pin、允许复用 pin、冲突和 completed_task_ids。

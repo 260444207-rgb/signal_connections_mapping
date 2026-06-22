@@ -152,7 +152,7 @@ intermediate/model_resolution_tasks/subagent_task_plan.md
 intermediate/model_resolution_tasks/subagent_task_plan.json
 ```
 
-这里会持久化列出全局 link_family 摘要、每个 source_device subagent session、session 内小 TASK 的顺序、pin_allocation_state_file、line 数量、任务目标和任务文件名。平衡模式下，小 TASK 先按源端物理器件实例切分，再按链路/信号语义切分，最后才按 50 条左右的数量上限截断；数量不是第一切分依据。subagent 数量仍按源端器件 pin 体系控制，同一个 session 的多个 TASK 由同一个 subagent 顺序处理。任务包放在 `intermediate/model_resolution_tasks/tasks/`，文件名类似 `TASK_01_SROC_302078562_MULTI_LINK_61889c68782d_PART01.json`，方便用户按器件类型和批次检查。所有任务共用 `intermediate/model_resolution_tasks/subagent_task_prompt.md`，不再为每个器件重复生成一份几乎相同的 md。
+这里会持久化列出全局 link_family 摘要、每个 source_device subagent session、session 内小 TASK 的顺序、pin_allocation_state_file、session 级 pin_allocation_context_file、line 数量、任务目标和任务文件名。平衡模式下，小 TASK 先按源端物理器件实例切分，再按链路/信号语义切分，最后才按 50 条左右的数量上限截断；数量不是第一切分依据。subagent 数量仍按源端器件 pin 体系控制，同一个 session 的多个 TASK 由同一个 subagent 顺序处理。每个 TASK 内会嵌入 `task_scope.session_state_snapshot`，这是生成任务时从 state 文件读取的轻量摘要；权威动态状态仍是 `pin_allocation_state_file`。任务包放在 `intermediate/model_resolution_tasks/tasks/`，文件名类似 `TASK_01_SROC_302078562_MULTI_LINK_61889c68782d_PART01.json`，方便用户按器件类型和批次检查。所有任务共用 `intermediate/model_resolution_tasks/subagent_task_prompt.md`，不再为每个器件重复生成一份几乎相同的 md。
 
 ## 输出约束
 
