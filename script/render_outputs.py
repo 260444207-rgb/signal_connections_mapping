@@ -35,11 +35,32 @@ def is_placeholder_net_name(value: str) -> bool:
     text = str(value or "").strip()
     return bool(text) and "line" in text.lower()
 
+def is_invalid_model_net_name(value: str) -> bool:
+    text = str(value or "").strip().upper()
+    if not text:
+        return True
+    if is_placeholder_net_name(text):
+        return True
+    return text in {
+        "INPUT",
+        "OUTPUT",
+        "IN",
+        "OUT",
+        "HIGH",
+        "MEDIUM",
+        "LOW",
+        "MODEL_RESOLVED",
+        "UNRESOLVED",
+    }
+
 def final_net_name(decision: Dict[str, Any], normalized: Dict[str, Any], index: int, selected_pin: str) -> str:
     if not str(selected_pin or "").strip():
         return ""
+    connection_name = str(normalized.get("connection_name", "") or "").strip()
+    if connection_name and not is_placeholder_net_name(connection_name):
+        return generate_net_name(normalized, selected_pin)
     decision_net_name = decision_list_value(decision, "net_names", index)
-    if decision_net_name and not is_placeholder_net_name(decision_net_name):
+    if decision_net_name and not is_invalid_model_net_name(decision_net_name):
         return decision_net_name
     return generate_net_name(normalized, selected_pin)
 
