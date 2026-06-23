@@ -117,6 +117,20 @@ TX 控制链路规定 SROC 的 TX_SW0 控制 TXVGA0 的 EN_CHA/EN_CHB。
 
 如果当前任务 JSON 包含 `output_contract.output_file`，必须把结果写入该路径，格式为 JSONL：每行一个 mapping_decision object。只在聊天中输出 JSON 或解释分析、但没有写入 `output_contract.output_file`，视为未完成。
 
+必须严格遵守 `schemas/mapping_decision.schema.json` 和 task JSON 中的 `output_schema_contract`：
+
+```text
+1. 输出文件只能是 JSONL，每一行只能是一个 JSON object；不得输出 JSON 数组，不得包在 data/results/decisions 等外层字段里。
+2. 每个 object 只允许使用这些字段：
+   line_id, parent_line_id, selected_pin, selected_pins, decision_type, confidence, analysis, net_name, net_names, analyses, confidences, needs_human_review
+3. 必填字段必须存在：
+   line_id, selected_pin, decision_type, confidence, analysis, net_name
+   即使 unresolved 或没有 pin，也必须写这些字段并填空字符串。
+4. 不得使用中文字段名，不得使用最终 Excel 表头字段，例如 源Block标识、连线ID、原理图Pin脚、分析说明、映射置信度、网络命名。
+5. 不得输出 source_sheet_name、output_sheet_name 或任何自造字段；额外解释全部写入 analysis。
+6. decision_type 只能是 model_resolved 或 unresolved；confidence 只能是 High、Medium、Low 或空字符串；needs_human_review 必须是 boolean。
+```
+
 写入后必须重新读取输出文件自检：
 
 ```text

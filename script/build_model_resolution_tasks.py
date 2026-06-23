@@ -1102,6 +1102,11 @@ def match_rule_sections(rule_blocks: List[Dict[str, Any]], group: Dict[str, Any]
 
 
 def render_shared_prompt() -> str:
+    schema_fields = (
+        "line_id, parent_line_id, selected_pin, selected_pins, "
+        "decision_type, confidence, analysis, net_name, net_names, "
+        "analyses, confidences, needs_human_review"
+    )
     lines = [
         "# Subagent Model Resolution Task Prompt",
         "",
@@ -1118,6 +1123,11 @@ def render_shared_prompt() -> str:
         "4. 一条逻辑连接对应多个物理 pin 时，优先输出多行 parent_line_id#数字 decision，每行一个 selected_pin；只有 TASK 明确保留未展开数组模式时才使用 selected_pins。",
         "5. 信息不足时输出 selected_pin 为空、decision_type=unresolved、confidence=Low、needs_human_review=true。",
         "6. 输出文件格式必须是 JSONL：每行一个 mapping_decision object，不要 Markdown 包裹，不要 JSON 数组。",
+        "6-0. 必须先阅读 task_json.output_schema_contract；它是本 TASK 的输出字段白名单、必填字段和禁止字段契约。",
+        f"6a. 每个 mapping_decision object 必须严格遵守 schemas/mapping_decision.schema.json，只允许这些字段：{schema_fields}。",
+        "6b. 必填字段必须存在：line_id、selected_pin、decision_type、confidence、analysis、net_name。即使 unresolved 或没有 pin，也必须写空字符串字段，不得省略。",
+        "6c. 不得使用中文字段名，不得输出表格列名字段，不得输出 source_sheet_name/output_sheet_name，不得自造字段，不得把结果包在 data/results/decisions 数组里。",
+        "6d. decision_type 只能是 model_resolved 或 unresolved；confidence 只能是 High、Medium、Low 或空字符串；needs_human_review 必须是 boolean。",
         "7. 当前 context_group 代表同一个源端器件 pin 体系；可以共享该器件的 pin 功能理解，但每条 line_id 的实例编号、对端端口和网络名必须独立判断。",
         "7a. 必须阅读 task_json.task_scope。task_scope 会给出 subagent_session_id、global_link_plan_file、pin_allocation_state_file、session_state_snapshot、session_pin_allocation_context_file、physical_device_instance_ids、previous_task_outputs 和当前小 TASK 在 session 中的顺序。",
         "7b. 同一个 subagent_session 下的多个 TASK 必须由同一个 subagent 顺序处理；不要因为 TASK 文件变多就为同一个源端器件启动多个互不共享 state 的 subagent。",
@@ -1356,6 +1366,56 @@ def build_model_resolution_tasks(
                     "schema": "schemas/mapping_decision.schema.json",
                     "one_decision_per_line_id": True,
                     "write_to_file": str(output_file),
+                },
+                "output_schema_contract": {
+                    "schema_file": "schemas/mapping_decision.schema.json",
+                    "format": "JSONL",
+                    "one_json_object_per_line": True,
+                    "allowed_fields": [
+                        "line_id",
+                        "parent_line_id",
+                        "selected_pin",
+                        "selected_pins",
+                        "decision_type",
+                        "confidence",
+                        "analysis",
+                        "net_name",
+                        "net_names",
+                        "analyses",
+                        "confidences",
+                        "needs_human_review",
+                    ],
+                    "required_fields": [
+                        "line_id",
+                        "selected_pin",
+                        "decision_type",
+                        "confidence",
+                        "analysis",
+                        "net_name",
+                    ],
+                    "forbidden_fields": [
+                        "source_sheet_name",
+                        "output_sheet_name",
+                        "源Block标识",
+                        "源Block名称",
+                        "源Port",
+                        "目的Block标识",
+                        "目的Block名称",
+                        "目的Port",
+                        "连线ID",
+                        "连线名称",
+                        "连线方向",
+                        "原理图Pin脚",
+                        "分析说明",
+                        "映射置信度",
+                        "网络命名",
+                    ],
+                    "strict_rules": [
+                        "不得输出 JSON 数组；每一行必须是一个 JSON object。",
+                        "不得使用中文字段名或最终 Excel 表头字段。",
+                        "不得自造字段；额外说明写入 analysis。",
+                        "没有值时填空字符串或空数组，必填字段不得省略。",
+                    ],
                 },
             }
             task_json = tasks_dir / f"{file_stem}.json"

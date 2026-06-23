@@ -85,8 +85,7 @@ FEM_RXBY00~FEM_RXBY03 分别映射 RX_BYPASS0~RX_BYPASS3。
 典型目标：TXVGA, TX VGA, RFIN, EN_CHA, EN_CHB
 
 规则摘要：
-TX_SW0 控制 TXVGA00/TXVGA01 的 EN_CHA/EN_CHB，映射 TX_PD_SW0。
-TX_SW1 控制 TXVGA02/TXVGA03 的 EN_CHA/EN_CHB，映射 TX_PD_SW1。
+TX_SW[num]系列管脚, 一个管脚能控制两个txvga器件(例如TXVGA00/TXVGA01 的 EN_CHA/EN_CHB)，这两个器件的连线映射的是同一个管脚TX_PD_SW[num]
 DAC00~DAC07 到 TXVGA RFIN/default 输入时，是 TX AFE 差分输出，映射对应 TX_AFE0_xx_P/N。
 
 ### RULE: SROC_SPI_AMC7964 SROC 到 AMC7964 SPI
@@ -99,12 +98,12 @@ DAC00~DAC07 到 TXVGA RFIN/default 输入时，是 TX AFE 差分输出，映射�
 典型目标：AMC7964
 
 规则摘要：
-SROC 源Port SPI 连接 AMC7964_00-04/05/06/07 的 SPI 时，使用 HAC_SPI1 总线。
-AMC7964_00-04 对应 HAC_SPI1_CS0。
-AMC7964_00-05 对应 HAC_SPI1_CLK。
-AMC7964_00-06 对应 HAC_SPI1_DIO。
-AMC7964_00-07 对应 HAC_SPI1_DI。
-AMC7964_00-03 当前待确认，不能硬套。
+SROC 源Port SPI 信号是 HAC_SPI 总线信号，都需要拆分成以下4条:
+
+HAC_SPI×_CS0，HAC_SPI×_CLK，HAC_SPI×_DIO，HAC_SPI×_DI
+
+其中 ×标识数字，用户没有要求的情况下按照顺序去分配。
+
 
 ### RULE: SROC_DRIVER_CONTROL SROC 到集成驱动控制
 
@@ -132,16 +131,7 @@ SROC SW 连接 TXCAL_1 的 SW-SROC 时，映射 CAL_SW_11 和 CAL_SW_12。
 SROC SW 连接 RXCAL_1 的 SW-SROC 时，映射 CAL_SW_15 和 CAL_SW_16。
 一条逻辑控制连接对应两个物理 pin，应使用 selected_pins。
 
-### RULE: SROC_POWER_NET SROC 电源网络
 
-适用条件：
-源端器件：SROC / SROC城堡板 / 0302078562 / 302078562
-链路类型：POWER_CHAIN
-映射族：POWER_ENABLE
-典型端口：VDD_0V65_PMU_SROC0_AVS_40A, VDD_1V8_TRX_DVDD
-
-规则摘要：
-SROC 电源网络在既有表中不映射到 SROC 器件 pin，原理图Pin脚留空，置信度 Low，网络命名按电源网络名处理。
 
 ### RULE: TXVGA_RF_POWER_ENABLE TXVGA 射频/供电/使能
 
@@ -165,7 +155,7 @@ VDD_2V5 对应 VCC1 类 pin，VDD_3V3 对应 VCC2 类 pin；目标端为 PMU/比
 
 规则摘要：
 SPI 通常可拆成 CLK、CS、DI、DIO 或 CLK、CS、MOSI、MISO。
-如果只有 SPI -> SPI 且没有总线编号、片选号、数据方向，则不能唯一映射到具体 pin。
+如果只有 SPI -> SPI 且没有总线编号、片选号、数据方向，则按照顺序选择未使用的 pin。
 
 ### RULE: GENERAL_DIFFERENTIAL 通用差分
 

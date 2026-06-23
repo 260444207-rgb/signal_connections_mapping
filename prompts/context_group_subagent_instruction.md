@@ -72,6 +72,19 @@ prompts/semantic_mapping_resolver.md
 
 必须写入 `output_contract.output_file`，每行一个 JSON object。只在聊天中输出 JSON 数组或分析说明、不写入 output_file，视为未完成。
 
+输出必须严格按 `schemas/mapping_decision.schema.json` 和 TASK JSON 内的 `output_schema_contract`：
+
+```text
+1. 只允许 schema 字段：
+   line_id, parent_line_id, selected_pin, selected_pins, decision_type, confidence, analysis, net_name, net_names, analyses, confidences, needs_human_review
+2. 必须包含必填字段：
+   line_id, selected_pin, decision_type, confidence, analysis, net_name
+   没有值时也要写空字符串，不得省略字段。
+3. 禁止输出中文字段名、最终 Excel 表头字段、source_sheet_name、output_sheet_name 或任何自造字段。
+4. 禁止输出 JSON 数组或外层包装对象；JSONL 文件中每一行就是一个 mapping_decision object。
+5. decision_type 只能写 model_resolved 或 unresolved；confidence 只能写 High、Medium、Low 或空字符串；needs_human_review 必须是 boolean。
+```
+
 ```json
 {"line_id":"","parent_line_id":"","selected_pin":"","selected_pins":[],"decision_type":"model_resolved|unresolved","confidence":"High|Medium|Low","analysis":"","net_name":"","net_names":[],"needs_human_review":false}
 ```
