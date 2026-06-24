@@ -42,6 +42,38 @@ Initialize state:
 powershell -ExecutionPolicy Bypass -File .\scripts\openclaw_loop.ps1 -StateDir .openclaw-loop init
 ```
 
+Generate anchor files from a user description:
+
+```bash
+powershell -ExecutionPolicy Bypass -File .\scripts\openclaw_loop.ps1 -StateDir .openclaw-loop plan `
+  -Description "your long task description"
+```
+
+Goal mode, one-step:
+
+```bash
+powershell -ExecutionPolicy Bypass -File .\scripts\openclaw_loop.ps1 -StateDir .openclaw-loop goal `
+  -Message "goal your long task description"
+```
+
+Goal mode, two-step:
+
+```bash
+powershell -ExecutionPolicy Bypass -File .\scripts\openclaw_loop.ps1 -StateDir .openclaw-loop goal -Message "goal"
+powershell -ExecutionPolicy Bypass -File .\scripts\openclaw_loop.ps1 -StateDir .openclaw-loop goal `
+  -Message "your long task description"
+```
+
+If OpenClaw supports chat middleware, pass every user message to `loop.goal --message "{message}"`. When it returns `NOOP`, continue to the default agent; when it returns `AWAITING_GOAL_PROMPT` or `OK`, the message was handled by goal mode.
+
+For longer descriptions:
+
+```bash
+powershell -ExecutionPolicy Bypass -File .\scripts\openclaw_loop.ps1 -StateDir .openclaw-loop plan `
+  -DescriptionFile .\task-description.md `
+  -Force
+```
+
 Check status:
 
 ```bash

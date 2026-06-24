@@ -63,7 +63,7 @@ Adapt `line_ids` to the domain. For signal mapping it is connection line IDs. Fo
 
 ## Supervisor Loop
 
-1. Initialize `.openclaw-loop`.
+1. Generate `.openclaw-loop` anchor files from the user description with `plan`.
 2. Keep tasks in `.openclaw-loop/prd.json`.
 3. Pick the next dependency-ready task.
 4. Run a fresh worker context for that one task.
@@ -71,6 +71,39 @@ Adapt `line_ids` to the domain. For signal mapping it is connection line IDs. Fo
 6. Evaluate the artifact externally.
 7. Update `state.json` and `progress.md`.
 8. Repeat until all tasks are done or stop conditions trigger.
+
+## Goal Mode
+
+Runtime/middleware mode:
+
+```text
+goal
+```
+
+enters `awaiting_goal_prompt`; the next user message becomes the goal.
+
+```text
+goal <goal description>
+```
+
+creates the goal immediately.
+
+If OpenClaw can intercept chat messages, pass each message to:
+
+```bash
+powershell -ExecutionPolicy Bypass -File .\scripts\openclaw_loop.ps1 -StateDir .openclaw-loop goal -Message "<user message>"
+```
+
+If the command returns `NOOP`, continue with the default agent. If it returns `AWAITING_GOAL_PROMPT` or `OK`, treat the message as handled by goal mode.
+
+Skill fallback mode:
+
+```text
+1. If the user sends exactly "goal", reply: 请继续输入目标描述.
+2. Treat the next user message as the goal description and run/suggest the `plan` command.
+3. If the user sends "goal <description>", run/suggest the `plan` command immediately.
+4. Runtime/middleware behavior takes priority whenever available.
+```
 
 ## Required Worker Prompt
 
@@ -91,6 +124,8 @@ Use the runtime CLI:
 
 ```bash
 powershell -ExecutionPolicy Bypass -File .\scripts\openclaw_loop.ps1 -StateDir .openclaw-loop init
+powershell -ExecutionPolicy Bypass -File .\scripts\openclaw_loop.ps1 -StateDir .openclaw-loop goal -Message "goal your long task description"
+powershell -ExecutionPolicy Bypass -File .\scripts\openclaw_loop.ps1 -StateDir .openclaw-loop plan -Description "your long task description"
 powershell -ExecutionPolicy Bypass -File .\scripts\openclaw_loop.ps1 -StateDir .openclaw-loop status
 powershell -ExecutionPolicy Bypass -File .\scripts\openclaw_loop.ps1 -StateDir .openclaw-loop next
 powershell -ExecutionPolicy Bypass -File .\scripts\openclaw_loop.ps1 -StateDir .openclaw-loop run

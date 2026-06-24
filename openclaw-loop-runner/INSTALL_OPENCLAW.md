@@ -50,18 +50,48 @@ Use `-Force` to overwrite an existing installed copy:
 powershell -ExecutionPolicy Bypass -File .\scripts\install_to_openclaw.ps1 -OpenClawRoot D:\path\to\openclaw -Force
 ```
 
-## 3. Initialize Loop State in an OpenClaw Project
+## 3. Generate Anchor Files from a User Description
 
-Inside the OpenClaw workspace/project where you want loop state:
+Inside the OpenClaw workspace/project where you want loop state, use `plan` instead of hand-writing `prd.json`:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File D:\path\to\openclaw\plugins\openclaw-loop-runner\scripts\openclaw_loop.ps1 -StateDir .openclaw-loop init
+powershell -ExecutionPolicy Bypass -File D:\path\to\openclaw\plugins\openclaw-loop-runner\scripts\openclaw_loop.ps1 `
+  -StateDir .openclaw-loop plan `
+  -Description "你的长任务目标描述"
 ```
+
+You can also use Codex-style goal mode.
+
+One-step:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File D:\path\to\openclaw\plugins\openclaw-loop-runner\scripts\openclaw_loop.ps1 `
+  -StateDir .openclaw-loop goal `
+  -Message "goal 你的长任务目标描述"
+```
+
+Two-step:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File D:\path\to\openclaw\plugins\openclaw-loop-runner\scripts\openclaw_loop.ps1 `
+  -StateDir .openclaw-loop goal `
+  -Message "goal"
+
+powershell -ExecutionPolicy Bypass -File D:\path\to\openclaw\plugins\openclaw-loop-runner\scripts\openclaw_loop.ps1 `
+  -StateDir .openclaw-loop goal `
+  -Message "你的长任务目标描述"
+```
+
+If OpenClaw supports chat middleware, wire each user message to `loop.goal --message "{message}"`. If it returns `NOOP`, continue to the default agent.
 
 This creates:
 
 ```text
 .openclaw-loop/
+  goal.md
+  plans.md
+  standards.md
+  implement.md
   prd.json
   state.json
   progress.md
@@ -69,7 +99,16 @@ This creates:
   iterations/
 ```
 
-Edit `.openclaw-loop/prd.json` and replace the template task with your real tasks.
+If your description is long, use a file:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File D:\path\to\openclaw\plugins\openclaw-loop-runner\scripts\openclaw_loop.ps1 `
+  -StateDir .openclaw-loop plan `
+  -DescriptionFile .\task-description.md `
+  -Force
+```
+
+`plan` extracts numbered/bulleted items into tasks. If no list is found, it creates a default four-step loop plan and keeps the original description in `goal.md` and `prd.json`.
 
 ## 4. Run
 

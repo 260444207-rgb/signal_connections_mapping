@@ -2,6 +2,10 @@
 param(
   [string]$Python = "",
   [string]$StateDir = ".openclaw-loop",
+  [string]$Description = "",
+  [string]$DescriptionFile = "",
+  [string]$Message = "",
+  [switch]$Force,
   [Parameter(ValueFromRemainingArguments = $true)]
   [string[]]$ForwardArgs
 )
@@ -9,6 +13,22 @@ param(
 $ErrorActionPreference = "Stop"
 
 $scriptPath = Join-Path $PSScriptRoot "openclaw_loop.py"
+
+if ($Description) {
+  $ForwardArgs += @("--description", $Description)
+}
+
+if ($DescriptionFile) {
+  $ForwardArgs += @("--description-file", $DescriptionFile)
+}
+
+if ($Message) {
+  $ForwardArgs += @("--message", $Message)
+}
+
+if ($Force) {
+  $ForwardArgs += @("--force")
+}
 
 if (-not (Test-Path -LiteralPath $scriptPath)) {
   throw "Cannot find openclaw_loop.py at $scriptPath"
