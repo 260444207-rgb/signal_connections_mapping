@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 from __future__ import annotations
@@ -972,32 +972,6 @@ def render_global_link_plan(plan: Dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def split_natural_language_rules(text: str) -> Dict[str, str]:
-    sections = {
-        "full_text": text,
-        "link_level_rules": "",
-        "device_level_rules": "",
-        "general_signal_rules": "",
-    }
-    markers = [
-        ("link_level_rules", "## 1. 链路级规则"),
-        ("device_level_rules", "## 2. 器件级规则"),
-        ("general_signal_rules", "## 3. 通用信号规则"),
-        ("pending_rules", "## 4. 当前待确认规则"),
-    ]
-    positions = []
-    for key, marker in markers:
-        idx = text.find(marker)
-        if idx >= 0:
-            positions.append((idx, key, marker))
-    positions.sort()
-    for i, (start, key, marker) in enumerate(positions):
-        end = positions[i + 1][0] if i + 1 < len(positions) else len(text)
-        if key in sections:
-            sections[key] = text[start:end].strip()
-    return sections
-
-
 def normalize_match_text(value: Any) -> str:
     return str(value or "").upper()
 
@@ -1078,7 +1052,30 @@ def collect_rule_match_terms(group: Dict[str, Any], rows: List[Dict[str, Any]]) 
 def match_rule_sections(rule_blocks: List[Dict[str, Any]], group: Dict[str, Any], rows: List[Dict[str, Any]], limit: int = 12, min_score: float = 5.0) -> List[Dict[str, Any]]:
     terms = collect_rule_match_terms(group, rows)
     matched = []
+    exact_matched_rule_ids: set = set()
+
+    # 第1步：RULE ID 与 source_part_id 精确匹配
     for block in rule_blocks:
+        rid = normalize_match_text(block.get("rule_id", ""))
+        if not rid or len(rid) < 2:
+            continue
+        for row in rows:
+            spid = normalize_match_text(row.get("source_part_id", ""))
+            if spid and rid == spid:
+                matched.append({
+                    "rule_id": block.get("rule_id", ""),
+                    "title": block.get("title", ""),
+                    "score": 100.0,
+                    "matched_terms": [f"exact_rule_id:{rid}"],
+                    "text": block.get("text", ""),
+                })
+                exact_matched_rule_ids.add(block.get("rule_id", ""))
+                break
+
+    # 第2步：子串加权匹配（已精确命中的跳过）
+    for block in rule_blocks:
+        if block.get("rule_id", "") in exact_matched_rule_ids:
+            continue
         text = normalize_match_text(block.get("text", ""))
         score = 0.0
         matched_terms = []
@@ -1099,7 +1096,6 @@ def match_rule_sections(rule_blocks: List[Dict[str, Any]], group: Dict[str, Any]
         })
     matched.sort(key=lambda item: (-item["score"], item["rule_id"]))
     return matched[:limit]
-
 
 def render_shared_prompt() -> str:
     schema_fields = (
@@ -1195,7 +1191,7 @@ def build_model_resolution_tasks(
     if pins_path and Path(pins_path).exists():
         device_pins = load_pin_catalog(pins_path)
     skill_root = Path(__file__).resolve().parents[1]
-    resolved_rules_path = Path(rules_path) if rules_path else skill_root / "rules" / "natural_language_mapping_rules_template.md"
+    resolved_rules_path = Path(rules_path) if rules_path else skill_root / "rules" / "combined_mapping_rules.md"
     rules_text = resolved_rules_path.read_text(encoding="utf-8") if resolved_rules_path.exists() else ""
     rule_blocks = extract_rule_blocks(rules_text)
     needs_rows = list(iter_jsonl(needs_model_path))
@@ -1356,7 +1352,7 @@ def build_model_resolution_tasks(
                 ],
                 "rule_source": {
                     "file": str(resolved_rules_path),
-                    "usage": "TASK JSON 只内嵌 matched_rule_sections；完整自然语言规则从该文件读取。",
+                    "usage": "TASK JSON 只内嵌 matched_rule_sections；完整规则已由 build_combined_rules 收集到 combined_mapping_rules.md 中。",
                 },
                 "matched_rule_sections": match_rule_sections(rule_blocks, task_group, group_nc),
                 "needs_model_resolution": [slim_need_row(needs_by_id[line_id]) for line_id in line_ids],

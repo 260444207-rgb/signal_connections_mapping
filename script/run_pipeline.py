@@ -32,7 +32,29 @@ def default_rules_path() -> Path:
 def build_combined_rules(task_dir: Path, project_rules: str = "", user_rules: str = "") -> Path:
     intermediate = task_dir / "intermediate"
     intermediate.mkdir(parents=True, exist_ok=True)
-    rule_paths = [default_rules_path()]
+    rules_root = Path(__file__).resolve().parents[1] / "rules"
+
+    # 收集顺序：入口模板 → global_mapping → link_family_guide → 子目录按字母序 → project → user
+    rule_paths = [rules_root / "natural_language_mapping_rules_template.md"]
+
+    # global_mapping_rules.md
+    global_mapping = rules_root / "global_mapping_rules.md"
+    if global_mapping.exists():
+        rule_paths.append(global_mapping)
+
+    # link_family_guide.md
+    link_family = rules_root / "link_family_guide.md"
+    if link_family.exists():
+        rule_paths.append(link_family)
+
+    # 自动扫描子目录: device_rules/, link_rules/, signal_rules/
+    for subdir_name in ["device_rules", "link_rules", "signal_rules"]:
+        subdir = rules_root / subdir_name
+        if subdir.is_dir():
+            for md_file in sorted(subdir.glob("*.md")):
+                rule_paths.append(md_file)
+
+    # 项目规则和用户规则
     for value in [project_rules, user_rules]:
         if value:
             rule_paths.append(Path(value))
