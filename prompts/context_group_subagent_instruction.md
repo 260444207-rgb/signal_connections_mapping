@@ -36,7 +36,7 @@ prompts/semantic_mapping_resolver.md
 1. 只处理当前任务包列出的 line_id。
 2. 先阅读 context_group.source_device_signature、source_device_pins 和 pin_selection_policy，建立当前源端器件 pin 功能理解。source_device_pins 是唯一权威 pin 来源。
 3. 必须阅读 diagram_link_context。它来自框图信息表/link_info/链路信息 sheet，用来判断链路归属、链路实例、器件角色和特殊连接说明。
-4. 再阅读 matched_rule_sections。它是脚本召回的候选自然语言规则块，只能辅助阅读，不能直接替代逐行判断。
+4. 再阅读 matched_rule_sections。它是脚本召回的候选自然语言规则块；每块的 layer/source_file/match_type 表示规则层级、来源和召回原因。必须按 custom/user > link > device > signal > global > 名称相似度理解，只能辅助阅读，不能直接替代逐行判断。
 5. 必须阅读 link_family_profiles。它是同一 link_family 跨多个 source_device subagent 共享的链路级上下文，用来借鉴拓扑、方向、实例索引、差分/总线展开规律和用户说明。
 6. 必须阅读 sheet_device_context。同一个 source_sheet_name 表示同一个物理器件实例；sheet 内多个 block_id/block_name 是该器件的逻辑块/端口视图。
 7. 必须阅读 pin_allocation_context。同一个 physical_device_instance_id 内共享同一个 pin 空间；每条连接的 scalar/bus/differential 已在映射前写入 signal_shape_info；普通 scalar pin 默认不可被不同语义 line_id 重复使用。

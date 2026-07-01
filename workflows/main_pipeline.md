@@ -138,7 +138,7 @@ intermediate/model_resolution_tasks/
 10. 当前 TASK source_device_pins
 11. 当前 TASK pin_selection_policy
 12. 当前 TASK candidate_mappings rough search hints
-13. rule_source 指向 natural_language_mapping_rules_template.md
+13. rule_source 指向运行时收集全部分层规则后的 combined_mapping_rules.md
 14. needs_model_resolution 原因
 ```
 

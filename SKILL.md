@@ -173,7 +173,7 @@ link_family_profiles
 matched_rule_sections
 ```
 
-`diagram_link_context` 把框图信息表中的链路信息整理为当前 context_group 的模型上下文，包括链路族、链路编号、用户链路说明、器件角色说明、相关 sheet 和逐行 line_id 的链路上下文。`sheet_device_context` 把输入 sheet 解释为物理器件实例，并列出 sheet 内逻辑 block/port。`pin_allocation_context` 列出同一物理器件实例内的 line_id、scalar/bus/differential 判断、候选 pin 空间和可能允许共享 pin 的同源端口扇出/同网/同 base_connection 分组。`link_family_profiles` 是同一 link_family 跨多个 source_device subagent 共享的链路级上下文，用于借鉴拓扑、方向、实例索引、差分/总线展开规律和用户说明；不得直接复制其他 line_id 或其他源端器件的 selected_pin。`matched_rule_sections` 是脚本召回的候选自然语言规则块。subagent 必须先阅读它们。
+`diagram_link_context` 把框图信息表中的链路信息整理为当前 context_group 的模型上下文，包括链路族、链路编号、用户链路说明、器件角色说明、相关 sheet 和逐行 line_id 的链路上下文。`sheet_device_context` 把输入 sheet 解释为物理器件实例，并列出 sheet 内逻辑 block/port。`pin_allocation_context` 列出同一物理器件实例内的 line_id、scalar/bus/differential 判断、候选 pin 空间和可能允许共享 pin 的同源端口扇出/同网/同 base_connection 分组。`link_family_profiles` 是同一 link_family 跨多个 source_device subagent 共享的链路级上下文，用于借鉴拓扑、方向、实例索引、差分/总线展开规律和用户说明；不得直接复制其他 line_id 或其他源端器件的 selected_pin。`matched_rule_sections` 是脚本召回的候选自然语言规则块，每块包含 `layer`、`source_file`、`match_type` 和 `score`。subagent 必须先阅读它们，并按 `custom/user > link > device > signal > global > 名称相似度` 使用，不能按数组位置或 score 直接裁决 pin。
 
 自然语言规则分为：
 
@@ -196,7 +196,7 @@ matched_rule_sections
 ...
 ```
 
-脚本只把相关 RULE 块召回到 `matched_rule_sections`，不做规则裁决；最终仍由 subagent 结合框图链路上下文和 pin 列表逐条判断。
+脚本按目录识别 RULE 层级，并优先按 source_part_id、link_family、mapping_family、signal_shape 和适用条件做确定性召回；`GLOBAL_MAPPING` 与 `SIGNAL_SPECIAL` 作为通用约束常驻。剩余未结构化规则才使用关键词补充召回。召回结果写入 `matched_rule_sections`，不做 pin 裁决；最终仍由 subagent 结合框图链路上下文和 pin 列表逐条判断。
 
 语义模型 prompt：
 

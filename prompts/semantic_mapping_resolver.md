@@ -51,7 +51,7 @@ context_group 表示同一个源端器件 pin 体系；链路族、信号族、�
 1. 先查看 task_scope。若存在 subagent_session_id、global_link_plan_file、pin_allocation_state_file、session_state_snapshot、session_pin_allocation_context_file、physical_device_instance_ids 和 previous_task_outputs，说明当前 TASK 是同一个 source_device subagent 会话中的小批次；处理前必须先查看 task 内嵌 snapshot，再读取 session 级 pin_allocation_context 和权威 state 文件，处理后必须按 physical_device_instance_id 更新 state。
 2. 再查看 context_group.source_device_signature、source_device_pins 和 pin_selection_policy，建立当前源端器件的 pin 功能理解。source_device_pins 是唯一权威 pin 来源。
 3. 必须查看 diagram_link_context。它来自输入框图表中的 link_info / 链路信息 sheet 和连接行，用于理解用户标注的链路类型、链路编号、涉及 sheet、器件角色说明、相关连线 ID 和逐行链路上下文。
-4. 再查看 matched_rule_sections。它是脚本按源端器件、链路族、信号族、目标、端口关键词召回的候选自然语言规则块；只能作为阅读重点，不能直接当作脚本裁决结果。
+4. 再查看 matched_rule_sections。它是脚本按源端器件、链路族、信号族、目标、端口和形态召回的候选自然语言规则块；每块的 layer/source_file/match_type 表示规则层级、来源和召回原因。必须按 custom/user > link > device > signal > global > 名称相似度理解，不能按数组位置或 score 直接选择 pin。
 5. 必须查看 link_family_profiles。它是同一 link_family 跨多个 source_device subagent 共享的链路级上下文，用来借鉴链路拓扑、上下游角色、实例索引、差分/总线展开规律和用户链路说明。
 6. 必须查看 sheet_device_context。它说明输入 Excel 的 sheet 语义：同一个 source_sheet_name 表示同一个物理器件实例；sheet 内多个 source_block_id/source_block_name 是这个器件的逻辑块、功能块或端口视图，不是多个独立器件。
 7. 必须查看 pin_allocation_context。它说明当前 TASK 内同一物理器件实例哪些 line_id 共享同一个 pin 空间、每条连接的前置 signal_shape_info，以及 pin 复用约束。若 task_scope.session_pin_allocation_context_file 存在，还必须读取该 session 级文件，它包含跨 TASK 的 potential_shared_pin_groups。

@@ -97,7 +97,7 @@ prompts/semantic_mapping_resolver.md
 典型端口：PA_SW0, FEM_TDDSW00
 ```
 
-脚本只会把可能相关的 RULE 块召回到 `matched_rule_sections`，不会根据规则块直接裁决 pin。
+脚本会识别 RULE 所在的 link/device/signal/global 层级，先按 source_part_id、link_family、mapping_family、signal_shape 和适用条件确定性召回，再用关键词补充；结果写入 `matched_rule_sections`，不会根据规则块直接裁决 pin。
 
 subagent 分析优先级：
 
@@ -139,7 +139,7 @@ link_family_profiles
 matched_rule_sections
 ```
 
-`diagram_link_context` 包含组内链路族、链路编号、用户链路说明、器件角色说明、相关 sheet、逐行 line_id 的链路上下文。`sheet_device_context` 说明同一个 source_sheet_name 是一个物理器件实例，sheet 内多个 block_id/block_name 是该器件的逻辑块/端口视图。`pin_allocation_context` 说明同一物理器件实例内的 pin 复用约束、每条 line 的 scalar/bus/differential 判断、候选 pin 空间和可能允许共享 pin 的同源端口扇出/同网/同 base_connection 分组。`link_family_profiles` 包含同一 link_family 跨 source_device subagent 的共享链路语义、涉及器件、链路实例、用户说明和代表性 line 示例；它用于借鉴链路逻辑，不能直接复制其他 line_id 的 pin 结论。`matched_rule_sections` 包含脚本召回的候选自然语言规则块。subagent 必须先读它们，再做 pin 映射判断。
+`diagram_link_context` 包含组内链路族、链路编号、用户链路说明、器件角色说明、相关 sheet、逐行 line_id 的链路上下文。`sheet_device_context` 说明同一个 source_sheet_name 是一个物理器件实例，sheet 内多个 block_id/block_name 是该器件的逻辑块/端口视图。`pin_allocation_context` 说明同一物理器件实例内的 pin 复用约束、每条 line 的 scalar/bus/differential 判断、候选 pin 空间和可能允许共享 pin 的同源端口扇出/同网/同 base_connection 分组。`link_family_profiles` 包含同一 link_family 跨 source_device subagent 的共享链路语义、涉及器件、链路实例、用户说明和代表性 line 示例；它用于借鉴链路逻辑，不能直接复制其他 line_id 的 pin 结论。`matched_rule_sections` 包含脚本召回的候选自然语言规则块及 layer/source_file/match_type。subagent 必须按 custom/user > link > device > signal > global > 名称相似度阅读，再做 pin 映射判断。
 
 导出 `model_tasks` 时会先生成全局任务规划：
 

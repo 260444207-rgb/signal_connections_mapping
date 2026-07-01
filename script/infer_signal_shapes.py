@@ -173,14 +173,35 @@ def looks_like_differential_function(row: Dict[str, Any]) -> bool:
 
 
 def iter_rule_sections(rule_text: str) -> List[str]:
-    starts = [m.start() for m in re.finditer(r"^### RULE:\s*", rule_text, flags=re.MULTILINE)]
+    matches = list(re.finditer(r"^### RULE:\s*(.+?)\s*$", rule_text, flags=re.MULTILINE))
     sections: List[str] = []
-    for idx, start in enumerate(starts):
-        next_rule = starts[idx + 1] if idx + 1 < len(starts) else len(rule_text)
-        next_heading = re.search(r"^##\s+", rule_text[start + 1:], flags=re.MULTILINE)
-        end = min(next_rule, start + 1 + next_heading.start() if next_heading else next_rule)
+    for idx, match in enumerate(matches):
+        title = match.group(1).strip()
+        if title.startswith("<"):
+            continue
+        start = match.start()
+        next_rule = matches[idx + 1].start() if idx + 1 < len(matches) else len(rule_text)
+        after_title = rule_text[match.end():]
+        next_heading = re.search(r"^##\s+", after_title, flags=re.MULTILINE)
+        next_section = match.end() + next_heading.start() if next_heading else len(rule_text)
+        next_source = re.search(r"<!--\s*SOURCE:", after_title, flags=re.IGNORECASE)
+        next_source_start = match.end() + next_source.start() if next_source else len(rule_text)
+        end = min(next_rule, next_section, next_source_start)
         sections.append(rule_text[start:end].strip())
     return sections
+
+
+def rule_hint_chunks(section: str) -> List[str]:
+    """将一个 RULE 按 #### 子标题切开，并把适用条件头部带入每个局部块。"""
+    subsection_matches = list(re.finditer(r"^####\s+.+$", section, flags=re.MULTILINE))
+    if not subsection_matches:
+        return [section]
+    header = section[:subsection_matches[0].start()].strip()
+    chunks = []
+    for idx, match in enumerate(subsection_matches):
+        end = subsection_matches[idx + 1].start() if idx + 1 < len(subsection_matches) else len(section)
+        chunks.append((header + "\n" + section[match.start():end]).strip())
+    return chunks
 
 
 def matching_rule_hint(row: Dict[str, Any], rule_text: str) -> Dict[str, Any]:
@@ -208,34 +229,38 @@ def matching_rule_hint(row: Dict[str, Any], rule_text: str) -> Dict[str, Any]:
         if term.isdigit():
             continue
         row_terms.append((kind, term))
+        stripped_index = re.sub(r"\d+$", "", term)
+        if stripped_index and stripped_index != term and len(stripped_index) >= 3:
+            row_terms.append((kind, stripped_index))
     matched_terms: List[str] = []
     hints: List[str] = []
     matched_rule_titles: List[str] = []
     strong_hint = False
     for section in sections:
-        upper_section = section.upper()
-        section_terms = [(kind, term) for kind, term in row_terms if term and term in upper_section]
-        if not section_terms:
-            continue
-        section_hints = []
-        if re.search(r"差分|P/N|_P|_N|DIFFERENTIAL", upper_section):
-            section_hints.append("differential")
-        if re.search(r"总线|BUS|拆分|位宽|BIT|BITS", upper_section):
-            section_hints.append("bus")
-        if not section_hints:
-            continue
-        specific_terms = [
-            term for kind, term in section_terms
-            if kind in {"source_port", "target_port", "connection_name", "link_family"}
-            and term not in GENERIC_RULE_TERMS
-        ]
-        if specific_terms:
-            strong_hint = True
-        matched_terms.extend(term for _, term in section_terms)
-        hints.extend(section_hints)
         title = section.splitlines()[0].strip() if section.splitlines() else ""
-        if title:
-            matched_rule_titles.append(title)
+        for chunk in rule_hint_chunks(section):
+            upper_chunk = chunk.upper()
+            section_terms = [(kind, term) for kind, term in row_terms if term and term in upper_chunk]
+            if not section_terms:
+                continue
+            section_hints = []
+            if re.search(r"差分|P/N|(?:_P|_N)\b|DIFFERENTIAL", upper_chunk):
+                section_hints.append("differential")
+            if re.search(r"总线|BUS|拆分|位宽|BIT|BITS", upper_chunk):
+                section_hints.append("bus")
+            if not section_hints:
+                continue
+            specific_terms = [
+                term for kind, term in section_terms
+                if kind in {"source_port", "target_port", "connection_name"}
+                and term not in GENERIC_RULE_TERMS
+            ]
+            if specific_terms:
+                strong_hint = True
+            matched_terms.extend(term for _, term in section_terms)
+            hints.extend(section_hints)
+            if title and title not in matched_rule_titles:
+                matched_rule_titles.append(title)
     if not hints:
         return {}
     return {

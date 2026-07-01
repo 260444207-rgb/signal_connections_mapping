@@ -29,9 +29,7 @@ REQUIRED_PREPARE_FILES = [
 def default_rules_path() -> Path:
     return Path(__file__).resolve().parents[1] / "rules" / "natural_language_mapping_rules_template.md"
 
-def build_combined_rules(task_dir: Path, project_rules: str = "", user_rules: str = "") -> Path:
-    intermediate = task_dir / "intermediate"
-    intermediate.mkdir(parents=True, exist_ok=True)
+def collect_rule_paths(project_rules: str = "", user_rules: str = "") -> list[Path]:
     rules_root = Path(__file__).resolve().parents[1] / "rules"
 
     # 收集顺序：入口模板 → global_mapping → link_family_guide → 子目录按字母序 → project → user
@@ -58,18 +56,32 @@ def build_combined_rules(task_dir: Path, project_rules: str = "", user_rules: st
     for value in [project_rules, user_rules]:
         if value:
             rule_paths.append(Path(value))
+    return rule_paths
 
-    combined = intermediate / "combined_mapping_rules.md"
+def render_combined_rules(project_rules: str = "", user_rules: str = "") -> str:
     parts = []
-    for path in rule_paths:
+    for path in collect_rule_paths(project_rules, user_rules):
         if path.exists():
             parts.append(f"\n\n<!-- SOURCE: {path} -->\n\n" + path.read_text(encoding="utf-8"))
-    combined.write_text("\n".join(parts).strip() + "\n", encoding="utf-8")
+    return "\n".join(parts).strip() + "\n"
+
+def build_combined_rules(task_dir: Path, project_rules: str = "", user_rules: str = "") -> Path:
+    intermediate = task_dir / "intermediate"
+    intermediate.mkdir(parents=True, exist_ok=True)
+
+    combined = intermediate / "combined_mapping_rules.md"
+    combined.write_text(render_combined_rules(project_rules, user_rules), encoding="utf-8")
     return combined
 
 def prepare_outputs_exist(task_dir: Path) -> bool:
     intermediate = task_dir / "intermediate"
     return all((intermediate / name).exists() for name in REQUIRED_PREPARE_FILES)
+
+def combined_rules_are_current(task_dir: Path, project_rules: str = "", user_rules: str = "") -> bool:
+    combined = task_dir / "intermediate" / "combined_mapping_rules.md"
+    if not combined.exists():
+        return False
+    return combined.read_text(encoding="utf-8") == render_combined_rules(project_rules, user_rules)
 
 def jsonl_has_rows(path: Path) -> bool:
     if not path.exists():
@@ -115,9 +127,11 @@ def run_apply(
     project_rules: str = "",
     user_rules: str = "",
 ) -> None:
-    if not prepare_outputs_exist(task_dir):
+    if not prepare_outputs_exist(task_dir) or not combined_rules_are_current(task_dir, project_rules, user_rules):
         if not connections or not pins:
-            raise FileNotFoundError("prepare outputs are missing; run stage=prepare first or provide --connections and --pins")
+            raise FileNotFoundError(
+                "prepare outputs are missing or rules changed; run stage=prepare first or provide --connections and --pins"
+            )
         run_prepare(task_dir, connections, pins, project_rules, user_rules)
 
     intermediate = task_dir / "intermediate"

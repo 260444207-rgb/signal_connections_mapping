@@ -38,6 +38,15 @@
 
 规则块中的"适用条件"只用于召回候选规则，不表示脚本可以直接裁决。最终是否使用该规则，仍由 subagent 结合框图连接、链路上下文、源端 pin 列表逐条判断。
 
+脚本会根据规则所在目录写入层级元数据，并按以下方式确定性召回：
+
+- `link_rules/`：按 `链路类型` 与当前 `link_family_id` 召回
+- `device_rules/`：按 RULE ID/`源端器件`，并结合可选的 `目标器件` 召回
+- `signal_rules/`：按 `映射族`、`典型端口` 或 `signal_shape` 召回
+- `global_mapping_rules.md` 与 `SIGNAL_SPECIAL`：作为通用约束常驻
+
+同一个 RULE ID 在外部 project/user rules 中再次定义时，后出现的定义覆盖内置定义。关键词匹配只作为未结构化规则的补充召回。
+
 ## 规则块模板（供用户自定义规则参考）
 
 ### RULE: <规则ID> <简短名称>

@@ -976,25 +976,117 @@ def normalize_match_text(value: Any) -> str:
     return str(value or "").upper()
 
 
+RULE_LAYER_BASE_SCORE = {
+    "custom": 400.0,
+    "link": 300.0,
+    "device": 200.0,
+    "signal": 100.0,
+    "global": 50.0,
+    "unknown": 0.0,
+}
+
+RULE_FIELD_ALIASES = {
+    "source_devices": {"源端器件", "SOURCE_DEVICE", "SOURCE_DEVICES"},
+    "target_devices": {"目标器件", "典型目标", "TARGET_DEVICE", "TARGET_DEVICES"},
+    "link_families": {"链路类型", "链路族", "LINK_FAMILY", "LINK_FAMILIES"},
+    "mapping_families": {"映射族", "MAPPING_FAMILY", "MAPPING_FAMILIES"},
+    "ports": {"典型端口", "PORTS", "TYPICAL_PORTS"},
+}
+
+
+def canonical_part_id(value: Any) -> str:
+    text = normalize_match_text(value).strip()
+    if text.isdigit():
+        return text.lstrip("0") or "0"
+    return text
+
+
+def split_rule_values(value: str) -> List[str]:
+    return [
+        item.strip()
+        for item in re.split(r"[/,，;；、]+", value)
+        if item.strip()
+    ]
+
+
+def parse_rule_metadata(text: str) -> Dict[str, List[str]]:
+    metadata = {key: [] for key in RULE_FIELD_ALIASES}
+    alias_to_key = {
+        normalize_match_text(alias): key
+        for key, aliases in RULE_FIELD_ALIASES.items()
+        for alias in aliases
+    }
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        match = re.match(r"^([^:：]+)[:：]\s*(.+)$", line)
+        if not match:
+            continue
+        key = alias_to_key.get(normalize_match_text(match.group(1)).strip())
+        if not key:
+            continue
+        for value in split_rule_values(match.group(2)):
+            if value not in metadata[key]:
+                metadata[key].append(value)
+    return metadata
+
+
+def infer_rule_layer(source_file: str, rule_id: str, metadata: Dict[str, List[str]]) -> str:
+    source = normalize_match_text(source_file).replace("\\", "/")
+    rid = normalize_match_text(rule_id)
+    if "/LINK_RULES/" in source:
+        return "link"
+    if "/DEVICE_RULES/" in source:
+        return "device"
+    if "/SIGNAL_RULES/" in source:
+        return "signal"
+    if source.endswith("/GLOBAL_MAPPING_RULES.MD"):
+        return "global"
+    if source:
+        return "custom"
+    if rid.startswith("LINK_") or metadata.get("link_families"):
+        return "link"
+    if rid.startswith("SIGNAL_") or metadata.get("mapping_families"):
+        return "signal"
+    if rid == "GLOBAL_MAPPING":
+        return "global"
+    if metadata.get("source_devices"):
+        return "device"
+    return "unknown"
+
+
 def extract_rule_blocks(text: str) -> List[Dict[str, Any]]:
     pattern = re.compile(r"^### RULE:\s*(.+?)\s*$", re.MULTILINE)
     matches = list(pattern.finditer(text))
+    source_pattern = re.compile(r"<!--\s*SOURCE:\s*(.+?)\s*-->", re.IGNORECASE)
+    source_matches = list(source_pattern.finditer(text))
     blocks: List[Dict[str, Any]] = []
     for idx, match in enumerate(matches):
         start = match.start()
         next_rule = matches[idx + 1].start() if idx + 1 < len(matches) else len(text)
         next_section_match = re.search(r"^##\s+", text[match.end():], re.MULTILINE)
         next_section = match.end() + next_section_match.start() if next_section_match else len(text)
-        end = min(next_rule, next_section)
+        next_source_match = source_pattern.search(text, match.end())
+        next_source = next_source_match.start() if next_source_match else len(text)
+        end = min(next_rule, next_section, next_source)
         title = match.group(1).strip()
         rule_id = title.split()[0] if title else f"RULE_{idx + 1}"
         if rule_id.startswith("<"):
             continue
         block_text = text[start:end].strip()
+        source_file = ""
+        for source_match in source_matches:
+            if source_match.start() >= start:
+                break
+            source_file = source_match.group(1).strip()
+        metadata = parse_rule_metadata(block_text)
         blocks.append({
             "rule_id": rule_id,
             "title": title,
             "text": block_text,
+            "source_file": source_file,
+            "layer": infer_rule_layer(source_file, rule_id, metadata),
+            "metadata": metadata,
+            "source_order": idx,
         })
     return blocks
 
@@ -1049,53 +1141,207 @@ def collect_rule_match_terms(group: Dict[str, Any], rows: List[Dict[str, Any]]) 
     return terms
 
 
+def values_match(rule_values: List[str], context_values: List[Any]) -> bool:
+    for rule_value in rule_values:
+        rule_text = normalize_match_text(rule_value).strip()
+        if not rule_text:
+            continue
+        rule_part = canonical_part_id(rule_text)
+        for context_value in context_values:
+            context_text = normalize_match_text(context_value).strip()
+            if not context_text:
+                continue
+            if rule_text == context_text:
+                return True
+            if rule_part == canonical_part_id(context_text):
+                return True
+            if (
+                min(len(rule_text), len(context_text)) >= 4
+                and not rule_text.isdigit()
+                and not context_text.isdigit()
+                and (rule_text in context_text or context_text in rule_text)
+            ):
+                return True
+    return False
+
+
+def row_signal_shapes(rows: List[Dict[str, Any]]) -> set[str]:
+    shapes: set[str] = set()
+    for row in rows:
+        direct = normalize_match_text(row.get("signal_shape", "")).lower()
+        if direct:
+            shapes.add(direct)
+        info = row.get("signal_shape_info", {})
+        if isinstance(info, dict):
+            nested = normalize_match_text(info.get("shape", "")).lower()
+            if nested:
+                shapes.add(nested)
+    return shapes
+
+
+def deterministic_rule_match(
+    block: Dict[str, Any],
+    group: Dict[str, Any],
+    rows: List[Dict[str, Any]],
+) -> tuple[str, float, List[str]] | None:
+    layer = block.get("layer", "unknown")
+    metadata = block.get("metadata", {})
+    rid = normalize_match_text(block.get("rule_id", ""))
+    source_parts = [row.get("source_part_id", "") for row in rows]
+    source_devices = (
+        source_parts
+        + [row.get("source_block_name", "") for row in rows]
+        + [row.get("source_block_id", "") for row in rows]
+        + group.get("source_device_instances", [])
+    )
+    target_devices = (
+        [row.get("target_part_id", "") for row in rows]
+        + [row.get("target_block_name", "") for row in rows]
+        + [row.get("target_block_id", "") for row in rows]
+        + group.get("target_device_instances", [])
+    )
+    link_families = (
+        group.get("link_family_ids", [])
+        + [row.get("link_family_id", "") for row in rows]
+    )
+    mapping_families = (
+        group.get("mapping_families", [])
+        + [infer_mapping_family(row) for row in rows]
+    )
+    ports = [
+        value
+        for row in rows
+        for value in [row.get("source_port", ""), row.get("target_port", "")]
+    ]
+    shapes = row_signal_shapes(rows)
+
+    if layer == "link" and values_match(metadata.get("link_families", []), link_families):
+        return "exact_link_family", RULE_LAYER_BASE_SCORE["link"], [
+            f"link_family:{value}" for value in link_families if value
+        ]
+
+    if layer == "device":
+        exact_part = any(
+            canonical_part_id(rid) == canonical_part_id(part)
+            for part in source_parts
+            if rid and part
+        )
+        source_match = exact_part or values_match(metadata.get("source_devices", []), source_devices)
+        target_rules = metadata.get("target_devices", [])
+        target_match = not target_rules or values_match(target_rules, target_devices)
+        if source_match and target_match:
+            match_type = "exact_source_part" if exact_part else "device_conditions"
+            evidence = [f"source_device:{value}" for value in source_devices if value]
+            evidence.extend(f"target_device:{value}" for value in target_devices if value)
+            return match_type, RULE_LAYER_BASE_SCORE["device"], evidence[:12]
+
+    if layer == "signal":
+        if rid == "SIGNAL_SPECIAL":
+            return "always_include_special", RULE_LAYER_BASE_SCORE["signal"], ["global_special_connection_policy"]
+        if rid == "SIGNAL_DIFF" and "differential" in shapes:
+            return "signal_shape", RULE_LAYER_BASE_SCORE["signal"], ["signal_shape:differential"]
+        if values_match(metadata.get("mapping_families", []), mapping_families):
+            return "exact_mapping_family", RULE_LAYER_BASE_SCORE["signal"], [
+                f"mapping_family:{value}" for value in mapping_families if value
+            ]
+        if values_match(metadata.get("ports", []), ports):
+            return "signal_port_family", RULE_LAYER_BASE_SCORE["signal"], [
+                f"port:{value}" for value in ports if value
+            ][:12]
+
+    if layer == "global" or rid == "GLOBAL_MAPPING":
+        return "always_include_global", RULE_LAYER_BASE_SCORE["global"], ["global_mapping_policy"]
+
+    if layer == "custom":
+        source_ok = not metadata.get("source_devices") or values_match(metadata["source_devices"], source_devices)
+        target_ok = not metadata.get("target_devices") or values_match(metadata["target_devices"], target_devices)
+        link_ok = not metadata.get("link_families") or values_match(metadata["link_families"], link_families)
+        mapping_ok = not metadata.get("mapping_families") or values_match(metadata["mapping_families"], mapping_families)
+        has_conditions = any(metadata.values())
+        if has_conditions and source_ok and target_ok and link_ok and mapping_ok:
+            return "custom_rule_conditions", RULE_LAYER_BASE_SCORE["custom"], ["custom_rule_applicability"]
+    return None
+
+
+def lexical_rule_score(block: Dict[str, Any], terms: Dict[str, float]) -> tuple[float, List[str]]:
+    text = normalize_match_text(block.get("text", ""))
+    score = 0.0
+    matched_terms: List[str] = []
+    for term, weight in sorted(terms.items(), key=lambda item: (-len(item[0]), -item[1], item[0])):
+        if len(term) < 2 or term.startswith("LINE"):
+            continue
+        if term not in text:
+            continue
+        if any(term in selected or selected in term for selected in matched_terms):
+            continue
+        score += weight
+        matched_terms.append(term)
+    return score, matched_terms
+
+
+def effective_rule_blocks(rule_blocks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """同 rule_id 后出现的 project/user 规则覆盖前面的内置规则。"""
+    latest_by_id: Dict[str, Dict[str, Any]] = {}
+    for block in rule_blocks:
+        latest_by_id[normalize_match_text(block.get("rule_id", ""))] = block
+    return sorted(latest_by_id.values(), key=lambda block: block.get("source_order", 0))
+
+
 def match_rule_sections(rule_blocks: List[Dict[str, Any]], group: Dict[str, Any], rows: List[Dict[str, Any]], limit: int = 12, min_score: float = 5.0) -> List[Dict[str, Any]]:
     terms = collect_rule_match_terms(group, rows)
-    matched = []
-    exact_matched_rule_ids: set = set()
+    deterministic = []
+    lexical = []
+    deterministic_ids: set[str] = set()
+    blocks = effective_rule_blocks(rule_blocks)
 
-    # 第1步：RULE ID 与 source_part_id 精确匹配
-    for block in rule_blocks:
-        rid = normalize_match_text(block.get("rule_id", ""))
-        if not rid or len(rid) < 2:
+    for block in blocks:
+        result = deterministic_rule_match(block, group, rows)
+        if not result:
             continue
-        for row in rows:
-            spid = normalize_match_text(row.get("source_part_id", ""))
-            if spid and rid == spid:
-                matched.append({
-                    "rule_id": block.get("rule_id", ""),
-                    "title": block.get("title", ""),
-                    "score": 100.0,
-                    "matched_terms": [f"exact_rule_id:{rid}"],
-                    "text": block.get("text", ""),
-                })
-                exact_matched_rule_ids.add(block.get("rule_id", ""))
-                break
+        match_type, score, evidence = result
+        deterministic.append({
+            "rule_id": block.get("rule_id", ""),
+            "title": block.get("title", ""),
+            "score": round(score, 2),
+            "matched_terms": evidence[:30],
+            "text": block.get("text", ""),
+            "layer": block.get("layer", "unknown"),
+            "source_file": block.get("source_file", ""),
+            "match_type": match_type,
+        })
+        deterministic_ids.add(normalize_match_text(block.get("rule_id", "")))
 
-    # 第2步：子串加权匹配（已精确命中的跳过）
-    for block in rule_blocks:
-        if block.get("rule_id", "") in exact_matched_rule_ids:
+    for block in blocks:
+        if normalize_match_text(block.get("rule_id", "")) in deterministic_ids:
             continue
-        text = normalize_match_text(block.get("text", ""))
-        score = 0.0
-        matched_terms = []
-        for term, weight in terms.items():
-            if len(term) < 2:
-                continue
-            if term in text:
-                score += weight
-                matched_terms.append(term)
+        layer = block.get("layer", "unknown")
+        metadata = block.get("metadata", {})
+        if layer == "device" and metadata.get("source_devices"):
+            continue
+        if layer == "link" and metadata.get("link_families"):
+            continue
+        if layer == "signal" and (metadata.get("mapping_families") or metadata.get("ports")):
+            continue
+        if layer == "custom" and any(metadata.values()):
+            continue
+        score, matched_terms = lexical_rule_score(block, terms)
         if score < min_score:
             continue
-        matched.append({
+        lexical.append({
             "rule_id": block.get("rule_id", ""),
             "title": block.get("title", ""),
             "score": round(score, 2),
             "matched_terms": matched_terms[:30],
             "text": block.get("text", ""),
+            "layer": block.get("layer", "unknown"),
+            "source_file": block.get("source_file", ""),
+            "match_type": "lexical_fallback",
         })
-    matched.sort(key=lambda item: (-item["score"], item["rule_id"]))
-    return matched[:limit]
+
+    deterministic.sort(key=lambda item: (-item["score"], item["rule_id"]))
+    lexical.sort(key=lambda item: (-item["score"], item["rule_id"]))
+    remaining_slots = max(0, limit - len(deterministic))
+    return deterministic + lexical[:remaining_slots]
 
 def render_shared_prompt() -> str:
     schema_fields = (
@@ -1132,6 +1378,7 @@ def render_shared_prompt() -> str:
         "7d. 必须阅读 global_link_plan_file，用它统一理解 link_family、link_instance、器件角色和共享链路语义；global_link_plan 不选择 pin，不能当作裁决结果。",
         "8. 必须先阅读 task_json.diagram_link_context；它来自输入框图表/link_info/链路信息 sheet，用于判断链路归属、上下游角色、实例编号和特殊连接方式。",
         "9. 必须阅读 task_json.matched_rule_sections；它只是脚本召回的候选自然语言规则块，不能替代逐行语义判断。",
+        "9a. matched_rule_sections 中的 layer/source_file/match_type 用于说明规则层级、来源和召回原因；裁决时必须遵守 custom/user > link > device > signal > global > 名称相似度，不得按数组位置或 score 直接选择 pin。",
         "10. 必须阅读 task_json.link_family_profiles；它是同一 link_family 跨 subagent 共享的链路级语义上下文，用于借鉴拓扑、方向、实例索引和用户说明。",
         "11. 必须阅读 task_json.sheet_device_context；同一个 source_sheet_name 表示同一个物理器件实例，sheet 内不同 block_id/block_name 是该器件的逻辑块/端口视图。",
         "12. 必须阅读 task_json.pin_allocation_context 和 task_scope.session_pin_allocation_context_file；前者是当前小 TASK 局部视图，后者是同一 source_device session 的全量视图，包含跨 TASK 的 potential_shared_pin_groups。先判断每条连接是 scalar、bus 还是 differential；同一物理器件实例内同一个 pin 默认不能被多个不同语义 line_id 重复使用，除非同一源端口扇出、同一网络、多端口别名或用户规则明确允许。",
@@ -1353,6 +1600,21 @@ def build_model_resolution_tasks(
                 "rule_source": {
                     "file": str(resolved_rules_path),
                     "usage": "TASK JSON 只内嵌 matched_rule_sections；完整规则已由 build_combined_rules 收集到 combined_mapping_rules.md 中。",
+                },
+                "rule_recall_policy": {
+                    "priority": ["custom", "link", "device", "signal", "global", "lexical_similarity"],
+                    "deterministic_matches": [
+                        "custom_rule_conditions",
+                        "exact_link_family",
+                        "exact_source_part",
+                        "device_conditions",
+                        "exact_mapping_family",
+                        "signal_shape",
+                        "signal_port_family",
+                        "always_include_special",
+                        "always_include_global",
+                    ],
+                    "lexical_fallback": "只用于补充召回，不得覆盖更高层级的确定性规则。",
                 },
                 "matched_rule_sections": match_rule_sections(rule_blocks, task_group, group_nc),
                 "needs_model_resolution": [slim_need_row(needs_by_id[line_id]) for line_id in line_ids],

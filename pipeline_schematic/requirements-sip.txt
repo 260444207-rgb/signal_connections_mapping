@@ -1,0 +1,2 @@
+state-integrity-protocol==0.1.0
+openpyxl==3.1.5

@@ -81,7 +81,7 @@ intermediate/model_resolution_tasks/tasks/TASK_器件类型_器件编码_链路�
 10. source_device_pins
 11. pin_selection_policy
 12. candidate_mappings rough search hints
-13. rule_source 指向 natural_language_mapping_rules_template.md
+13. rule_source 指向运行时收集全部分层规则后的 combined_mapping_rules.md
 14. needs_model_resolution 原因
 ```
 

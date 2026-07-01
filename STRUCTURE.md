@@ -374,7 +374,7 @@ shared_semantic_hints
 
 它解决“链路逻辑如何给其他链路/其他器件 subagent 借鉴”的问题：同一 link_family 下的 subagent 可以共享链路拓扑、方向、实例索引、差分/总线展开规律和用户说明。它不是规则裁决结果，不能直接复制其他 line_id 或其他源端器件的 selected_pin。
 
-`matched_rule_sections` 是从 `rules/natural_language_mapping_rules_template.md` 的 `### RULE:` 块中召回的候选规则文本。召回只基于源端器件、链路族、信号族、目标上下文、端口关键词等做相关性筛选，不做 pin 裁决。
+`matched_rule_sections` 是从运行时 `combined_mapping_rules.md` 的 `### RULE:` 块中召回的候选规则文本。脚本根据来源目录写入 layer/source_file/match_type，先按 source_part_id、link_family、mapping_family、signal_shape 和适用条件确定性召回，再对未结构化规则做关键词补充；召回不做 pin 裁决。
 
 启动 subagent 前应先读 `global_link_plan.md`、`subagent_session_plan.md` 和 `subagent_task_plan.md`，确认每个 source_device session 的源端器件、组内链路族、目标上下文、line 数量、小 TASK 顺序和 state 文件。不要因为 TASK 文件变多就为同一个源端器件启动多个互不共享状态的 subagent。
 
@@ -478,7 +478,7 @@ intermediate/signal_shape_inference.jsonl
 
 ### intermediate/combined_mapping_rules.md
 
-运行时规则合并文件。由默认 `rules/natural_language_mapping_rules_template.md` 加可选 `--project-rules`、`--user-rules` 生成。`infer_signal_shapes.py` 和 `build_model_resolution_tasks.py` 都读取这份文件。
+运行时规则合并文件。由入口模板、`global_mapping_rules.md`、`link_family_guide.md`、`device_rules/*.md`、`link_rules/*.md`、`signal_rules/*.md`，再加可选 `--project-rules`、`--user-rules` 生成。`infer_signal_shapes.py` 和 `build_model_resolution_tasks.py` 都读取这份文件；规则内容变化时 prepare 产物会自动刷新。
 
 ### script/generate_net_name.py
 

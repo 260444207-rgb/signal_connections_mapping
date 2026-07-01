@@ -90,7 +90,7 @@ python script/run_pipeline.py \
 8. 输出 JSONL 到 TASK JSON 中 `output_contract.output_file` 指定的文件；每行一个 mapping_decision object。
 9. 链路族、信号族、目标上下文只作为组内分析上下文，不作为要求用户重新拆 subagent 的理由。
 10. 必须先阅读 task_json.diagram_link_context；这里是框图信息表中的链路上下文。
-11. 必须阅读 task_json.matched_rule_sections；这里是脚本召回的候选自然语言规则块，但不能替代逐行语义判断。
+11. 必须阅读 task_json.matched_rule_sections；这里是脚本按层级确定性召回并用关键词补充的候选自然语言规则块。每块的 layer/source_file/match_type 表示层级、来源和召回原因，但不能替代逐行语义判断。
 12. 必须阅读 task_json.link_family_profiles；这里是同一 link_family 跨 source_device subagent 共享的链路级语义上下文。
 13. link_family_profiles 只能用于借鉴拓扑、方向、实例索引、差分/总线展开规律和用户说明；不得复制其他 line_id 或其他源端器件的 selected_pin。
 14. 必须阅读 task_json.sheet_device_context；同一个 source_sheet_name 表示一个物理器件实例，sheet 内多个 block_id/block_name 是该器件的逻辑块或端口视图。
