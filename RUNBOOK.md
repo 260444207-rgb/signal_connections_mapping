@@ -11,6 +11,22 @@ stage=all 只能做脚本冒烟验证；它不会调用语义 subagent。
 
 如果最终 `mapping_decisions.jsonl` 中大部分都是 `unresolved`，不能把它当作已经完成的信号接口列表。
 
+## pin_info 缺失时的硬门禁
+
+在任何语义分析或 subagent 规划之前，先确认每条连接的 `source_part_id` 能在 `pin_info.json` 中找到非空 pin 列表。
+
+如果找不到，执行路径固定为：
+
+```text
+generate_candidates: available_pins=[]
+pre_resolve_candidates: selected_pin="", decision_type=unresolved, confidence=Low, net_name="", needs_human_review=true
+needs_model_resolution.jsonl: 不写入该行
+model_resolution_tasks: 不为该源端器件创建 TASK，不启动 semantic subagent
+final Excel: 保留连接事实，原理图Pin脚="", 网络命名=""
+```
+
+框图 `源Port`、`目的Port`、连线名、block 名、link_info、规则文本和器件常识都不能代替 pin_info。没有源端器件 pin 列表时，不允许用这些信息生成 subagent 任务，也不允许让模型猜 `selected_pin`。
+
 ## 强制执行流程
 
 ### 1. 准备任务目录
@@ -83,8 +99,8 @@ python script/run_pipeline.py \
 1. 只处理分配给自己的 session/TASK_xxx.json；同一 session 的多个 TASK 由同一个 subagent 顺序处理。
 2. 只输出这些任务包内的 line_id。
 3. selected_pin / selected_pins 必须逐字来自入参 pin_info.json 中当前源端器件编码对应的 source_device_pins；candidate_mappings 只是粗糙搜索提示，不是候选闭集，不是答案列表，score 不是置信度。
-4. 不得修改 normalized_connection。
-5. 不得输出 output_sheet_name/source_sheet_name。
+4. 如果当前源端器件在 pin_info.json 中没有非空 pin 列表，主控不应给该器件创建 TASK；若误收到这类 TASK，只能输出 unresolved，不能用框图 port 猜 pin。
+5. 不得修改 normalized_connection，不得输出 output_sheet_name/source_sheet_name。
 6. 多物理 pin 优先输出 `parent_line_id=原line_id` 且 `line_id=原line_id#数字` 的多行 decision；兼容旧任务时才使用 selected_pins。
 7. 信息不足必须 unresolved，不得硬猜。
 8. 输出 JSONL 到 TASK JSON 中 `output_contract.output_file` 指定的文件；每行一个 mapping_decision object。
@@ -96,7 +112,7 @@ python script/run_pipeline.py \
 14. 必须阅读 task_json.sheet_device_context；同一个 source_sheet_name 表示一个物理器件实例，sheet 内多个 block_id/block_name 是该器件的逻辑块或端口视图。
 15. 必须阅读 task_json.pin_allocation_context；先判断连接是 scalar、bus 还是 differential。同一 physical_device_instance_id 内普通 scalar 的同一个 pin 默认不能分配给多个不同语义 line_id，除非同一源端口扇出到多个目标端口、同网、同 base_connection、多端口别名或用户规则明确允许。
 16. 不得翻译、补全、改写、大小写规范化 pin 名；`原理图Pin脚` 必须保持 pin_info.json 中的原始 pin 字符串。
-17. 如果 pin_info.json 没有当前源端器件编码对应的 pin 列表，该器件不启动语义分析，相关行保持 unresolved，等待用户补充 pin 信息。
+17. 如果 pin_info.json 没有当前源端器件编码对应的 pin 列表或列表为空，该器件不启动语义分析，不建 subagent/TASK；相关行保持 unresolved，等待用户补充 pin 信息。
 18. 必须阅读 task_json.task_scope.global_link_plan_file 和 task_json.task_scope.pin_allocation_state_file；每完成一个 TASK 后按 physical_device_instance_id 更新 state 文件。
 ```
 

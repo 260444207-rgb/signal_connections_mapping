@@ -30,6 +30,21 @@ prompts/semantic_mapping_resolver.md
 }
 ```
 
+## 缺 pin_info 硬门禁
+
+正常情况下，主控不会为缺少源端 pin 列表的对象创建 TASK。如果 TASK 中 `source_device_pins` 没有当前 `source_part_id`，或对应列表为空，则只允许输出 unresolved：
+
+```text
+selected_pin=""
+selected_pins=[]
+decision_type=unresolved
+confidence=Low
+net_name/net_names 为空
+analysis 说明 pin_info.json 缺少当前源端器件 pin 列表
+```
+
+此时不要继续阅读框图 port 去猜 pin，不要用 matched_rule_sections、link_family_profiles、器件常识或名称相似度生成 pin；也不要把 `source_port` / `target_port` 原样写成 `selected_pin`。
+
 ## 工作方式
 
 ```text
@@ -59,7 +74,7 @@ prompts/semantic_mapping_resolver.md
 5. 输出前必须自检：没有重复 line_id，没有额外 line_id。
 6. 输出前必须自检：非空 selected_pin / selected_pins 都逐字来自入参 pin_info.json 中当前源端器件编码对应的 source_device_pins；candidate_mappings 只提供粗糙搜索提示，不是候选闭集，不是答案列表，score 不是置信度。不得改写 pin 名、大小写、下划线或使用其他器件的 pin。
 7. subagent 最终回复只能摘要输出条数、unresolved 条数和原因；真正结果以 JSONL 文件为准。
-8. 如果 source_device_pins 没有当前源端器件编码，必须输出 unresolved，并在 analysis 中说明入参 pin_info 缺少该器件 pin 信息。
+8. 如果 source_device_pins 没有当前源端器件编码或列表为空，必须输出 unresolved，并在 analysis 中说明入参 pin_info 缺少该器件 pin 信息；不得用框图 port、连线名或规则文本代替 pin。
 9. 输出前必须自检：同一个 physical_device_instance_id 内，除同一源端口扇出到多个目标端口、同一网络/同一 base_connection_id/多端口别名/用户规则明确允许外，不得让多个不同语义 scalar line_id 选择同一个 selected_pin。
 10. 如果 selected_pin/selected_pins 为空，net_name/net_names 必须为空；没有原理图 pin 时不得生成网络名。
 11. `LINE_xxx`、`line`、包含 `line` 的连线名称是默认连线名，不是有效网络名，不得直接复制到 net_name/net_names。

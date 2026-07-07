@@ -63,7 +63,16 @@ render_template_sheets
 
 候选分数只用于辅助，不代表最终语义判断。
 
-`available_pins` 必须来自入参 `pin_info.json` 中当前源端器件编码对应的 pin 列表。如果找不到该编码，`available_pins` 为空，该器件后续跳过语义模型分析，相关连接保持 unresolved。
+`available_pins` 必须来自入参 `pin_info.json` 中当前源端器件编码对应的 pin 列表。如果找不到该编码或列表为空，进入缺 pin_info 硬门禁：
+
+```text
+available_pins = []
+不允许从源Port/目的Port/连线名生成候选 pin
+不允许把框图 port 当作原理图 pin
+该器件后续跳过语义模型分析，相关连接保持 unresolved
+```
+
+此门禁高于 link_info、mapping_family、自然语言规则和端口名称相似度。
 
 ### infer_signal_shapes
 
@@ -103,7 +112,9 @@ link_contexts / link_instance_ids / user_link_infos / device_role_infos
 
 只在候选 pin 分数非常高且明显领先时自动输出；其余行全部进入 `needs_model_resolution.jsonl`，由语义模型处理。
 
-脚本不承载器件特殊语义。
+如果 `available_pins=[]`，不是“其余行进入模型分析”，而是直接输出 `unresolved / Low / needs_human_review=true`，并且不写入 `needs_model_resolution.jsonl`。
+
+脚本不承载器件特殊语义，也不允许用框图 port 伪造 pin。
 
 ### build_model_resolution_tasks
 
@@ -124,6 +135,8 @@ intermediate/model_resolution_tasks/
 ```
 
 任务包包含：
+
+注意：只有 source_device_pins 中存在当前源端器件的非空 pin 列表时，才允许生成 TASK。缺 pin_info 的对象已经在 pre_resolve 阶段保持 unresolved，不应出现在 subagent 任务中。
 
 ```text
 1. 当前 task_scope（session、global_link_plan_file、pin_allocation_state_file、前序 TASK 输出）

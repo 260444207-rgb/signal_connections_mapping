@@ -91,7 +91,9 @@ intermediate/model_resolution_tasks/tasks/TASK_器件类型_器件编码_链路�
 
 `sheet_device_context` 表达 sheet 与物理器件实例的关系：同一 source_sheet_name 是一个物理器件实例，sheet 内多个 block_id/block_name 是该器件的逻辑块/端口视图。`pin_allocation_context` 表达同一物理器件实例内 pin 的默认互斥使用关系、scalar/bus/differential 判断和允许共享的候选分组。
 
-如果 `source_device_pins` 为空，表示入参 `pin_info.json` 没有当前源端器件编码对应的 pin 列表。该 context 不应启动语义 subagent；保留 unresolved，等待用户补充 pin 信息。
+如果 `source_device_pins` 为空，或没有当前 `source_part_id` 对应的非空 pin 列表，表示入参 `pin_info.json` 缺少当前源端器件的 pin 信息。该 context 不应启动语义 subagent；保留 unresolved，等待用户补充 pin 信息。
+
+不要因为源Block/源Port/目的Port 看起来像 pin 名就绕过此门禁。port 是框图逻辑接口，不是原理图 pin；没有 pin_info 时不能创建“让 subagent 猜 pin”的任务。
 
 ## 输出约束
 

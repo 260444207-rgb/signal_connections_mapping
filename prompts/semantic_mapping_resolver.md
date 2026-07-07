@@ -17,9 +17,10 @@
 ```text
 重复主链路：先按链路族理解全局语义，再按器件类型复用局部 pin 映射。
 控制 / 时钟 / 电源 / 总线：优先按映射族分析。
-没有链路级数据：按源/目的器件类型、源Block名称、源Port 和 mapping_family 启动器件级分析。
+没有链路级数据：只有在当前源端器件有非空 source_device_pins 时，才按源/目的器件类型、源Block名称、源Port 和 mapping_family 启动器件级分析。
 context_group 表示同一个源端器件 pin 体系；链路族、信号族、目标上下文是组内分析标签，不是重新切分 subagent 的理由。
 平衡模式：同一个 source_device subagent 可以顺序处理多个小 TASK_xxx.json；小 TASK 先按源端物理器件实例切分，再按链路/信号语义切分，最后才按数量上限截断。
+pin_info 门禁：source_device_pins 为空或缺少当前 source_part_id 时，不能做 pin 语义选择，不能用框图 port 代替 pin。
 异常或上下文不足：进入 unresolved / hard case，不要硬套器件模板。
 ```
 
@@ -43,6 +44,24 @@ context_group 表示同一个源端器件 pin 体系；链路族、信号族、�
   "local_topology": []
 }
 ```
+
+## 源器件 pin_info 门禁
+
+执行本 prompt 的前提是：当前 TASK 的每个源端器件在 `source_device_pins` 中有非空 pin 列表。`source_device_pins` 来自入参 `pin_info.json`，是唯一权威 pin 来源。
+
+如果主控误把缺 pin 的对象交给你，必须立即按下面方式处理，不要继续做端口语义推理：
+
+```text
+selected_pin = ""
+selected_pins = []
+decision_type = unresolved
+confidence = Low
+needs_human_review = true
+analysis = 说明 pin_info.json 缺少当前 source_part_id 的 pin 列表
+net_name / net_names = 空
+```
+
+禁止把框图 `source_port` / `target_port`、连线名、block 名、link_info、matched_rule_sections 或器件常识当作 pin 列表。它们只能在已有 source_device_pins 的前提下帮助判断“应该选哪个已有 pin”。
 
 ## 分析方法
 
@@ -102,7 +121,7 @@ TX 控制链路规定 SROC 的 TX_SW0 控制 TXVGA0 的 EN_CHA/EN_CHB。
 6. 只有语义、方向、上下游、电路规则都一致时，才能给 High。
 7. 不得把整条重复链路所有器件 pin 都塞进一个单行裁决；只使用 link_family_profiles/link_family_summaries 理解全局语义，最终仍逐 line_id 输出。
 8. link_family_profiles 中的 line_examples 只是共享参考样例，不是已裁决结果；不得从其他源端器件复制 selected_pin。
-9. 如果 task_json.source_device_pins 中没有当前源端器件编码，必须跳过该器件/该行的 pin 选择，输出 unresolved，不得凭器件知识或自然语言规则生成 pin 名。
+9. 如果 task_json.source_device_pins 中没有当前源端器件编码，或该编码对应列表为空，必须跳过该器件/该行的 pin 选择，输出 unresolved；不得凭器件知识、自然语言规则、框图 port 或连线名生成 pin 名。
 10. 在同一个 physical_device_instance_id 内，同一个 selected_pin 默认只能用于一个不同语义的 scalar line_id；只有 `pin_allocation_context.potential_shared_pin_groups`、相同源端口扇出到多个目标端口、相同网络/同一 base_connection_id、多端口别名或用户规则明确说明时，才允许复用。
 11. 如果两个不同语义 line_id 竞争同一个 pin，不能两个都输出 High；应给出最合理分配，无法区分时输出 unresolved 并说明 pin 冲突。
 12. 对每条连接必须先读取前置 signal_shape_info：bus/differential 如果已展开则逐行输出单个 selected_pin；如果需上下文展开则输出 parent_line_id#数字 多行 decision。普通 scalar 连接不能因为候选相似就重复使用别的端口已经占用的 pin。

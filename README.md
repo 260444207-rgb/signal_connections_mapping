@@ -21,6 +21,22 @@ stage=all 只做脚本冒烟验证，不会自动调用语义 subagent。
 正式信号接口列表必须经过 model_tasks -> 语义分析 -> finish。
 ```
 
+## pin_info 硬门禁
+
+`pin_info.json` 是唯一的原理图 pin 数据源。框图 port、连线名、block 名、link_info 和自然语言规则只能帮助理解信号语义，不能替代 pin_info 生成 pin。
+
+当某个 `source_part_id` 在 `pin_info.json` 中没有对应 pin 列表或列表为空时：
+
+```text
+1. candidate_mappings.available_pins = []
+2. pre_resolve_candidates 输出 unresolved / Low / needs_human_review=true
+3. 不写入 needs_model_resolution.jsonl
+4. 不创建 semantic subagent/TASK
+5. 最终 Excel 保留连接行，但原理图Pin脚和网络命名为空
+```
+
+不要让模型用框图 `源Port` / `目的Port`、规则文本或器件常识猜 pin；正确动作是等待用户补充该源端器件的 pin 信息。
+
 ## 主流程
 
 ```text
@@ -29,7 +45,7 @@ stage=all 只做脚本冒烟验证，不会自动调用语义 subagent。
 
 2. generate_candidates
    按 block_info 中的器件 code/料号，从 pin_info.json 取源端 pin 列表并生成候选。
-   如果 pin_info.json 没有当前源端器件编码对应的 pin 列表，该器件后续不进入语义模型分析，相关行保持 unresolved。
+   如果 pin_info.json 没有当前源端器件编码对应的 pin 列表或列表为空，available_pins 为空；该器件后续不进入语义模型分析，相关行保持 unresolved。
 
 3. infer_signal_shapes
    在语义映射前判断 scalar / bus / differential，输出 signal_shape_inference.jsonl，并把 signal_shape_info 写回 normalized_connections。

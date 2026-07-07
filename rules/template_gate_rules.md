@@ -33,7 +33,7 @@ top_score - second_score >= 0.20
 
 这些情况写入 `needs_model_resolution.jsonl`，由 `build_model_resolution_tasks.py` 切分为隔离 subagent 任务。
 
-如果入参 pin_info.json 中没有当前源端器件编码对应的 pin 列表，则不写入 `needs_model_resolution.jsonl`，不启动模型语义分析；保持 unresolved，等待用户补充 pin 信息。
+如果入参 pin_info.json 中没有当前源端器件编码对应的 pin 列表或列表为空，则不写入 `needs_model_resolution.jsonl`，不启动模型语义分析，不创建 subagent/TASK；保持 unresolved，等待用户补充 pin 信息。框图 port、连线名、规则文本和器件常识都不能替代 pin_info。
 
 ## 禁止行为
 
@@ -43,4 +43,5 @@ top_score - second_score >= 0.20
 3. 禁止脚本改写 normalized_connection 的前 9 列连接事实。
 4. 禁止脚本自行新增 line_id；多物理 pin 应由模型输出 selected_pins，渲染阶段再展开。
 5. 禁止脚本或模型改写 pin_info.json 中的 pin 字符串；`原理图Pin脚` 必须逐字使用入参 pin 名。
+6. 禁止在缺少源端器件 pin 列表时，用 source_port / target_port / connection_name / 自然语言规则生成 selected_pin。
 ```

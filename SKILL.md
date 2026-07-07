@@ -1,13 +1,13 @@
 ---
-name: openclaw-signal-mapping-layered
-description: 基于输入框图 Excel、pin_info.json 和自然语言硬件规则，按输入 sheet 结构生成标准 13 列信号接口列表；模型分析按器件/映射族隔离。
+name: diagram-logical-connection-mapping
+description: 基于框图逻辑链接分析原理图的映射关系。该skill是框图生成信号接口列表流程中的一步，需要生成信号接口列表需要先调用编排skill.调用该skills一定要有框图excel和pin_info.json输入，按输入 sheet 结构生成标准 13 列信号接口列表；模型分析按器件/映射族隔离。
 ---
 
 # OpenClaw Signal Mapping Layered Skill
 
 ## 最重要的执行契约
 
-当用户要求“生成信号接口列表”“根据框图和 pin_info 推出映射”“调用本 skill 输出结果”时，默认目标是生成经过语义分析的正式 Excel，而不是只生成脚本兜底表。
+当用户要求"基于框图逻辑链接分析原理图的映射关系"/“根据框图和 pin_info 推出映射”，调用本 skill 输出结果时，默认目标是生成经过语义分析的正式 Excel，而不是只生成脚本兜底表。
 
 必须遵守：
 
@@ -23,7 +23,7 @@ description: 基于输入框图 Excel、pin_info.json 和自然语言硬件规�
      -> stage=finish
      -> 主控检查 subagent output_file 并合并 intermediate/model_resolved_decisions.jsonl
      -> 检查 validation_report.json。
-4. 必须按 subagent_session_plan 启动隔离 subagent；一个 session/context_group 代表一个源端器件 pin 体系。小 TASK 只是降低单次推理负担，不代表要为同一源端器件启动多个互不共享状态的 subagent。
+4. 必须按 subagent_session_plan 启动隔离 subagent；一个 session/context_group 代表一个源端器件 pin 体系。小 TASK 只是降低单次推理负担，不代表要为同一源端器件启动多个互不共享状态的 subagent。一批最多并行拉起2个subagent任务，等一批任务完成再拉起下一批。
 
 ```
 
@@ -103,6 +103,17 @@ flowchart TD
 
 脚本负责事实整理、候选生成、信号形态前置判断、任务隔离、校验和渲染。
 
+### 源端 pin_info 硬门禁
+
+`pin_info.json` 是唯一可信的原理图 pin 来源。框图中的 `源Port`、`目的Port`、`连线名称`、block 名称、link_info、自然语言规则都只是语义线索，不能替代 `pin_info.json` 生成 `原理图Pin脚`。
+
+如果当前 normalized connection 的 `source_part_id` 在 `pin_info.json` 中找不到对应 pin 列表，或找到的是空列表，则该源端器件不具备 pin 选择前提：
+
+1. `generate_candidates` 输出 `available_pins=[]`。
+2. `pre_resolve_candidates` 直接写 `unresolved / Low / needs_human_review=true`，`selected_pin=""`，`net_name=""`。
+3. 该行不得写入 `needs_model_resolution.jsonl`，不得为该源端器件创建 semantic subagent/TASK；不能用框图 port 名、规则或器件常识让模型猜 pin。
+4. 最终 Excel 保留原连接行，`原理图Pin脚` 和 `网络命名` 为空，等待用户补充该源端器件的 pin 信息。
+
 模型负责根据框图表链路上下文、自然语言规则和 pin 列表做语义判断。context_group 按源端器件 pin 体系分组；链路族、信号族、目标上下文作为组内分析上下文传给 subagent，并显式写入任务包的 `diagram_link_context`。重复主链路采用 link-family-first：先理解链路族全局语义，再在链路约束下复用器件类型局部 pin 规则。脚本还会生成 `link_family_profiles`，把同一 link_family 跨 source_device subagent 的链路拓扑、实例、用户说明和角色信息共享给相关 TASK；它只用于借鉴链路语义，不做 pin 裁决。`infer_signal_shapes` 会在语义映射前根据总线写法、pin 列表 P/N 对和自然语言规则提示生成 `signal_shape_info`；如果一条原始连接对应多个物理 pin，会先展开为 `原line_id#数字`，再进入候选生成和 subagent 分析。`sheet_device_context` 表达同一 sheet 是一个物理器件实例，sheet 内不同 block 是该器件的逻辑块/端口视图；`pin_allocation_context` 表达同一物理器件实例内 pin 默认不可被不同语义连接重复使用。没有 `link_info` / `链路信息` 或没有显式 `link_family` 时，仍按 block_info 器件信息、源/目的 Block、端口名和 mapping_family 在同一个源端器件组内分析。
 
 ## 必须遵守
@@ -115,7 +126,8 @@ flowchart TD
 6. 信息不足时输出 `unresolved`，不得硬猜。
 7. 一条逻辑连接对应多个物理 pin 时，优先在映射前或 subagent 输出阶段展开为 `主line_id#数字` 多行；兼容旧任务时才使用 `selected_pins` 数组。
 8. `原理图Pin脚` / `selected_pin` / `selected_pins` 必须逐字来自入参 `pin_info.json` 中该源端器件编码对应的 pin 列表；不得翻译、补全、改写、大小写规范化或输出其他器件的 pin。
-9. 如果入参 `pin_info.json` 中没有当前源端器件编码对应的 pin 列表，则跳过该器件的语义模型分析；该器件相关连接保持 `unresolved`，等待用户补充 pin 信息。
+9. 如果入参 `pin_info.json` 中没有当前源端器件编码对应的 pin 列表或列表为空，则该源端器件不能进入语义模型分析；相关连接保持 `unresolved`，等待用户补充 pin 信息。
+9a. 严禁用框图 `源Port` / `目的Port` / 连线名 / 规则文本 / 器件常识伪造 pin，也严禁为了这类缺 pin 对象额外生成 subagent 任务。
 10. 没有 `selected_pin` / `selected_pins` 时，最终 `网络命名` 必须为空。
 11. `LINE_xxx`、`line`、包含 `line` 的连线名称是画图工具默认名，不是有效网络名，不能直接复制到 `net_name` / `net_names`。
 12. 如果 subagent 结合上下文判断某条未展开 line 是差分/总线，应输出多行 decision：`line_id=原line_id#数字`、`parent_line_id=原line_id`、每行一个 `selected_pin`；merge/validate/render 会按 parent 复制原连接事实。
