@@ -37,8 +37,9 @@ description: 生成信号接口列表后，用脚本完成确定性网络名检�
 5. 收集连线 ID 原始不匹配组。
 6. 收集需统一的物理组。
 7. 收集重名组。
-8. 对确定性问题生成修正提案。
-9. 在 `--fix` 时写出修正后的 Excel。
+8. 按 sheet 单独检查同一个原理图 pin 被多条连接指向时的 INPUT/OUTPUT 网络名规则。
+9. 对确定性问题生成修正提案。
+10. 在 `--fix` 时写出修正后的 Excel。
 
 模型负责：
 
@@ -80,6 +81,7 @@ python script/check_net_consistency.py \
     "raw_connection_mismatch_group_count": 0,
     "actionable_physical_mismatch_group_count": 0,
     "duplicate_group_count": 0,
+    "same_pin_direction_group_count": 0,
     "proposed_change_count": 0
   }
 }
@@ -93,6 +95,7 @@ python script/check_net_consistency.py \
 | `raw_connection_mismatch_group_count` | 按完整连线 ID 汇总的原始不匹配组 | 脚本收集，模型不要重算 |
 | `actionable_physical_mismatch_group_count` | 同一物理子线两端仍不一致 | 脚本优先修；修后仍有才模型判断 |
 | `duplicate_group_count` | 同名但不确定是否允许复用 | 脚本优先修；修后仍有才模型判断 |
+| `same_pin_direction_group_count` | 同 sheet 同 pin 的 INPUT/OUTPUT 方向规则问题 | 脚本报告；通常需要用户确认后再改 |
 | `proposed_change_count` | 脚本拟自动修改的行数 | 大于 0 时可运行 `--fix` |
 
 ### Step 3：执行确定性修正
@@ -249,6 +252,41 @@ model_resolved_decisions.jsonl:
 - 对端器件实例。
 - P/N 或 bit 序号。
 
+## 同 sheet 同 pin 方向规则检查
+
+脚本会在每个 sheet 内单独检查同一个“原理图Pin脚”是否被多条连接指向。
+
+只检查方向明确为 `INPUT` 或 `OUTPUT` 的行；缺少 pin 或方向不明确的行不参与该检查。
+
+### INPUT pin
+
+如果同一个 sheet、同一个 pin 下存在多条 `INPUT` 连接，则这些连接的网络名必须不同。
+
+含义：多个输入网络不能在同一个输入 pin 上被短接成同一个网络名。
+
+### OUTPUT pin
+
+如果同一个 sheet、同一个 pin 下存在多条 `OUTPUT` 连接，先按连线 ID 分组：
+
+```text
+连线 ID 包含下划线，并且下划线后能提取到相同数字 → 认为属于同一组
+```
+
+示例：
+
+```text
+LINE_1 / BUS_1 / RF_1  → 组 1
+LINE_2 / BUS_2 / RF_2  → 组 2
+```
+
+检查规则：
+
+1. 同一组内，网络名必须相同。
+2. 不同组之间，网络名必须不同。
+3. 如果连线 ID 无法提取下划线数字，脚本退回使用完整连线 ID 作为组号，避免误并组。
+
+该检查只生成报告，不直接自动修改。若需要修正，先根据报告确认每个组的物理含义，再进入命名修正。
+
 ## 重名组判断
 
 脚本按网络名收集不同连线 ID 或不同物理子线。
@@ -278,46 +316,40 @@ model_resolved_decisions.jsonl:
 | 场景 | 脚本动作 |
 |------|----------|
 | 同一物理子线两端网络名不同 | 统一为 canonical 网络名 |
-| 一侧是 `LINE` 占位名，另一侧有有效名 | 使用有效名 |
-| 没有有效名但可生成稳定名称 | 按模板生成 |
+| 一侧是 `LINE` 占位名，另一侧有有效名 | 按新规范生成 canonical 网络名，不直接沿用旧有效名 |
+| 没有有效名但可生成稳定名称 | 按新规范生成 |
 | 重名但不是同源 pin 扇出 | 按物理子线生成不同网络名 |
 | 仅格式不合规且没有确定性依据 | 只报告，不强改 |
 
 canonical 网络名优先级：
 
-1. 非 `LINE` 占位且格式合法的连线名称。
-2. 组内唯一有效网络名。
-3. `model_resolved_decisions.jsonl` 中唯一有效网络名。
-4. 按模板生成新网络名。
+当前 `check_net` 与信号接口列表生成脚本保持一致：当脚本决定需要自动重命名时，统一按确定性命名函数生成 canonical 网络名。
+
+`connection_name`、现有 `net_name`、`model_resolved_decisions.jsonl` 中的 `decision_net_name` 只作为检查和报告依据，不再覆盖脚本生成的新规范名。
 
 ## 命名模板
 
-普通模板：
+命名模板：
 
 ```text
-源器件别名_源PIN或源PORT_对端器件别名_对端PORT
+源block英文名_目的block英文名_源/目的port英文名
 ```
 
-总线/展开模板：
+最后拼接源 port 还是目的 port 的选择逻辑：
 
-```text
-源器件别名_源PIN或源PORT_对端器件实例名_对端PORT
-```
+1. 先看 port 是否有含义，有含义的优先选择。
+2. 如果源/目的 port 都有含义或都没有含义，则优先选择包含数字的 port。
+3. 如果仍无法区分，选择源 port。
 
-对端器件实例名优先级：
-
-1. 如果对端 Block 能映射到 sheet，使用 sheet 名：
-   - `txvga0` -> `TXVGA0`
-   - `txvga1` -> `TXVGA1`
-2. 否则从对端 Block 名提取器件名和序号。
-3. 仍无法得到时使用 `BLK_<BlockID>`。
+block 和 port 中的中文必须翻译为英文或英文缩写，再清洗为 `SCREAMING_SNAKE_CASE`。
 
 示例：
 
 ```text
-SROC_TX_PD_SW0_TXVGA0_EN_CHA
-SROC_TX_PD_SW0_TXVGA1_EN_CHA
-SROC_TX_AFE0_02_P_TXVGA1_RFIN0
+SROC_TXVGA_DAC00
+SROC_PAM_PA_SW_AB
+DRV0_SROC_ALERT1
+PULSAR_PA_VDD_5V0
 ```
 
 如果生成名仍重名，追加连线 ID 或展开序号。
@@ -337,6 +369,7 @@ SROC_TX_AFE0_02_P_TXVGA1_RFIN0
 - 连线ID原始不匹配组数量
 - 需统一物理组数量
 - 重名组数量
+- 同 sheet 同 pin 方向规则问题数量
 - 已写出的修正文件
 
 模型判断：

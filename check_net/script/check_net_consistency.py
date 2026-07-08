@@ -14,15 +14,26 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = ROOT.parent
 LOCAL_DEPS = ROOT / ".local_pydeps"
 if LOCAL_DEPS.exists():
     sys.path.insert(0, str(LOCAL_DEPS))
+MAIN_SCRIPT_DIR = REPO_ROOT / "script"
+if MAIN_SCRIPT_DIR.exists():
+    sys.path.insert(0, str(MAIN_SCRIPT_DIR))
 
 try:
     from openpyxl import load_workbook
 except ImportError as exc:  # pragma: no cover - exercised only on missing env deps
     raise SystemExit(
         "openpyxl is required. Install it or keep the repo .local_pydeps directory available."
+    ) from exc
+
+try:
+    from generate_net_name import generate_net_name
+except ImportError as exc:  # pragma: no cover - exercised only if repo layout changes
+    raise SystemExit(
+        "generate_net_name.py is required. Keep check_net inside signal_connections_mapping."
     ) from exc
 
 
@@ -43,6 +54,7 @@ REQUIRED_HEADERS = {
 FORMAT_RE = re.compile(r"^[A-Z0-9_]+(?:\[[A-Za-z0-9]+:[A-Za-z0-9]+\])?$")
 PLACEHOLDER_RE = re.compile(r"^LINE(?:[_ -]?\d+)?(?:_[PN])?$", re.IGNORECASE)
 CONNECTION_SUFFIX_RE = re.compile(r"#(\d+)$")
+CONNECTION_UNDERSCORE_GROUP_RE = re.compile(r"_(\d+)(?:\D*)?$")
 NON_NAME_CHARS_RE = re.compile(r"[^A-Za-z0-9]+")
 
 
@@ -57,6 +69,18 @@ def base_connection_id(connection_id: str) -> str:
 def suffix_index(connection_id: str) -> int | None:
     match = CONNECTION_SUFFIX_RE.search(text(connection_id))
     return int(match.group(1)) if match else None
+
+
+def same_pin_connection_group(connection_id: str) -> str:
+    """
+    同 pin OUTPUT 检查使用的组号。
+
+    规则：连线 ID 包含下划线，且下划线后能提取到相同数字，则认为属于同一组。
+    无法提取组号时退回完整连线 ID，避免把不确定记录误并组。
+    """
+    value = text(connection_id)
+    match = CONNECTION_UNDERSCORE_GROUP_RE.search(value)
+    return match.group(1) if match else value
 
 
 def is_placeholder_name(name: str) -> bool:
@@ -90,6 +114,24 @@ def alias_from_sheet(sheet_name: str) -> str:
 
 def alias_from_block_name(block_name: str) -> str:
     return normalize_name(block_name)
+
+
+def normalized_connection_for_record(record: "Record") -> dict[str, Any]:
+    return {
+        "connection_name": record.connection_name,
+        "source_block_id": record.source_block_id,
+        "source_block_name": record.source_block_name,
+        "source_port": record.source_port,
+        "target_block_id": record.target_block_id,
+        "target_block_name": record.target_block_name,
+        "target_port": record.target_port,
+        "direction": record.direction,
+        "link_family_id": record.link_family_id,
+        "link_instance_id": record.link_instance_id,
+        "base_connection_id": record.base_connection_id,
+        "expansion_index": record.expansion_index,
+        "expansion_count": record.expansion_count,
+    }
 
 
 @dataclass
@@ -318,11 +360,10 @@ def preferred_orientation(records: list[Record]) -> Record:
 
 def generated_name(records: list[Record], aliases: dict[str, str], used: set[str] | None = None) -> str:
     source = preferred_orientation(records)
-    source_alias = block_alias(source.source_block_id, source.source_block_name, aliases)
-    peer_alias = block_alias(source.target_block_id, source.target_block_name, aliases)
-    source_pin_or_port = source.selected_pin or source.pin or source.source_port
-    peer_port = source.target_port
-    candidate = normalize_name(source_alias, source_pin_or_port, peer_alias, peer_port)
+    candidate = generate_net_name(
+        normalized_connection_for_record(source),
+        source.selected_pin or source.pin,
+    )
     if used is None:
         return candidate
     candidate = uniquify(candidate, used, source)
@@ -346,18 +387,10 @@ def uniquify(candidate: str, used: set[str], record: Record) -> str:
 
 
 def canonical_for_group(records: list[Record], aliases: dict[str, str]) -> tuple[str, str]:
-    connection_names = sorted(
-        {record.connection_name for record in records if is_effective_name(record.connection_name)}
-    )
-    if len(connection_names) == 1:
-        return connection_names[0], "connection_name"
-    current_names = sorted({record.net_name for record in records if is_effective_name(record.net_name)})
-    if len(current_names) == 1:
-        return current_names[0], "existing_net"
-    decision_names = sorted({record.decision_net_name for record in records if is_effective_name(record.decision_net_name)})
-    if len(decision_names) == 1:
-        return decision_names[0], "decision_net"
-    return generated_name(records, aliases), "generated"
+    # The checker follows the same deterministic naming rule as the signal-interface generator.
+    # connection_name, existing net_name, and model decision_net_name are diagnostic inputs only;
+    # they no longer override the generated standard name when an automatic rename is needed.
+    return generated_name(records, aliases), "generated_block_port"
 
 
 def collect_format_issues(records: list[Record]) -> list[dict[str, Any]]:
@@ -469,6 +502,99 @@ def collect_duplicate_groups(records: list[Record]) -> list[dict[str, Any]]:
     return duplicate_groups
 
 
+def collect_same_pin_direction_groups(records: list[Record]) -> list[dict[str, Any]]:
+    """
+    每个 sheet 内，检查多条连接指向同一个原理图 pin 时的网络名约束。
+
+    - INPUT：同 sheet + 同 pin 的多条连接，网络名必须不同。
+    - OUTPUT：同 sheet + 同 pin 的多条连接，先按连线 ID 的下划线数字分组；
+      同组内网络名必须相同，不同组间网络名必须不同。
+    """
+    by_sheet_pin_direction: dict[tuple[str, str, str], list[Record]] = defaultdict(list)
+    for record in records:
+        if not record.pin:
+            continue
+        if record.direction not in {"INPUT", "OUTPUT"}:
+            continue
+        by_sheet_pin_direction[(record.sheet, record.pin, record.direction)].append(record)
+
+    issues: list[dict[str, Any]] = []
+    for (sheet, pin, direction), rows in sorted(by_sheet_pin_direction.items()):
+        if len(rows) <= 1:
+            continue
+
+        if direction == "INPUT":
+            by_net: dict[str, list[Record]] = defaultdict(list)
+            for record in rows:
+                by_net[record.proposed_net_name].append(record)
+            conflicts = {
+                net_name: net_rows
+                for net_name, net_rows in by_net.items()
+                if net_name and len(net_rows) > 1
+            }
+            if conflicts:
+                issues.append(
+                    {
+                        "kind": "same_pin_input_net_must_differ",
+                        "message": "同一 sheet 同一 INPUT pin 被多条连接指向时，网络名必须不同",
+                        "sheet": sheet,
+                        "pin": pin,
+                        "direction": direction,
+                        "conflicting_net_names": sorted(conflicts),
+                        "rows": [row_summary(record) for record in rows],
+                    }
+                )
+            continue
+
+        by_group: dict[str, list[Record]] = defaultdict(list)
+        for record in rows:
+            by_group[same_pin_connection_group(record.connection_id)].append(record)
+
+        same_group_conflicts = []
+        for group_id, group_rows in sorted(by_group.items()):
+            net_names = sorted({record.proposed_net_name for record in group_rows if record.proposed_net_name})
+            if len(group_rows) > 1 and len(net_names) > 1:
+                same_group_conflicts.append(
+                    {
+                        "group_id": group_id,
+                        "net_names": net_names,
+                        "rows": [row_summary(record) for record in group_rows],
+                    }
+                )
+
+        by_net_across_groups: dict[str, set[str]] = defaultdict(set)
+        for group_id, group_rows in by_group.items():
+            for record in group_rows:
+                if record.proposed_net_name:
+                    by_net_across_groups[record.proposed_net_name].add(group_id)
+        cross_group_conflicts = [
+            {
+                "net_name": net_name,
+                "group_ids": sorted(group_ids),
+            }
+            for net_name, group_ids in sorted(by_net_across_groups.items())
+            if len(group_ids) > 1
+        ]
+
+        if same_group_conflicts or cross_group_conflicts:
+            issues.append(
+                {
+                    "kind": "same_pin_output_group_net_rule",
+                    "message": "同一 sheet 同一 OUTPUT pin：同组网络名必须相同，不同组网络名必须不同",
+                    "sheet": sheet,
+                    "pin": pin,
+                    "direction": direction,
+                    "connection_groups": {
+                        group_id: [row_summary(record) for record in group_rows]
+                        for group_id, group_rows in sorted(by_group.items())
+                    },
+                    "same_group_conflicts": same_group_conflicts,
+                    "cross_group_conflicts": cross_group_conflicts,
+                }
+            )
+    return issues
+
+
 def row_summary(record: Record) -> dict[str, Any]:
     return {
         "sheet": record.sheet,
@@ -570,9 +696,14 @@ def build_report(
     raw_mismatches: list[dict[str, Any]],
     physical_mismatches: list[dict[str, Any]],
     duplicates: list[dict[str, Any]],
+    same_pin_direction_groups: list[dict[str, Any]],
 ) -> dict[str, Any]:
     changed_count = sum(1 for record in records if record.proposed_net_name != record.net_name)
-    status = "PASS" if not format_issues and not physical_mismatches and not duplicates else "FAIL"
+    status = (
+        "PASS"
+        if not format_issues and not physical_mismatches and not duplicates and not same_pin_direction_groups
+        else "FAIL"
+    )
     return {
         "status": status,
         "summary": {
@@ -581,6 +712,7 @@ def build_report(
             "raw_connection_mismatch_group_count": len(raw_mismatches),
             "actionable_physical_mismatch_group_count": len(physical_mismatches),
             "duplicate_group_count": len(duplicates),
+            "same_pin_direction_group_count": len(same_pin_direction_groups),
             "proposed_change_count": changed_count,
             "applied_fix_count": len(fixes),
         },
@@ -588,6 +720,7 @@ def build_report(
         "connection_mismatch_groups": raw_mismatches,
         "physical_mismatch_groups": physical_mismatches,
         "duplicate_groups": duplicates,
+        "same_pin_direction_groups": same_pin_direction_groups,
         "fixes": fixes,
     }
 
@@ -613,6 +746,7 @@ def report_as_markdown(report: dict[str, Any]) -> str:
         f"- 连线ID原始不匹配组: {summary['raw_connection_mismatch_group_count']}",
         f"- 需统一物理组: {summary['actionable_physical_mismatch_group_count']}",
         f"- 重名组: {summary['duplicate_group_count']}",
+        f"- 同 sheet 同 pin 方向规则问题: {summary['same_pin_direction_group_count']}",
         f"- 拟修改行数: {summary['proposed_change_count']}",
         "",
     ]
@@ -634,6 +768,13 @@ def report_as_markdown(report: dict[str, Any]) -> str:
         for group in report["duplicate_groups"][:50]:
             lines.append(
                 f"- 网络名 `{group['net_name']}`: 连线ID {', '.join(f'`{n}`' for n in group['connection_ids'])}"
+            )
+        lines.append("")
+    if report["same_pin_direction_groups"]:
+        lines.extend(["## 同 sheet 同 pin 方向规则问题", ""])
+        for group in report["same_pin_direction_groups"][:50]:
+            lines.append(
+                f"- {group['sheet']} `{group['pin']}` {group['direction']}: {group['message']}"
             )
         lines.append("")
     if report["fixes"]:
@@ -663,6 +804,7 @@ def print_console_summary(report: dict[str, Any], fix: bool, output_path: Path |
     print(f"连线ID原始不匹配组: {summary['raw_connection_mismatch_group_count']}")
     print(f"需统一物理组: {summary['actionable_physical_mismatch_group_count']}")
     print(f"重名组: {summary['duplicate_group_count']}")
+    print(f"同 sheet 同 pin 方向规则问题: {summary['same_pin_direction_group_count']}")
     print(f"拟修改行数: {summary['proposed_change_count']}")
     if fix:
         print(f"已写出: {output_path}")
@@ -693,11 +835,20 @@ def main() -> int:
     raw_mismatches = collect_connection_mismatches(records)
     physical_mismatches = collect_physical_mismatches(records)
     duplicates = collect_duplicate_groups(records)
+    same_pin_direction_groups = collect_same_pin_direction_groups(records)
 
     fixes: list[dict[str, Any]] = []
     fixes.extend(propose_mismatch_and_placeholder_fixes(records, aliases))
     fixes.extend(propose_duplicate_fixes(records, aliases))
-    report = build_report(records, fixes, format_issues, raw_mismatches, physical_mismatches, duplicates)
+    report = build_report(
+        records,
+        fixes,
+        format_issues,
+        raw_mismatches,
+        physical_mismatches,
+        duplicates,
+        same_pin_direction_groups,
+    )
 
     output_path = Path(args.output).resolve() if args.output else input_path
     if args.fix:

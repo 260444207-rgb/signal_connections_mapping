@@ -11,6 +11,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "script"))
 
 from build_model_resolution_tasks import extract_rule_blocks, match_rule_sections
+from generate_net_name import generate_net_name
+from render_template_sheets import final_net_name
 from infer_signal_shapes import iter_rule_sections, matching_rule_hint
 from run_pipeline import (
     append_rule_path,
@@ -222,6 +224,40 @@ class LayeredRuleRecallTests(unittest.TestCase):
         spi_rule = (ROOT / "rules" / "signal_rules" / "spi_bus.md").read_text(encoding="utf-8")
         self.assertIn("尚未使用的合法 SPI pin 顺序分配", spi_rule)
         self.assertNotIn("不能唯一映射到具体 pin，需要人工确认", spi_rule)
+
+
+    def test_net_name_uses_meaningful_port_over_placeholder(self) -> None:
+        nc = {
+            "connection_name": "OLD_VALID_NAME",
+            "source_block_name": "SROC",
+            "target_block_name": "功放模组00_00-01",
+            "source_port": "default",
+            "target_port": "PA_SW_AB",
+        }
+        self.assertEqual("SROC_PAM_PA_SW_AB", generate_net_name(nc, "PIN1"))
+
+    def test_net_name_prefers_numeric_port_when_both_ports_are_meaningful(self) -> None:
+        nc = {
+            "source_block_name": "集成驱动0",
+            "target_block_name": "SROC",
+            "source_port": "告警1",
+            "target_port": "ALERT",
+        }
+        self.assertEqual("DRV0_SROC_ALERT1", generate_net_name(nc, "PIN1"))
+
+    def test_final_net_name_ignores_model_and_connection_name_override(self) -> None:
+        decision = {"net_name": "MODEL_NAME", "net_names": ["MODEL_LIST_NAME"]}
+        normalized = {
+            "connection_name": "OLD_VALID_NAME",
+            "source_block_name": "SROC",
+            "target_block_name": "AMC7964",
+            "source_port": "SPI1",
+            "target_port": "SPI",
+        }
+        self.assertEqual(
+            "SROC_AMC_SPI1",
+            final_net_name(decision, normalized, 0, "HAC_SPI1_CLK"),
+        )
 
 
 if __name__ == "__main__":

@@ -52,19 +52,11 @@ def is_invalid_model_net_name(value: str) -> bool:
 def final_net_name(decision: Dict[str, Any], normalized: Dict[str, Any], index: int, selected_pin: str) -> str:
     """
     生成最终网络名。
-    硬约束：没有原理图 pin 时网络名必须为空；LINE 类默认连线名不能覆盖网络命名。
+    硬约束：没有原理图 pin 时网络名必须为空。
+    当前规范统一由脚本生成：源block英文名_目的block英文名_源/目的port英文名。
     """
     if not str(selected_pin or "").strip():
         return ""
-
-    connection_name = str(normalized.get("connection_name", "") or "").strip()
-    if connection_name and not is_placeholder_net_name(connection_name):
-        return generate_net_name(normalized, selected_pin)
-
-    decision_net_name = decision_list_value(decision, "net_names", index)
-    if decision_net_name and not is_invalid_model_net_name(decision_net_name):
-        return decision_net_name
-
     return generate_net_name(normalized, selected_pin)
 
 def expanded_connection_id(base_connection_id: str, original_connection_id: str, should_expand: bool, index: int) -> str:

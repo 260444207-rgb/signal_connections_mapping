@@ -3,26 +3,19 @@
 """
 华为原理图网络命名生成器
 
-功能：给定 normalized_connection 和 selected_pin，生成符合华为规范的网络名。
+功能：给定 normalized_connection 和 selected_pin，生成信号接口列表网络名。
 
 使用方式
 --------
     from generate_net_name import generate_net_name, abbreviate_block
 
     net_name = generate_net_name(normalized_connection_dict, selected_pin)
-    # selected_pin 可选，电源类网络会用到
 
-华为规范
+当前命名规范
 --------
-1. 连线名称优先：connection_name 非空且不包含 'line'（不区分大小写）
-   → 直接使用连线名称（清洗后），不额外处理
-2. 按规范生成：其余情况按信号类型走对应格式
-   - 射频信号（RF_CHAIN）：类型_源端_目的端_通道_频率_极性（6部分）
-   - 电源信号（POWER_ENABLE）：电源类型_电压值_通道_负载_管脚（6部分）
-   - 数字控制信号（SPI/I2C/GPIO）：总线_编号_发送端_接收端_信号_频率_电平_后缀（9部分）
-   - DAC：DAC通道_源端_目的端_AFE_频率
-   - ADC：ADC通道_目的端_反馈_源端_频率
-   - 差分信号：TX/RX_源端_目的端_通道_频率_P/N
+1. 最终格式固定为：源block英文名_目的block英文名_源/目的port英文名。
+2. 源/目的 port 只选择一个：有含义优先，其次包含数字优先，仍打平选源 port。
+3. block 和 port 中的中文必须翻译成英文，再执行格式清洗。
 
 字符集约束（所有输出强制满足）
 ------------------------------
@@ -140,6 +133,77 @@ BLOCK_ABBR: Dict[str, str] = {
 }
 
 
+
+# 中文/业务词翻译表。长词优先替换，避免 “功放模组” 被先替成 PA + MODULE。
+TRANSLATION_MAP: Dict[str, str] = {
+    "源端": "SRC",
+    "目的端": "DST",
+    "目标": "TARGET",
+    "默认": "DEFAULT",
+    "输入": "IN",
+    "输出": "OUT",
+    "控制": "CTRL",
+    "使能": "EN",
+    "复位": "RST",
+    "时钟": "CLK",
+    "数据": "DATA",
+    "地址": "ADDR",
+    "片选": "CS",
+    "电源": "PWR",
+    "供电": "PWR",
+    "电压": "VOLT",
+    "地": "GND",
+    "反馈": "FB",
+    "校准": "CAL",
+    "检测": "DET",
+    "告警": "ALERT",
+    "异常": "FAULT",
+    "温度": "TEMP",
+    "传感器": "SENSOR",
+    "滤波器": "FILTER",
+    "限幅器": "LMT",
+    "连接器": "CONN",
+    "功放模组": "PAM",
+    "功放": "PA",
+    "集成驱动": "DRV",
+    "驱动": "DRV",
+    "比邻星": "PULSAR",
+    "天狼星": "SIRIUS",
+    "城堡板": "SROC",
+    "反馈九选一开关": "FB_SW",
+    "开关": "SW",
+    "通道": "CH",
+    "正端": "P",
+    "负端": "N",
+}
+
+GENERIC_PORT_VALUES = {
+    "",
+    "DEFAULT",
+    "DEF",
+    "PORT",
+    "PIN",
+    "LINE",
+    "NET",
+    "SIGNAL",
+    "SIG",
+    "INPUT",
+    "OUTPUT",
+    "IN",
+    "OUT",
+    "IO",
+    "I/O",
+    "UNKNOWN",
+    "NA",
+    "N/A",
+    "NC",
+    "NULL",
+    "NONE",
+}
+
+_CHINESE_RE = re.compile(r"[\u4e00-\u9fff]")
+_HAS_DIGIT_RE = re.compile(r"\d")
+
 def abbreviate_block(block: str) -> str:
     """将 block 名称转换为华为规范简称。"""
     if not block:
@@ -149,6 +213,9 @@ def abbreviate_block(block: str) -> str:
     # 通用规则：去特殊字符、去掉末尾数字、用前6位
     clean = re.sub(r"[^A-Za-z0-9]", "", block)
     s = re.sub(r"\d+$", "", clean)  # 去掉末尾数字
+    if not s and _CHINESE_RE.search(block):
+        translated = translate_to_english(block)
+        s = re.sub(r"\d+$", "", re.sub(r"[^A-Za-z0-9]", "", translated))
     result = s[:6].upper() if s else clean[:6].upper()
     return result
 
@@ -255,6 +322,83 @@ def classify_signal(nc: Dict[str, Any]) -> SignalType:
 # ④ 网络名清洗（强制满足华为规范）
 # ============================================================================
 
+
+def translate_to_english(value: str) -> str:
+    """
+    将常见中文硬件词翻译为英文缩写。
+
+    未在词典中的中文字符会在 clean_net_name 阶段被去除；因此规则维护时
+    应优先把常见中文 block/port 加入 TRANSLATION_MAP 或 BLOCK_ABBR。
+    """
+    text = str(value or "")
+    for zh in sorted(TRANSLATION_MAP, key=len, reverse=True):
+        text = text.replace(zh, f"_{TRANSLATION_MAP[zh]}_")
+    return text
+
+
+def clean_net_token(value: str) -> str:
+    raw = str(value or "")
+    translated = translate_to_english(raw)
+    translated = translated.replace("-", "_")
+    translated = re.sub(r"[^A-Za-z0-9_]+", "_", translated)
+    translated = re.sub(r"_+", "_", translated).strip("_")
+    if _CHINESE_RE.search(raw):
+        translated = re.sub(r"([A-Za-z])_(\d)", r"\1\2", translated)
+    return translated.upper()
+
+
+def has_digit(value: str) -> bool:
+    return bool(_HAS_DIGIT_RE.search(str(value or "")))
+
+
+def is_meaningful_port(value: str) -> bool:
+    token = clean_net_token(value)
+    if not token:
+        return False
+    if token in GENERIC_PORT_VALUES:
+        return False
+    if token.startswith("LINE"):
+        return False
+    return bool(re.search(r"[A-Z0-9]", token))
+
+
+def choose_port_for_net_name(source_port: str, target_port: str) -> str:
+    """
+    在源/目的 port 中选择一个拼到网络名。
+
+    优先级：
+    1. 有含义的 port 优先。
+    2. 都有/都没有含义时，包含数字的 port 优先。
+    3. 仍打平时选源 port。
+    """
+    candidates = [
+        ("source", source_port or ""),
+        ("target", target_port or ""),
+    ]
+
+    def score(item: tuple[str, str]) -> tuple[int, int, int]:
+        side, value = item
+        return (
+            1 if is_meaningful_port(value) else 0,
+            1 if has_digit(value) else 0,
+            1 if side == "source" else 0,
+        )
+
+    return max(candidates, key=score)[1]
+
+
+def build_block_port_net_name(nc: Dict[str, Any]) -> str:
+    src_block = nc.get("source_block_name", "") or nc.get("source_block_id", "")
+    tgt_block = nc.get("target_block_name", "") or nc.get("target_block_id", "")
+    src = clean_net_token(abbreviate_block(src_block) or src_block)
+    tgt = clean_net_token(abbreviate_block(tgt_block) or tgt_block)
+    port = choose_port_for_net_name(
+        str(nc.get("source_port", "") or ""),
+        str(nc.get("target_port", "") or ""),
+    )
+    port_token = clean_net_token(port)
+    return clean_net_name("_".join(part for part in [src, tgt, port_token] if part))
+
 def clean_net_name(name: str) -> str:
     """
     将网络名强制清洗为华为规范格式：
@@ -266,8 +410,9 @@ def clean_net_name(name: str) -> str:
     if not name:
         return name
     name = name.replace("-", "_")
-    name = re.sub(r"_+/", "_", name)
+    name = translate_to_english(name)
     name = re.sub(r"_+", "_", name).strip("_")
+    name = re.sub(r"[^A-Za-z0-9_]+", "_", name).strip("_")
     name = name.upper()
     if name and name[0].isdigit():
         name = "N" + name
@@ -314,34 +459,7 @@ def generate_net_name(nc: Dict[str, Any], selected_pin: str = "") -> str:
     ----
     str : 华为规范网络名（已清洗，满足全部约束）
     """
-    conn_name = nc.get("connection_name", "") or ""
-
-    # ===== 规则 1：连线名称优先 =====
-    # connection_name 非空 且 不包含 'line'（不区分大小写）→ 直接使用连线名称
-    if conn_name and "line" not in conn_name.lower():
-        return clean_net_name(conn_name)
-
-    # ===== 规则 2：按华为规范生成 =====
-    src_block = nc.get("source_block_name", "") or nc.get("source_block_id", "")
-    tgt_block = nc.get("target_block_name", "") or nc.get("target_block_id", "")
-    src_port = nc.get("source_port", "") or ""
-
-    src = abbreviate_block(src_block)
-    tgt = abbreviate_block(tgt_block)
-    sp = src_port.upper()
-    cn = conn_name.upper()
-    sig_type = classify_signal(nc)
-    pol = extract_pol(src_port, conn_name)
-    freq = extract_freq(conn_name)
-    pnum = extract_port_num(src_port)
-    ch = extract_ch(conn_name)
-
-    # --- 电源网络（6部分）: PWR_电压_通道_负载_管脚 ---
-    if sig_type == "POWER":
-        voltage = extract_voltage(sp)
-        pin_abbr = re.sub(r"[^A-Z0-9]", "_", (selected_pin or "").upper())[:8]
-        parts = [p for p in ["PWR", voltage, ch, tgt, pin_abbr] if p]
-        return clean_net_name("_".join(parts))
+    return build_block_port_net_name(nc)
 
     # --- 数字控制（9部分）: 总线_编号_发送端_接收端_信号_频率_串联_电平_极性 ---
     if sig_type == "CTRL":
@@ -409,12 +527,10 @@ def main():
     # 内置测试用例
     test_cases = [
         # (nc, selected_pin, expected_pattern)
-        ({"connection_name": "SW0007_SROC0_SP9T_FBV0_1M_LC18"}, "", "SW0007"),
-        ({"connection_name": "LINE_1", "source_port": "DAC00", "source_block_name": "SROC", "target_block_name": "TXVGA"}, "", "DAC"),
-        ({"connection_name": "VDD_5V0_PMU_PA0007_2431_VA_2A2"}, "", "PWR_5V0"),
-        ({"connection_name": "HBF_PS0_CTRL_120V_BIT0_0001"}, "", "HBF_PS0_CTRL"),
-        ({"connection_name": "line", "source_port": "SPI", "source_block_name": "SROC", "target_block_name": "AMC"}, "", "SPI"),
-        ({"connection_name": "", "source_port": "TX_AFE0_00_N", "source_block_name": "SROC", "target_block_name": "TXVGA"}, "", "TX_SROC_TXVGA"),
+        ({"source_block_name": "SROC", "target_block_name": "TXVGA", "source_port": "DAC00", "target_port": "IN"}, "", "SROC_TXVGA_DAC00"),
+        ({"source_block_name": "SROC", "target_block_name": "功放模组00_00-01", "source_port": "default", "target_port": "PA_SW_AB"}, "", "SROC_PAM_PA_SW_AB"),
+        ({"source_block_name": "集成驱动0", "target_block_name": "SROC", "source_port": "告警1", "target_port": "default"}, "", "DRV0_SROC_ALERT1"),
+        ({"source_block_name": "比邻星0", "target_block_name": "功放", "source_port": "EN", "target_port": "VDD_5V0"}, "", "PULSAR_PA_VDD_5V0"),
     ]
 
     print("=== generate_net_name 测试 ===")
@@ -423,7 +539,7 @@ def main():
         result = generate_net_name(nc, pin)
         ok = pattern in result
         all_pass = all_pass and ok
-        status = "✓" if ok else "✗"
+        status = "OK" if ok else "FAIL"
         print(f"  [{status}] #{i}: {result}")
     print(f"\n  结果: {'全部通过' if all_pass else '存在失败'}")
 
