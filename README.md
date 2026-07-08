@@ -78,10 +78,25 @@ stage=all 只做脚本冒烟验证，不会自动调用语义 subagent。
 rules/natural_language_mapping_rules_template.md
 ```
 
-运行时可通过 `--project-rules` / `--user-rules` 追加外部规则文件。脚本会合并为：
+运行时可通过 `--project-rules` / `--user-rules` 追加外部规则文件。脚本也会自动发现上游编排生成的外部器件规则文件：
 
 ```text
-intermediate/combined_mapping_rules.md
+external_device_rules.md
+```
+
+自动发现位置按顺序为：
+
+```text
+<task_root>/design/external_device_rules.md
+<task_root>/input/external_device_rules.md
+<task_root>/rules/external_device_rules.md
+<connections 所在目录>/external_device_rules.md
+```
+
+发现后会作为 project rules 追加，并与默认规则、显式 `--project-rules` / `--user-rules` 合并为：
+
+```text
+<task_root>/signal_interface/intermediate/combined_mapping_rules.md
 ```
 
 `infer_signal_shapes` 和 `build_model_resolution_tasks` 会读取同一份 combined rules，保证前置形态判断和 subagent 规则召回使用一致的规则上下文。
@@ -247,13 +262,13 @@ python script/run_pipeline.py \
 模型分析后，把每个 TASK 的结果写入：
 
 ```text
-data/{uuid}/intermediate/subagent_outputs/TASK_xxx.jsonl
+data/{uuid}/signal_interface/intermediate/subagent_outputs/TASK_xxx.jsonl
 ```
 
 `stage=finish` 会检查并合并所有 TASK 输出，生成：
 
 ```text
-data/{uuid}/intermediate/model_resolved_decisions.jsonl
+data/{uuid}/signal_interface/intermediate/model_resolved_decisions.jsonl
 ```
 
 完成渲染：

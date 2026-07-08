@@ -158,10 +158,31 @@ workflows/main_pipeline.md
 rules/natural_language_mapping_rules_template.md
 ```
 
-运行命令可通过 `--project-rules` / `--user-rules` 追加外部自然语言规则。默认规则和外部规则会合并为：
+上游编排如果通过接口获取器件规则，应先把接口结果写成 RULE markdown 文件：
 
 ```text
-intermediate/combined_mapping_rules.md
+external_device_rules.md
+```
+
+推荐放置位置：
+
+```text
+<task_root>/design/external_device_rules.md
+```
+
+也支持自动发现：
+
+```text
+<task_root>/design/external_device_rules.md
+<task_root>/input/external_device_rules.md
+<task_root>/rules/external_device_rules.md
+<connections 所在目录>/external_device_rules.md
+```
+
+运行命令仍可通过 `--project-rules` / `--user-rules` 追加其他外部自然语言规则。自动发现的 `external_device_rules.md` 会作为 project rules 追加；默认规则、外部器件规则和显式外部规则会合并为：
+
+```text
+<task_root>/signal_interface/intermediate/combined_mapping_rules.md
 ```
 
 前置 `infer_signal_shapes` 和后续 `build_model_resolution_tasks` 必须读取同一份 combined rules。
@@ -282,13 +303,13 @@ python script/run_pipeline.py \
 模型分析后，将结果写入：
 
 ```text
-data/{uuid}/intermediate/subagent_outputs/TASK_xxx.jsonl
+data/{uuid}/signal_interface/intermediate/subagent_outputs/TASK_xxx.jsonl
 ```
 
 `stage=finish` 会检查所有 subagent output_file，全部通过后自动合并为：
 
 ```text
-data/{uuid}/intermediate/model_resolved_decisions.jsonl
+data/{uuid}/signal_interface/intermediate/model_resolved_decisions.jsonl
 ```
 
 合并、校验并渲染：

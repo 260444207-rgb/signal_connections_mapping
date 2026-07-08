@@ -228,10 +228,27 @@ output/signal_interface_YYYYMMDD_HHMMSS.xlsx
 rules/natural_language_mapping_rules_template.md
 ```
 
-命令行 `--project-rules` / `--user-rules` 会追加外部自然语言规则。运行 prepare/model_tasks/finish 时，脚本会在 task 目录中生成：
+上游编排可在调用本 pipeline 前通过接口获取器件规则，并生成：
 
 ```text
-intermediate/combined_mapping_rules.md
+external_device_rules.md
+```
+
+本 pipeline 会自动发现该文件并作为 project rules 合并。发现顺序：
+
+```text
+<task_root>/design/external_device_rules.md
+<task_root>/input/external_device_rules.md
+<task_root>/rules/external_device_rules.md
+<connections 所在目录>/external_device_rules.md
+```
+
+因此编排流程无需修改命令行；也可以继续显式传入 `--project-rules` / `--user-rules` 追加其他规则。自动发现的外部器件规则会和显式规则一起合并。
+
+运行 prepare/model_tasks/finish 时，脚本会在 task 目录中生成：
+
+```text
+<task_root>/signal_interface/intermediate/combined_mapping_rules.md
 ```
 
 前置 `infer_signal_shapes` 和 subagent 任务构建都读取这份合并后的规则，避免两个阶段看到不同规则。

@@ -27,6 +27,25 @@ final Excel: 保留连接事实，原理图Pin脚="", 网络命名=""
 
 框图 `源Port`、`目的Port`、连线名、block 名、link_info、规则文本和器件常识都不能代替 pin_info。没有源端器件 pin 列表时，不允许用这些信息生成 subagent 任务，也不允许让模型猜 `selected_pin`。
 
+## 外部器件规则文件
+
+上游编排可以在调用本 skill 前通过接口获取器件规则，并写成：
+
+```text
+external_device_rules.md
+```
+
+本 pipeline 会自动发现并作为 project rules 合入规则召回。发现顺序：
+
+```text
+<task_root>/design/external_device_rules.md
+<task_root>/input/external_device_rules.md
+<task_root>/rules/external_device_rules.md
+<connections 所在目录>/external_device_rules.md
+```
+
+因此编排流程可以只负责生成该文件，然后继续按普通 `prepare/model_tasks/finish` 命令调用本 skill；无需显式拼接 `--project-rules`。如果同时传入 `--project-rules`，自动发现的外部器件规则会追加到 project rules 后一起合并。
+
 ## 强制执行流程
 
 ### 1. 准备任务目录
@@ -42,9 +61,9 @@ python script/run_pipeline.py \
 产物：
 
 ```text
-<task_dir>/intermediate/normalized_connections.jsonl
-<task_dir>/intermediate/analysis_context_groups.json
-<task_dir>/intermediate/candidate_mappings.jsonl
+<task_root>/signal_interface/intermediate/normalized_connections.jsonl
+<task_root>/signal_interface/intermediate/analysis_context_groups.json
+<task_root>/signal_interface/intermediate/candidate_mappings.jsonl
 ```
 
 ### 2. 导出模型任务包
@@ -60,16 +79,16 @@ python script/run_pipeline.py \
 产物：
 
 ```text
-<task_dir>/intermediate/needs_model_resolution.jsonl
-<task_dir>/intermediate/model_resolution_tasks/manifest.json
-<task_dir>/intermediate/model_resolution_tasks/global_link_plan.md
-<task_dir>/intermediate/model_resolution_tasks/global_link_plan.json
-<task_dir>/intermediate/model_resolution_tasks/subagent_session_plan.md
-<task_dir>/intermediate/model_resolution_tasks/subagent_session_plan.json
-<task_dir>/intermediate/model_resolution_tasks/subagent_task_plan.md
-<task_dir>/intermediate/model_resolution_tasks/subagent_task_plan.json
-<task_dir>/intermediate/model_resolution_tasks/subagent_task_prompt.md
-<task_dir>/intermediate/model_resolution_tasks/tasks/TASK_器件类型_器件编码_链路范围_hash.json
+<task_root>/signal_interface/intermediate/needs_model_resolution.jsonl
+<task_root>/signal_interface/intermediate/model_resolution_tasks/manifest.json
+<task_root>/signal_interface/intermediate/model_resolution_tasks/global_link_plan.md
+<task_root>/signal_interface/intermediate/model_resolution_tasks/global_link_plan.json
+<task_root>/signal_interface/intermediate/model_resolution_tasks/subagent_session_plan.md
+<task_root>/signal_interface/intermediate/model_resolution_tasks/subagent_session_plan.json
+<task_root>/signal_interface/intermediate/model_resolution_tasks/subagent_task_plan.md
+<task_root>/signal_interface/intermediate/model_resolution_tasks/subagent_task_plan.json
+<task_root>/signal_interface/intermediate/model_resolution_tasks/subagent_task_prompt.md
+<task_root>/signal_interface/intermediate/model_resolution_tasks/tasks/TASK_器件类型_器件编码_链路范围_hash.json
 ```
 
 必须先阅读持久化到本地的 `global_link_plan.md/json`、`subagent_session_plan.md/json` 和 `subagent_task_plan.md/json`，再启动语义分析。`global_link_plan` 是链路族全局摘要；`subagent_session_plan` 说明每个源端器件 subagent 要顺序处理哪些小 TASK；`subagent_task_plan` 是给脚本检查输出的扁平任务表；`subagent_task_prompt.md` 是所有 TASK 共享的模型分析说明。
@@ -119,13 +138,13 @@ python script/run_pipeline.py \
 自动输出目录：
 
 ```text
-<task_dir>/intermediate/subagent_outputs/
+<task_root>/signal_interface/intermediate/subagent_outputs/
 ```
 
 每个 TASK 的 `output_contract.output_file` 会指向类似：
 
 ```text
-<task_dir>/intermediate/subagent_outputs/TASK_01_xxx.jsonl
+<task_root>/signal_interface/intermediate/subagent_outputs/TASK_01_xxx.jsonl
 ```
 
 只在聊天中粘贴 JSON、没有写入该文件，视为 subagent 失败。
@@ -158,14 +177,14 @@ python script/run_pipeline.py \
 检查通过后，主控流程自动合并所有 subagent 输出为：
 
 ```text
-<task_dir>/intermediate/model_resolved_decisions.jsonl
+<task_root>/signal_interface/intermediate/model_resolved_decisions.jsonl
 ```
 
 检查失败时，主控流程会生成：
 
 ```text
-<task_dir>/intermediate/subagent_output_check.json
-<task_dir>/intermediate/failed_subagent_rerun_plan.md
+<task_root>/signal_interface/intermediate/subagent_output_check.json
+<task_root>/signal_interface/intermediate/failed_subagent_rerun_plan.md
 ```
 
 并直接中止，不进入 merge/validate/render。必须按 `failed_subagent_rerun_plan.md` 重新启动失败 subagent，再重新运行 `stage=finish`。
@@ -185,7 +204,7 @@ python script/run_pipeline.py \
 最终输出：
 
 ```text
-<task_dir>/output/signal_interface_YYYYMMDD_HHMMSS.xlsx
+<task_root>/signal_interface/output/signal_interface_YYYYMMDD_HHMMSS.xlsx
 ```
 
 ### 8. 最终检查

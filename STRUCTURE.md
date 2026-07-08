@@ -164,11 +164,12 @@ all:         只走脚本路径，不会自动调用真实 subagent；只适合�
 创建任务目录：
 
 ```text
-task_dir/
-└── intermediate/
+task_root/
+└── signal_interface/
+    └── intermediate/
 ```
 
-`output/` 只在 `finish` / render 阶段真正写出 Excel 时按需创建；不再初始化空的 `logs/`、`rules/` 等目录。
+`output/` 只在 `finish` / render 阶段真正写出 Excel 时按需创建；所有本 skill 产物都收拢在 `signal_interface/` 下，不再初始化空的 `logs/`、`rules/` 等目录。
 
 ### script/normalize_connections.py
 

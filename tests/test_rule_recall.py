@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import tempfile
 import unittest
+import os
 from pathlib import Path
 
 
@@ -11,7 +12,13 @@ sys.path.insert(0, str(ROOT / "script"))
 
 from build_model_resolution_tasks import extract_rule_blocks, match_rule_sections
 from infer_signal_shapes import iter_rule_sections, matching_rule_hint
-from run_pipeline import build_combined_rules, combined_rules_are_current
+from run_pipeline import (
+    append_rule_path,
+    build_combined_rules,
+    combined_rules_are_current,
+    discover_external_device_rules,
+)
+from run_pipeline import resolve_signal_interface_task_dir
 
 
 def make_group(part: str, link_family: str, mapping_family: str, source: str, target: str) -> dict:
@@ -149,6 +156,48 @@ class LayeredRuleRecallTests(unittest.TestCase):
         self.assertTrue(combined_rules_are_current(self.task_dir, user_rules=str(user_rule)))
         user_rule.write_text("### RULE: USER_B 更新规则\n适用条件：\n通用\n", encoding="utf-8")
         self.assertFalse(combined_rules_are_current(self.task_dir, user_rules=str(user_rule)))
+
+    def test_auto_discovers_external_device_rules_file(self) -> None:
+        external_rule = self.task_dir / "design" / "external_device_rules.md"
+        external_rule.parent.mkdir()
+        external_rule.write_text(
+            "### RULE: EXT_DEVICE_API 接口器件规则\n"
+            "适用条件：\n"
+            "源端器件：EXT_DEV / 12345\n"
+            "规则摘要：接口返回规则。\n",
+            encoding="utf-8",
+        )
+        discovered = discover_external_device_rules(self.task_dir, "")
+        self.assertEqual(external_rule, discovered)
+
+        project_rules = append_rule_path("", discovered)
+        combined = build_combined_rules(self.task_dir, project_rules=project_rules)
+        text = combined.read_text(encoding="utf-8")
+        self.assertIn("EXT_DEVICE_API", text)
+        self.assertIn("接口返回规则", text)
+
+    def test_project_rules_accept_multiple_paths(self) -> None:
+        rule_a = self.task_dir / "rule_a.md"
+        rule_b = self.task_dir / "rule_b.md"
+        rule_a.write_text("### RULE: EXT_A 外部规则A\n适用条件：\n通用\n", encoding="utf-8")
+        rule_b.write_text("### RULE: EXT_B 外部规则B\n适用条件：\n通用\n", encoding="utf-8")
+
+        project_rules = append_rule_path(str(rule_a), rule_b)
+        self.assertIn(os.pathsep, project_rules)
+
+        combined = build_combined_rules(self.task_dir, project_rules=project_rules)
+        text = combined.read_text(encoding="utf-8")
+        self.assertIn("EXT_A", text)
+        self.assertIn("EXT_B", text)
+
+        project_rules_again = append_rule_path(project_rules, rule_b)
+        self.assertEqual(project_rules, project_rules_again)
+
+    def test_resolves_signal_interface_task_subdir(self) -> None:
+        root = self.task_dir / "data_uuid"
+        self.assertEqual(root / "signal_interface", resolve_signal_interface_task_dir(root))
+        already = root / "signal_interface"
+        self.assertEqual(already, resolve_signal_interface_task_dir(already))
 
     def test_external_rule_overrides_same_builtin_rule_id(self) -> None:
         user_rule = self.task_dir / "rules" / "user_rules.md"

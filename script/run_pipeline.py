@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime
+import os
 from pathlib import Path
 
 from init_task import init_task
@@ -26,8 +27,61 @@ REQUIRED_PREPARE_FILES = [
     "signal_shape_inference.jsonl",
 ]
 
+EXTERNAL_DEVICE_RULES_FILENAME = "external_device_rules.md"
+
+SIGNAL_INTERFACE_TASK_SUBDIR = "signal_interface"
+
+def _norm_rule_path(path: Path) -> str:
+    return str(path.expanduser())
+
 def default_rules_path() -> Path:
     return Path(__file__).resolve().parents[1] / "rules" / "natural_language_mapping_rules_template.md"
+
+def resolve_signal_interface_task_dir(task_dir: Path) -> Path:
+    """把本 skill 的全部运行产物收拢到 task_dir/signal_interface 下。"""
+    task_dir = Path(task_dir)
+    if task_dir.name == SIGNAL_INTERFACE_TASK_SUBDIR:
+        return task_dir
+    return task_dir / SIGNAL_INTERFACE_TASK_SUBDIR
+
+def split_rule_paths(rule_paths: str = "") -> list[Path]:
+    paths: list[Path] = []
+    for value in str(rule_paths or "").split(os.pathsep):
+        value = value.strip()
+        if value:
+            paths.append(Path(value))
+    return paths
+
+def append_rule_path(rule_paths: str, rule_path: str | Path | None) -> str:
+    if not rule_path:
+        return rule_paths or ""
+    existing = [_norm_rule_path(path) for path in split_rule_paths(rule_paths)]
+    candidate = _norm_rule_path(Path(rule_path))
+    if candidate in existing:
+        return rule_paths or ""
+    return os.pathsep.join(existing + [candidate])
+
+def discover_external_device_rules(task_dir: Path, connections: str = "") -> Path | None:
+    """
+    自动发现上游编排生成的外部器件规则文件。
+
+    这样编排流程只需要在约定位置写入 external_device_rules.md；
+    本 pipeline 会把它当作 project rules 合入 combined_mapping_rules.md。
+    """
+    candidates = [
+        task_dir / "design" / EXTERNAL_DEVICE_RULES_FILENAME,
+        task_dir / EXTERNAL_DEVICE_RULES_FILENAME,
+        task_dir / "input" / EXTERNAL_DEVICE_RULES_FILENAME,
+        task_dir / "rules" / EXTERNAL_DEVICE_RULES_FILENAME,
+    ]
+    if connections:
+        connection_path = Path(connections)
+        if connection_path.parent:
+            candidates.append(connection_path.parent / EXTERNAL_DEVICE_RULES_FILENAME)
+    for candidate in candidates:
+        if candidate.exists() and candidate.is_file():
+            return candidate
+    return None
 
 def collect_rule_paths(project_rules: str = "", user_rules: str = "") -> list[Path]:
     rules_root = Path(__file__).resolve().parents[1] / "rules"
@@ -53,9 +107,8 @@ def collect_rule_paths(project_rules: str = "", user_rules: str = "") -> list[Pa
                 rule_paths.append(md_file)
 
     # 项目规则和用户规则
-    for value in [project_rules, user_rules]:
-        if value:
-            rule_paths.append(Path(value))
+    for value in split_rule_paths(project_rules) + split_rule_paths(user_rules):
+        rule_paths.append(value)
     return rule_paths
 
 def render_combined_rules(project_rules: str = "", user_rules: str = "") -> str:
@@ -255,22 +308,29 @@ def main():
     )
     args = parser.parse_args()
 
-    task_dir = Path(args.task_dir)
+    task_root = Path(args.task_dir)
+    task_dir = resolve_signal_interface_task_dir(task_root)
+
+    project_rules = args.project_rules
+    external_device_rules = discover_external_device_rules(task_root, args.connections)
+    if external_device_rules:
+        project_rules = append_rule_path(project_rules, external_device_rules)
+        print(f"[INFO] external device rules detected -> {external_device_rules}")
 
     if args.stage in {"prepare", "all"}:
-        run_prepare(task_dir, args.connections, args.pins, args.project_rules, args.user_rules)
+        run_prepare(task_dir, args.connections, args.pins, project_rules, args.user_rules)
 
     if args.stage == "apply":
-        run_apply(task_dir, args.connections, args.pins, args.project_rules, args.user_rules)
+        run_apply(task_dir, args.connections, args.pins, project_rules, args.user_rules)
 
     if args.stage == "model_tasks":
-        run_model_tasks(task_dir, args.connections, args.pins, args.project_rules, args.user_rules)
+        run_model_tasks(task_dir, args.connections, args.pins, project_rules, args.user_rules)
 
     if args.stage in {"finish", "all"}:
         template_excel = args.template_excel or (args.connections if Path(args.connections).suffix.lower() in {".xlsx", ".xlsm"} else "")
-        run_finish(task_dir, args.connections, args.pins, template_excel, args.output_mode, args.project_rules, args.user_rules)
+        run_finish(task_dir, args.connections, args.pins, template_excel, args.output_mode, project_rules, args.user_rules)
 
-    print(f"[OK] stage={args.stage} task_dir={task_dir}")
+    print(f"[OK] stage={args.stage} task_dir={task_dir} task_root={task_root}")
 
 if __name__ == "__main__":
     main()
