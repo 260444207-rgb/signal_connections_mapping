@@ -1,0 +1,22 @@
+### RULE: EXT_<DEVICE_CODE> <DEVICE_NAME> 外部器件规则
+
+适用条件：
+源端器件：<DEVICE_NAME> / <DEVICE_CODE>
+目标器件：<TARGET_NAME，可选>
+链路族：<LINK_FAMILY，可选>
+映射族：<MAPPING_FAMILY，可选>
+信号形态：<scalar/differential/bus，可选>
+
+规则摘要：
+<一句话说明规则用途>
+
+Pin 映射规则：
+- <source_port_pattern> -> <target_pin_or_rule>
+- <source_port_pattern> -> <target_pin_or_rule>
+
+约束：
+- <约束1>
+- <约束2>
+
+冲突处理：
+- <无法唯一判断时的处理方式>

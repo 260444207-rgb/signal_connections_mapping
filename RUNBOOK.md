@@ -22,7 +22,7 @@ generate_candidates: available_pins=[]
 pre_resolve_candidates: selected_pin="", decision_type=unresolved, confidence=Low, net_name="", needs_human_review=true
 needs_model_resolution.jsonl: 不写入该行
 model_resolution_tasks: 不为该源端器件创建 TASK，不启动 semantic subagent
-final Excel: 保留连接事实，原理图Pin脚="", 网络命名=""
+final Excel: 保留连接事实，原理图Pin脚=""；若输入框图连线名称有效，则网络命名=该连线名称（清洗后），否则网络命名=""
 ```
 
 框图 `源Port`、`目的Port`、连线名、block 名、link_info、规则文本和器件常识都不能代替 pin_info。没有源端器件 pin 列表时，不允许用这些信息生成 subagent 任务，也不允许让模型猜 `selected_pin`。

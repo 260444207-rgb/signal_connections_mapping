@@ -13,9 +13,10 @@
 
 当前命名规范
 --------
-1. 最终格式固定为：源block英文名_目的block英文名_源/目的port英文名。
-2. 源/目的 port 只选择一个：有含义优先，其次包含数字优先，仍打平选源 port。
-3. block 和 port 中的中文必须翻译成英文，再执行格式清洗。
+1. 输入框图中的有效连线名称最高优先级：connection_name 非空且不包含 line（不区分大小写）时，直接清洗后作为网络名。
+2. 没有有效连线名称时，按源block英文名_目的block英文名_源/目的port英文名生成。
+3. 源/目的 port 只选择一个：有含义优先，其次包含数字优先，仍打平选源 port。
+4. block 和 port 中的中文必须翻译成英文，再执行格式清洗。
 
 字符集约束（所有输出强制满足）
 ------------------------------
@@ -351,6 +352,12 @@ def has_digit(value: str) -> bool:
     return bool(_HAS_DIGIT_RE.search(str(value or "")))
 
 
+def is_effective_connection_name(value: str) -> bool:
+    """输入框图中的有效连线名称：非空且不包含 line 关键字。"""
+    text = str(value or "").strip()
+    return bool(text) and "line" not in text.lower()
+
+
 def is_meaningful_port(value: str) -> bool:
     token = clean_net_token(value)
     if not token:
@@ -459,6 +466,10 @@ def generate_net_name(nc: Dict[str, Any], selected_pin: str = "") -> str:
     ----
     str : 华为规范网络名（已清洗，满足全部约束）
     """
+    conn_name = str(nc.get("connection_name", "") or "").strip()
+    if is_effective_connection_name(conn_name):
+        return clean_net_name(conn_name)
+
     return build_block_port_net_name(nc)
 
     # --- 数字控制（9部分）: 总线_编号_发送端_接收端_信号_频率_串联_电平_极性 ---

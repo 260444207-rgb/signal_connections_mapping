@@ -32,7 +32,7 @@ stage=all 只做脚本冒烟验证，不会自动调用语义 subagent。
 2. pre_resolve_candidates 输出 unresolved / Low / needs_human_review=true
 3. 不写入 needs_model_resolution.jsonl
 4. 不创建 semantic subagent/TASK
-5. 最终 Excel 保留连接行，但原理图Pin脚和网络命名为空
+5. 最终 Excel 保留连接行；若输入框图连线名称有效，则网络命名使用该连线名称（清洗后），否则原理图Pin脚和网络命名为空
 ```
 
 不要让模型用框图 `源Port` / `目的Port`、规则文本或器件常识猜 pin；正确动作是等待用户补充该源端器件的 pin 信息。
@@ -203,7 +203,7 @@ output/signal_interface_YYYYMMDD_HHMMSS.xlsx
 5. 信息不足时输出 unresolved。
 6. 一条逻辑连接对应多个物理 pin 时，优先在映射前或 subagent 输出阶段展开为 `主line_id#数字` 多行；兼容旧任务时才使用 `selected_pins` 数组。
 7. `原理图Pin脚` 必须逐字来自入参 `pin_info.json` 中该源端器件编码对应的 pin 列表；不得改写、翻译、补全、大小写规范化或使用其他器件 pin。
-8. 没有 `原理图Pin脚` 时，`网络命名` 必须为空。
+8. 输入框图中的有效连线名称（非空且不包含 `line`）是 `网络命名` 最高优先级；没有有效连线名称且没有 `原理图Pin脚` 时，`网络命名` 必须为空。
 9. `LINE_xxx`、`line`、包含 `line` 的连线名称是默认连线名，不得直接作为网络名。
 ```
 

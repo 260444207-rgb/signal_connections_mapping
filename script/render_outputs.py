@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Dict, Any, List
 
 from common import iter_jsonl, write_jsonl, ensure_dir, FINAL_HEADERS
-from generate_net_name import generate_net_name
+from generate_net_name import generate_net_name, is_effective_connection_name
 
 MULTI_RESULT_CONNECTION_ID_SEPARATOR = "#"
 
@@ -54,6 +54,10 @@ def is_invalid_model_net_name(value: str) -> bool:
     }
 
 def final_net_name(decision: Dict[str, Any], normalized: Dict[str, Any], index: int, selected_pin: str) -> str:
+    connection_name = normalized.get("connection_name", "") or ""
+    if is_effective_connection_name(connection_name):
+        return generate_net_name(normalized, selected_pin)
+
     if not str(selected_pin or "").strip():
         return ""
     return generate_net_name(normalized, selected_pin)

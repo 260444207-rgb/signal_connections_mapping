@@ -128,7 +128,7 @@ flowchart TD
 8. `原理图Pin脚` / `selected_pin` / `selected_pins` 必须逐字来自入参 `pin_info.json` 中该源端器件编码对应的 pin 列表；不得翻译、补全、改写、大小写规范化或输出其他器件的 pin。
 9. 如果入参 `pin_info.json` 中没有当前源端器件编码对应的 pin 列表或列表为空，则该源端器件不能进入语义模型分析；相关连接保持 `unresolved`，等待用户补充 pin 信息。
 9a. 严禁用框图 `源Port` / `目的Port` / 连线名 / 规则文本 / 器件常识伪造 pin，也严禁为了这类缺 pin 对象额外生成 subagent 任务。
-10. 没有 `selected_pin` / `selected_pins` 时，最终 `网络命名` 必须为空。
+10. 输入框图中的有效连线名称（非空且不包含 `line`，不区分大小写）是最终 `网络命名` 最高优先级；没有有效连线名称且没有 `selected_pin` / `selected_pins` 时，最终 `网络命名` 必须为空。
 11. `LINE_xxx`、`line`、包含 `line` 的连线名称是画图工具默认名，不是有效网络名，不能直接复制到 `net_name` / `net_names`。
 12. 如果 subagent 结合上下文判断某条未展开 line 是差分/总线，应输出多行 decision：`line_id=原line_id#数字`、`parent_line_id=原line_id`、每行一个 `selected_pin`；merge/validate/render 会按 parent 复制原连接事实。
 
@@ -357,7 +357,7 @@ python script/run_pipeline.py \
 
 `connection_name` 非空且不包含 `line`（不区分大小写）时，直接使用连线名称（清洗后），不再按规范生成。
 
-如果没有选中原理图 pin，渲染阶段强制输出空网络名；如果 `connection_name` 包含 `line`，视为默认连线名，必须按信号语义生成或由模型输出有效网络名。
+有效 `connection_name` 是最高优先级，即使模型输出了其他 `net_name`，渲染阶段也必须优先使用输入框图中的有效连线名称；如果 `connection_name` 包含 `line`，视为默认连线名，必须按信号语义生成或由模型输出有效网络名。没有有效连线名称且没有选中原理图 pin 时，渲染阶段输出空网络名。
 
 ```text
 示例：

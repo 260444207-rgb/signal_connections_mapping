@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Dict, Any, List
 
 from common import iter_jsonl, ensure_dir, FINAL_HEADERS
-from generate_net_name import generate_net_name
+from generate_net_name import generate_net_name, is_effective_connection_name
 
 SKIP_SHEETS = {"BLOCK_INFO", "LINK_INFO", "链路信息", "说明", "README", "INDEX", "目录"}
 MULTI_RESULT_CONNECTION_ID_SEPARATOR = "#"
@@ -52,9 +52,15 @@ def is_invalid_model_net_name(value: str) -> bool:
 def final_net_name(decision: Dict[str, Any], normalized: Dict[str, Any], index: int, selected_pin: str) -> str:
     """
     生成最终网络名。
-    硬约束：没有原理图 pin 时网络名必须为空。
-    当前规范统一由脚本生成：源block英文名_目的block英文名_源/目的port英文名。
+    优先级：
+    1. 输入框图中的有效连线名称最高优先级。
+    2. 没有有效连线名称且没有原理图 pin 时网络名为空。
+    3. 其他情况按脚本规范生成。
     """
+    connection_name = normalized.get("connection_name", "") or ""
+    if is_effective_connection_name(connection_name):
+        return generate_net_name(normalized, selected_pin)
+
     if not str(selected_pin or "").strip():
         return ""
     return generate_net_name(normalized, selected_pin)
