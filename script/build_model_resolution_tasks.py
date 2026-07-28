@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 from __future__ import annotations
@@ -1381,6 +1381,7 @@ def render_shared_prompt() -> str:
         "8. 必须先阅读 task_json.diagram_link_context；它来自输入框图表/link_info/链路信息 sheet，用于判断链路归属、上下游角色、实例编号和特殊连接方式。",
         "9. 必须阅读 task_json.matched_rule_sections；它只是脚本召回的候选自然语言规则块，不能替代逐行语义判断。",
         "9a. matched_rule_sections 中的 layer/source_file/match_type 用于说明规则层级、来源和召回原因；裁决时必须遵守 custom/user > link > device > signal > global > 名称相似度，不得按数组位置或 score 直接选择 pin。",
+        "9b. 如果某条 matched_rule_sections 实际影响了 selected_pin、selected_pins、unresolved、signal_shape 修正或 pin 复用判断，必须在 analysis 中简短写明：规则依据：<layer>/<rule_id 或 title>/<match_type>。如果召回规则只阅读但未用于裁决，不要把它写成依据。",
         "10. 必须阅读 task_json.link_family_profiles；它是同一 link_family 跨 subagent 共享的链路级语义上下文，用于借鉴拓扑、方向、实例索引和用户说明。",
         "11. 必须阅读 task_json.sheet_device_context；同一个 source_sheet_name 表示同一个物理器件实例，sheet 内不同 block_id/block_name 是该器件的逻辑块/端口视图。",
         "12. 必须阅读 task_json.pin_allocation_context 和 task_scope.session_pin_allocation_context_file；前者是当前小 TASK 局部视图，后者是同一 source_device session 的全量视图，包含跨 TASK 的 potential_shared_pin_groups。先判断每条连接是 scalar、bus 还是 differential；同一物理器件实例内同一个 pin 默认不能被多个不同语义 line_id 重复使用，除非同一源端口扇出、同一网络、多端口别名或用户规则明确允许。",
@@ -1395,6 +1396,7 @@ def render_shared_prompt() -> str:
         "19. 如果 task_json.source_device_pins 没有当前源端器件编码，或 source_device_pins 中没有可用 pin，必须输出 unresolved，并说明入参 pin_info 缺少该器件 pin 信息；不得用框图 source_port/target_port、连线名、matched_rule_sections 或器件常识代替 pin。",
         "20. 如果 selected_pin/selected_pins 为空，net_name/net_names 必须为空；没有原理图 pin 时不得生成网络名。",
         "21. LINE_xxx、line、包含 line 的连线名称是画图工具默认连线名，不是有效网络名；不得直接复制到 net_name/net_names，需要网络名时必须结合信号语义生成。",
+        "21a. analysis 中必须包含网络命名依据：连线名称和模型 net_name 不覆盖脚本命名、按源/目的 block + port 规则生成、差分保留 P/N、或未选中 pin 因而网络命名为空。最终渲染脚本会统一清洗/生成网络名；这里记录的是命名依据。",
         "22. 一条逻辑连接对应多个物理 pin 时，优先输出多行 parent_line_id#数字 decision，每行一个 selected_pin；只有兼容旧任务时才使用 selected_pins/net_names 数组。",
         "23. signal_shape / signal_shape_info 是进入映射分析前的前置形态判断结果，来自自动规则、pin 列表 P/N 对识别和本地自然语言规则提示。必须先读取它；只有 needs_model_shape_review=true、证据冲突或明显不符合连接语义时，才在 analysis 中说明并修正判断。",
         "24. 如果 normalized_connection.signal_shape_info.is_expanded_member=true，说明该差分/总线成员已经在映射前展开为独立 line_id（例如 1868#1、1868#2）；该行只输出单个 selected_pin，不得再输出 selected_pins 数组。",

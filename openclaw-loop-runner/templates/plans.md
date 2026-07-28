@@ -1,3 +1,0 @@
-# Plans
-
-{{task_table}}

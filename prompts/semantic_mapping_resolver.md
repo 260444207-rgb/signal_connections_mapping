@@ -70,7 +70,7 @@ net_name / net_names = 空
 1. 先查看 task_scope。若存在 subagent_session_id、global_link_plan_file、pin_allocation_state_file、session_state_snapshot、session_pin_allocation_context_file、physical_device_instance_ids 和 previous_task_outputs，说明当前 TASK 是同一个 source_device subagent 会话中的小批次；处理前必须先查看 task 内嵌 snapshot，再读取 session 级 pin_allocation_context 和权威 state 文件，处理后必须按 physical_device_instance_id 更新 state。
 2. 再查看 context_group.source_device_signature、source_device_pins 和 pin_selection_policy，建立当前源端器件的 pin 功能理解。source_device_pins 是唯一权威 pin 来源。
 3. 必须查看 diagram_link_context。它来自输入框图表中的 link_info / 链路信息 sheet 和连接行，用于理解用户标注的链路类型、链路编号、涉及 sheet、器件角色说明、相关连线 ID 和逐行链路上下文。
-4. 再查看 matched_rule_sections。它是脚本按源端器件、链路族、信号族、目标、端口和形态召回的候选自然语言规则块；每块的 layer/source_file/match_type 表示规则层级、来源和召回原因。必须按 custom/user > link > device > signal > global > 名称相似度理解，不能按数组位置或 score 直接选择 pin。
+4. 再查看 matched_rule_sections。它是脚本按源端器件、链路族、信号族、目标、端口和形态召回的候选自然语言规则块；每块的 layer/source_file/match_type 表示规则层级、来源和召回原因。必须按 custom/user > link > device > signal > global > 名称相似度理解，不能按数组位置或 score 直接选择 pin。若某条召回规则实际影响了 pin 选择、unresolved、signal_shape 修正或 pin 复用判断，必须在 analysis 中简短写明：`规则依据：<layer>/<rule_id 或 title>/<match_type>`；只阅读但未用于裁决的召回规则不要写成依据。
 5. 必须查看 link_family_profiles。它是同一 link_family 跨多个 source_device subagent 共享的链路级上下文，用来借鉴链路拓扑、上下游角色、实例索引、差分/总线展开规律和用户链路说明。
 6. 必须查看 sheet_device_context。它说明输入 Excel 的 sheet 语义：同一个 source_sheet_name 表示同一个物理器件实例；sheet 内多个 source_block_id/source_block_name 是这个器件的逻辑块、功能块或端口视图，不是多个独立器件。
 7. 必须查看 pin_allocation_context。它说明当前 TASK 内同一物理器件实例哪些 line_id 共享同一个 pin 空间、每条连接的前置 signal_shape_info，以及 pin 复用约束。若 task_scope.session_pin_allocation_context_file 存在，还必须读取该 session 级文件，它包含跨 TASK 的 potential_shared_pin_groups。
@@ -128,6 +128,7 @@ TX 控制链路规定 SROC 的 TX_SW0 控制 TXVGA0 的 EN_CHA/EN_CHB。
 12a. 不得按 candidate_mappings 中最高 rough_lexical_score 直接选择 pin；候选与链路语义冲突时必须忽略候选，从 source_device_pins 全量列表重新判断，或输出 unresolved。
 13. 如果 selected_pin/selected_pins 为空，net_name/net_names 必须为空；没有原理图 pin 时不得生成网络名。
 14. `LINE_xxx`、`line`、包含 `line` 的连线名称是画图工具默认连线名，不是有效网络名；需要网络名时应结合信号语义生成，不得直接复制这类默认名称。
+14a. analysis 中必须包含网络命名依据：连线名称和模型 net_name 不覆盖脚本命名、按源/目的 block + port 规则生成、差分保留 P/N，或未选中 pin 因而网络命名为空。最终渲染脚本会统一清洗/生成网络名；这里记录的是命名依据。
 15. signal_shape_info 是进入映射分析前生成的形态判断结果，来源包括自动总线宽度识别、源端 pin 列表中的 P/N 对识别，以及本地自然语言规则中的“差分/总线”提示。只有 needs_model_shape_review=true、证据冲突或明显不符合连接语义时，才修正该判断，并必须在 analysis 中说明原因。
 16. 如果 normalized_connection.signal_shape_info.is_expanded_member=true，说明差分/总线已经在映射前展开成独立 line_id，例如 `1868#1`、`1868#2`；该行只输出一个 `selected_pin`，不要再输出 `selected_pins`。
 17. 如果某条未展开 line 需要结合上下文才知道是差分/总线，可以直接输出多行展开 decision：`line_id=原line_id#数字`、`parent_line_id=原line_id`，每行一个 `selected_pin`。这类输出会在 merge/validate/render 阶段按 parent 复制原始连接事实。
