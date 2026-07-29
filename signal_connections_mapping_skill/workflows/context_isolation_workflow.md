@@ -22,9 +22,7 @@ hard_case 单独隔离
 ```text
 normalize_connections
   ↓
-generate_candidates
-  ↓
-pre_resolve_candidates
+route_model_resolution
   ↓
 build_analysis_context_groups
   ↓
@@ -71,25 +69,19 @@ intermediate/model_resolution_tasks/tasks/TASK_器件类型_器件编码_链路�
 ```text
 1. task_scope
 2. context_group
-3. sheet_device_context
-4. pin_allocation_context
-5. diagram_link_context
-6. link_family_profiles
-7. matched_rule_sections
-8. link_family_summaries
-9. normalized_connections
-10. source_device_pins
-11. pin_selection_policy
-12. candidate_mappings rough search hints
-13. rule_source 指向运行时收集全部分层规则后的 combined_mapping_rules.md
-14. needs_model_resolution 原因
+3. source_device_pins / pin_catalog_context
+4. diagram_link_context
+5. connection_defaults
+6. normalized_connections
+7. matched_rule_refs
+8. output_contract / schema_file
 ```
 
-`task_scope` 指向 `global_link_plan_file` 和 `pin_allocation_state_file`。同一个 session 的 TASK 必须顺序处理：处理前读取 state，处理后更新 state，记录已用 pin、允许复用 pin、冲突和 completed_task_ids。
+`task_scope` 指向 `session_context_file` 和 `pin_allocation_state_file`。同一个 session 的 TASK 必须顺序处理：session context 只读一次；每个 TASK 前读取最新 state，完成后更新已用 pin、允许复用 pin、冲突和 completed_task_ids。
 
-`link_family_profiles` 是跨 subagent 共享的链路语义上下文。它让同一 link_family 下的 SROC、TXVGA、91fbsw 等不同源端器件 subagent 借鉴拓扑、方向、实例索引、差分/总线展开规律和用户说明，但不能直接复制其他 line_id 或其他源端器件的 selected_pin。
+`session_context_file` 保存 `sheet_device_context`、`pin_allocation_context`、`link_family_profiles` 和去重后的 `rule_library`。它让同一 link_family 下的不同源端器件借鉴拓扑、方向、实例索引、差分/总线规律和用户说明，但不能直接复制其他 line_id 的 selected_pin。
 
-`sheet_device_context` 表达 sheet 与物理器件实例的关系：同一 source_sheet_name 是一个物理器件实例，sheet 内多个 block_id/block_name 是该器件的逻辑块/端口视图。`pin_allocation_context` 表达同一物理器件实例内 pin 的默认互斥使用关系、scalar/bus/differential 判断和允许共享的候选分组。
+`sheet_device_context` 表达 sheet 与物理器件实例的关系：同一 source_sheet_name 是一个物理器件实例，sheet 内多个 block_id/block_name 是该器件的逻辑块/端口视图。`pin_allocation_context` 表达同一物理器件实例内 pin 的默认互斥使用关系、scalar/bus/differential 判断和潜在允许共享的分组。
 
 如果 `source_device_pins` 为空，或没有当前 `source_part_id` 对应的非空 pin 列表，表示入参 `pin_info.json` 缺少当前源端器件的 pin 信息。该 context 不应启动语义 subagent；保留 unresolved，等待用户补充 pin 信息。
 

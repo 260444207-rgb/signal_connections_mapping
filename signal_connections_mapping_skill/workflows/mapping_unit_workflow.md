@@ -8,15 +8,13 @@
 
 ```text
 1. 当前 normalized_connection
-2. 当前 line_id 对应 candidate_mapping
-3. source_device_pins 中该 source_part_id 的 pin 列表
+2. source_device_pins 中该 source_part_id 的当前 pin 视图
+3. pin_catalog_context；超过 100 个 pin 时可回退读取其他 groups 或 all_pins
 4. context_group 的 link_family_id / link_family_source / analysis_strategy
-5. sheet_device_context 中 sheet 到物理器件实例的解释
-6. pin_allocation_context 中同一物理器件实例的 pin 复用约束
-7. diagram_link_context 中当前组和逐行链路上下文
-8. link_family_profiles 中同类链路跨 subagent 的共享语义
-9. link_family_summaries 中同类链路的全局摘要
-10. matched_rule_sections / natural_language_mapping_rules_template.md 中的自然语言规则
+5. session_context_file 中 sheet/物理实例和 pin 复用约束
+6. diagram_link_context 中当前组级链路上下文
+7. session_context_file 中 link_family_profiles 的共享语义
+8. matched_rule_refs 指向 rule_library 的自然语言规则
 ```
 
 ## 判断顺序
@@ -69,7 +67,7 @@ selected_pin / selected_pins 必须逐字来自当前 source_part_id 对应的 s
 
 ## 输出
 
-单条逻辑连接输出一个 decision。多物理 pin 不新增 line_id，而是在同一个 decision 中输出数组：
+普通连接输出一个 decision。多物理 pin 优先输出多行 `parent_line_id#数字`；下面仅为旧数组兼容格式：
 
 ```json
 {
@@ -80,12 +78,12 @@ selected_pin / selected_pins 必须逐字来自当前 source_part_id 对应的 s
   "confidence": "High",
   "analysis": "该逻辑连接对应差分 P/N 两个物理 pin。",
   "net_name": "",
-  "net_names": ["NET_P", "NET_N"],
+  "net_names": [],
   "needs_human_review": false
 }
 ```
 
-渲染阶段会把 `selected_pins` 展开为 `主连线ID#数字`，并保证除连线ID和后 4 列外，前 9 列连接事实不变。
+模型不分析网络名，`net_name` / `net_names` 固定为空；渲染阶段统一生成。旧数组模式会由渲染阶段展开，并保证原始连接事实不变。
 
 信息不足时：
 

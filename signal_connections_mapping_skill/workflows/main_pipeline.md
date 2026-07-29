@@ -18,13 +18,11 @@ init_task
   ↓
 normalize_connections
   ↓
-generate_candidates
-  ↓
 infer_signal_shapes
   ↓
 build_analysis_context_groups
   ↓
-pre_resolve_candidates
+route_model_resolution
   ↓
 build_model_resolution_tasks
   ↓
@@ -57,26 +55,9 @@ render_template_sheets
 
 不得根据器件语义修改端口名，不得把端口改成 default，不得用模型推断覆盖前 9 列。
 
-### generate_candidates
-
-根据 `source_part_id` 从 `pin_info.json` 读取源端器件 pin 列表，生成 `candidate_mappings.jsonl`。
-
-候选分数只用于辅助，不代表最终语义判断。
-
-`available_pins` 必须来自入参 `pin_info.json` 中当前源端器件编码对应的 pin 列表。如果找不到该编码或列表为空，进入缺 pin_info 硬门禁：
-
-```text
-available_pins = []
-不允许从源Port/目的Port/连线名生成候选 pin
-不允许把框图 port 当作原理图 pin
-该器件后续跳过语义模型分析，相关连接保持 unresolved
-```
-
-此门禁高于 link_info、mapping_family、自然语言规则和端口名称相似度。
-
 ### infer_signal_shapes
 
-读取 `normalized_connections.jsonl`、`pin_info.json` 和合并后的自然语言规则，生成 `signal_shape_inference.jsonl`，并把 `signal_shape`、`expected_physical_pin_count`、`signal_shape_info` 写回 `normalized_connections.jsonl`。若一条原始连接对应多个物理 pin，会在进入候选生成和 subagent 前展开为多个 normalized row，`line_id` / `connection_id` 使用 `原ID#数字`。
+读取 `normalized_connections.jsonl`、`pin_info.json` 和合并后的自然语言规则，生成 `signal_shape_inference.jsonl`，并把 `signal_shape`、`expected_physical_pin_count`、`signal_shape_info` 写回 `normalized_connections.jsonl`。若一条原始连接对应多个物理 pin，会在进入 subagent 前展开为多个 normalized row，`line_id` / `connection_id` 使用 `原ID#数字`。
 
 该阶段只判断 scalar / bus / differential 和预计物理 pin 数，不选择具体 pin；后续 subagent 必须结合当前源端器件 pin 列表和语义上下文独立裁决 `selected_pin`。未自动展开但经上下文判断需要展开的连接，应输出 `parent_line_id#数字` 多行 decision。
 
@@ -106,15 +87,11 @@ link_contexts / link_instance_ids / user_link_infos / device_role_infos
 
 该分组只决定模型分析边界，不决定输出 sheet。
 
-### pre_resolve_candidates
+### route_model_resolution
 
-主流程中这是轻量预裁决阶段。
+直接按 `source_part_id` 从 `pin_info.json` 检查源端器件 pin 列表，不生成相似度候选，也不自动选择 pin。
 
-只在候选 pin 分数非常高且明显领先时自动输出；其余行全部进入 `needs_model_resolution.jsonl`，由语义模型处理。
-
-如果 `available_pins=[]`，不是“其余行进入模型分析”，而是直接输出 `unresolved / Low / needs_human_review=true`，并且不写入 `needs_model_resolution.jsonl`。
-
-脚本不承载器件特殊语义，也不允许用框图 port 伪造 pin。
+有非空 pin 列表的连接全部写入 `needs_model_resolution.jsonl`。缺 pin 的连接直接输出 `unresolved / Low / needs_human_review=true`，不创建 TASK；框图 port、规则和器件常识都不能代替 pin_info。
 
 ### build_model_resolution_tasks
 
@@ -136,28 +113,22 @@ intermediate/model_resolution_tasks/
 
 任务包包含：
 
-注意：只有 source_device_pins 中存在当前源端器件的非空 pin 列表时，才允许生成 TASK。缺 pin_info 的对象已经在 pre_resolve 阶段保持 unresolved，不应出现在 subagent 任务中。
+注意：只有 source_device_pins 中存在当前源端器件的非空 pin 列表时，才允许生成 TASK。缺 pin_info 的对象已经在路由门禁阶段保持 unresolved，不应出现在 subagent 任务中。
 
 ```text
-1. 当前 task_scope（session、global_link_plan_file、pin_allocation_state_file、前序 TASK 输出）
+1. 当前 task_scope（session_context_file、pin_allocation_state_file、前序 TASK 输出）
 2. 当前 context_group 小批次
-3. 当前 sheet_device_context
-4. 当前 pin_allocation_context
-5. 当前 diagram_link_context
-6. 当前 link_family_profiles
-7. 当前 matched_rule_sections
-8. 当前 link_family_summaries
-9. 当前 TASK normalized_connections
-10. 当前 TASK source_device_pins
-11. 当前 TASK pin_selection_policy
-12. 当前 TASK candidate_mappings rough search hints
-13. rule_source 指向运行时收集全部分层规则后的 combined_mapping_rules.md
-14. needs_model_resolution 原因
+3. 当前 diagram_link_context
+4. connection_defaults
+5. 当前 TASK normalized_connections
+6. 当前 TASK source_device_pins / pin_catalog_context
+7. matched_rule_refs
+8. output_contract / schema_file
 ```
 
-`link_family_profiles` 会把同一 link_family 的共享链路语义注入到所有相关 source_device subagent 中。它用于借鉴链路拓扑、方向、实例索引和用户说明，不用于脚本裁决 pin。
+超过 100 个 pin 时，分组文件包含无损、多标签、无排名的 `groups` 和完整 `all_pins`。TASK 只内嵌当前相关组；当前组找不到合理 pin 时读取其他组或 all_pins。100 个及以下 pin 不生成分组文件。
 
-`sheet_device_context` 会告诉 subagent：一个连接 sheet 表示一个物理器件实例，sheet 内不同 block_id/block_name 只是该器件的逻辑块/端口视图。`pin_allocation_context` 会告诉 subagent：前置 signal_shape_info、同一 pin 空间、以及普通 scalar 的 pin 默认不可被不同语义 line_id 重复使用，除非同一源端口扇出到多个目标端口、同网、同 base_connection、多端口别名或用户规则明确允许。
+session 共享的 `sheet_device_context`、`pin_allocation_context`、`link_family_profiles` 和 `rule_library` 只写入 `session_context_file`，不在每个 TASK 重复。
 
 在真正启动 subagent 前，应先阅读本地持久化的 `global_link_plan.md`、`subagent_session_plan.md` 和 `subagent_task_plan.md`。subagent 按 source_device session 启动；同一个 session 内的多个小 TASK 由同一个 subagent 顺序处理，并通过 `pin_allocation_state_file` 传递已用 pin、允许复用 pin 和冲突信息。不要因为 TASK 文件变多就为同一个源端器件启动多个互不共享状态的 subagent。
 

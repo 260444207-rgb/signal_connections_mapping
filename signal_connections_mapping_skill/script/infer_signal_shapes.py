@@ -30,15 +30,6 @@ GENERIC_RULE_TERMS = {
 }
 
 
-def load_candidate_map(path: str | Path) -> Dict[str, Dict[str, Any]]:
-    if not path:
-        return {}
-    p = Path(path)
-    if not p.exists():
-        return {}
-    return {row["line_id"]: row for row in iter_jsonl(path)}
-
-
 def read_rule_text(path: str | Path | None) -> str:
     if not path:
         return ""
@@ -274,7 +265,6 @@ def matching_rule_hint(row: Dict[str, Any], rule_text: str) -> Dict[str, Any]:
 
 def infer_signal_shape_for_row(
     row: Dict[str, Any],
-    candidate_mapping: Dict[str, Any],
     source_pins: List[str],
     rule_text: str,
 ) -> Dict[str, Any]:
@@ -393,14 +383,12 @@ def expanded_rows_for_signal_shape(row: Dict[str, Any], signal_shape_info: Dict[
 
 def infer_signal_shapes(
     normalized_path: str | Path,
-    candidates_path: str | Path,
     pins_path: str | Path,
     output_normalized_path: str | Path,
     report_path: str | Path,
     rules_path: str | Path | None = None,
 ) -> List[Dict[str, Any]]:
     catalog = load_pin_catalog(pins_path)
-    candidates_by_id = load_candidate_map(candidates_path)
     rule_text = read_rule_text(rules_path)
     rows = list(iter_jsonl(normalized_path))
     enriched: List[Dict[str, Any]] = []
@@ -409,8 +397,7 @@ def infer_signal_shapes(
     for row in rows:
         part_id = row.get("source_part_id", "")
         source_pins = pins_for_part(catalog, part_id)
-        candidate_mapping = candidates_by_id.get(row.get("line_id", ""), {})
-        signal_shape_info = infer_signal_shape_for_row(row, candidate_mapping, source_pins, rule_text)
+        signal_shape_info = infer_signal_shape_for_row(row, source_pins, rule_text)
         expanded_rows = expanded_rows_for_signal_shape(row, signal_shape_info)
         enriched.extend(expanded_rows)
         reports.append({
@@ -433,7 +420,6 @@ def infer_signal_shapes(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Infer scalar/bus/differential shape before semantic pin mapping.")
     parser.add_argument("--normalized", required=True)
-    parser.add_argument("--candidates", default="")
     parser.add_argument("--pins", required=True)
     parser.add_argument("--output-normalized", required=True)
     parser.add_argument("--report", required=True)
@@ -442,7 +428,6 @@ def main() -> None:
 
     rows = infer_signal_shapes(
         args.normalized,
-        args.candidates,
         args.pins,
         args.output_normalized,
         args.report,

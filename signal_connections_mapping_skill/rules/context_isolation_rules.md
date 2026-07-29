@@ -81,4 +81,4 @@ target_device_instances
 | 类型 | 说明 |
 |---|---|
 | semantic-mapping-subagent | 分析同一源端器件 pin 体系下的普通连接 |
-| semantic-hard-case-subagent | 处理无候选、冲突、校验失败等疑难项 |
+| semantic-hard-case-subagent | 处理规则冲突、pin 分配冲突、校验失败等疑难项 |

@@ -454,58 +454,17 @@ def generate_net_name(nc: Dict[str, Any], selected_pin: str = "") -> str:
     ----
     nc : Dict[str, Any]
         normalized_connection 对象，至少包含：
-        - connection_name: 连线名称
         - source_block_name / source_block_id: 源器件名称
         - target_block_name / target_block_id: 目的器件名称
-        - source_port: 源端口名
-        - direction: 方向（可选）
+        - source_port / target_port: 两端端口名
     selected_pin : str
-        原理图 pin 脚名称（电源类网络会用到）
+        保留的兼容参数；当前规范命名不依赖模型选择结果。
 
     返回
     ----
     str : 华为规范网络名（已清洗，满足全部约束）
     """
     return build_block_port_net_name(nc)
-
-    # --- 数字控制（9部分）: 总线_编号_发送端_接收端_信号_频率_串联_电平_极性 ---
-    if sig_type == "CTRL":
-        bus = next((v for k, v in _BUS_MAP.items() if k in cn or k in sp), "SIG")
-        sig_name = re.sub(r"[^A-Z0-9]", "_", src_port.upper())[:6]
-        parts = [p for p in [bus, pnum, src, tgt, sig_name, freq, "", "", pol] if p]
-        return clean_net_name("_".join(parts))
-
-    # --- DAC ---
-    if sig_type == "DAC":
-        net = f"DAC{pnum or ch}_{src}_{tgt}_AFE{freq}{pol}"
-        return clean_net_name(net)
-
-    # --- ADC ---
-    if sig_type == "ADC":
-        net = f"ADC{pnum or ch}_{tgt}_FB_{src}{freq}{pol}"
-        return clean_net_name(net)
-
-    # --- 差分（RF 格式，末尾带 _P / _N）---
-    if sig_type == "DIFF":
-        f2 = "TX" if "TX" in cn or "TX" in sp else "RX" if "RX" in cn or "RX" in sp else src
-        net = f"{f2}_{src}_{tgt}_CH{pnum or ch}{freq}{pol}"
-        return clean_net_name(net)
-
-    # --- 射频 / 通用：优先用去掉频率后缀的 connection_name（若含规范关键词）---
-    base = re.sub(r"_\d+M\d*$", "", conn_name) if conn_name else ""
-    base = re.sub(r"_\d+M$", "", base)
-    VALID_FUNCS = ["TX", "RX", "FB", "CAL", "TRX", "PD", "EQU"]
-    if base and len(base) <= 31 and any(f in base.upper() for f in VALID_FUNCS):
-        return clean_net_name(base)
-
-    # 按 RF 6 部分格式生成：类型_源端_目的端_通道_频率_极性
-    func = next((v for k, v in {"TX": "TX", "RX": "RX", "FB": "FB", "CAL": "CAL"}.items()
-                  if k in cn or k in sp), "SIG")
-    if func in VALID_FUNCS:
-        parts = [p for p in [func, src, tgt, f"CH{ch}" if ch else pnum, freq, pol] if p]
-    else:
-        parts = [p for p in [func, src, tgt, pnum, freq, pol] if p]
-    return clean_net_name("_".join(parts))
 
 
 # ============================================================================

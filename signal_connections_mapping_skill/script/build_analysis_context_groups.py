@@ -151,10 +151,8 @@ def load_hard_case_line_ids(needs_model_path: str | Path | None) -> set[str]:
         return set()
     hard_reasons = {
         "hard_case",
-        "candidate_conflict",
         "validation_failed",
         "user_rule_conflict",
-        "no_available_pins",
     }
     result = set()
     for row in iter_jsonl(p):

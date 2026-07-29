@@ -101,11 +101,9 @@ init_task
   ↓
 normalize_connections
   ↓
-generate_candidates
-  ↓
 infer_signal_shapes
   ↓
-pre_resolve_candidates
+route_model_resolution
   ↓
 build_analysis_context_groups
   ↓
@@ -125,7 +123,7 @@ render_template_sheets
 阶段命令：
 
 ```text
-prepare:     生成 normalized_connections、candidate_mappings、signal_shape_inference、analysis_context_groups
+prepare:     生成 normalized_connections、signal_shape_inference、analysis_context_groups
 apply:       生成 pre_resolved_decisions 和 needs_model_resolution
 model_tasks: 生成按源端器件 pin 体系隔离的 subagent 任务包和 subagent_task_plan
 finish:      合并模型/人工结果，校验并渲染 Excel
@@ -241,31 +239,11 @@ fallback_device_context: 无显式链路族和明确映射族，按器件上下�
 
 链路级数据、信号族和目标上下文不再用于重新起 subagent；它们只帮助同一个源端器件 subagent 判断每条连接的作用。
 
-### script/generate_candidates.py
+### script/route_model_resolution.py
 
-读取 `normalized_connections.jsonl` 和 `pin_info.json`，输出 `candidate_mappings.jsonl`。
+按 `source_part_id` 读取 `pin_info.json`，只执行模型路由门禁，不生成候选 pin，也不自动预裁决。
 
-职责：
-
-```text
-1. 根据 source_part_id 查找源端可用 pin。
-2. 兼容前导零料号，例如 302078562 匹配 0302078562。
-3. 基于 source_port、target_port、索引、方向生成轻量候选分数。
-4. 输出 available_pins 和 top_k candidates。
-5. 如果 source_part_id 在 pin_info.json 中没有对应 pin 列表，则 available_pins 为空；后续 pre_resolve 会保持 unresolved，并跳过该器件的语义模型分析。
-```
-
-候选分数只用于辅助，不代表最终语义判断。
-
-### script/pre_resolve_candidates.py
-
-脚本预裁决阶段。
-
-仅当候选分数非常高且明显领先时自动输出 `project_rule_applied`。其余连接进入 `needs_model_resolution.jsonl`。
-
-该脚本不得承载器件特殊语义，不得固化 TXVGA、SROC、SPI 等规则。
-
-如果入参 `pin_info.json` 没有当前源端器件编码对应的 pin 列表，该脚本直接输出 unresolved，不写入 `needs_model_resolution.jsonl`，避免模型凭经验生成不存在的 pin。
+有非空源端 pin 列表的连接全部进入 `needs_model_resolution.jsonl`。缺 pin 的连接直接保持 unresolved，不生成语义 TASK。
 
 ### script/build_model_resolution_tasks.py
 
@@ -290,20 +268,17 @@ intermediate/model_resolution_tasks/
 ```text
 1. task_scope
 2. context_group
-3. sheet_device_context
-4. pin_allocation_context
+3. source_device_pins
+4. pin_catalog_context
 5. diagram_link_context
-6. link_family_profiles
-7. matched_rule_sections
-8. link_family_summaries
-9. normalized_connections
-10. source_device_pins
-11. pin_selection_policy
-12. candidate_mappings（只保留粗糙搜索提示，不重复完整 pin 列表，不限制可选 pin 范围）
-13. rule_source
-14. needs_model_resolution
-15. required_output
+6. connection_defaults
+7. normalized_connections
+8. matched_rule_refs
+9. output_contract
+10. schema_file
 ```
+
+当源端器件 pin 数量超过 100 时，同一 session 额外生成一个 `*.pin_groups.json`。它只包含固定轻量分组、完整 `all_pins` 和必要元数据；分组无损、多标签且不排名。TASK 的 `source_device_pins` 只内嵌当前组，`pin_catalog_context` 指向其他组和完整列表。100 个及以下 pin 继续直接内嵌完整列表。
 
 平衡模式下，`subagent_session_plan` 控制实际 subagent 启动粒度：一个 source_device session 对应一个源端器件 pin 体系；同一 session 下可以有多个小 TASK。小 TASK 的分片原则是源端物理器件实例优先、链路/信号语义其次、数量上限最后，默认每个 TASK 不超过 50 条 line。小 TASK 用于降低单次推理上下文，不表示要为同一源端器件启动多个互不共享状态的 subagent。
 
@@ -312,18 +287,15 @@ intermediate/model_resolution_tasks/
 ```text
 execution_mode
 subagent_session_id
-parent_context_group_id
 subtask_index_in_session
 subtask_count_in_session
 pin_allocation_state_file
-session_state_snapshot
-session_pin_allocation_context_file
+session_context_file
 physical_device_instance_ids
-global_link_plan_file
 previous_task_outputs
 ```
 
-subagent 必须按同一 session 顺序处理 TASK。每个 TASK 内嵌 `session_state_snapshot`，这是生成任务时从 `pin_allocation_state_file` 读取的轻量摘要，用于降低模型漏读外部文件的风险；权威动态状态仍是 `pin_allocation_state_file`。处理前读取 `session_pin_allocation_context_file` 和权威 state 文件；session 级 pin_allocation_context 包含跨 TASK 的 `potential_shared_pin_groups`，TASK 内 `pin_allocation_context` 只是当前小批次视图。处理后按 `physical_device_instance_id` 写回已用 pin、允许复用 pin、冲突和 completed_task_ids。不同 physical_device_instance_id 的同名 pin 可以各自使用，不算冲突。
+subagent 必须按同一 session 顺序处理 TASK。session 开始时读取一次 `session_context_file`；每个 TASK 前读取最新 `pin_allocation_state_file`，不嵌入生成时即过期的 snapshot。处理后按 `physical_device_instance_id` 写回已用 pin、允许复用 pin、冲突和 completed_task_ids。
 
 `diagram_link_context` 是从输入框图表/link_info/链路信息 sheet 和逐行连接事实整理出的链路上下文，包含：
 
@@ -333,19 +305,20 @@ group_link_instance_ids
 group_user_link_infos
 group_device_role_infos
 group_link_contexts
-line_link_contexts
 ```
 
-subagent 必须先读它，用来判断链路归属、器件角色、实例编号和特殊连接方式。
+它只保存组级语义。逐行 block、port、link 和 shape 事实只保存在 `normalized_connections`。
 
-`sheet_device_context` 表达输入 workbook 的 sheet 语义：
+`session_context_file` 保存同一 session 共用的静态信息：
 
 ```text
-同一个 source_sheet_name = 一个物理器件实例
-同一个 sheet 内多个 source_block_id/source_block_name = 这个器件的逻辑块、功能块或端口视图
+sheet_device_context
+pin_allocation_context
+link_family_profiles
+rule_library
 ```
 
-因此即使 block_id 和 block_name 不同，只要它们在同一个连接 sheet 中，并且对应同一个 source_part_id，模型也应把它们看作同一个物理器件实例的不同接口视图，而不是多个独立器件。
+同一个 `source_sheet_name` 表示一个物理器件实例；同 sheet 内不同 block 是逻辑块或端口视图。
 
 `pin_allocation_context` 表达同一物理器件实例内的 pin 分配约束，包含：
 
@@ -375,9 +348,9 @@ shared_semantic_hints
 
 它解决“链路逻辑如何给其他链路/其他器件 subagent 借鉴”的问题：同一 link_family 下的 subagent 可以共享链路拓扑、方向、实例索引、差分/总线展开规律和用户说明。它不是规则裁决结果，不能直接复制其他 line_id 或其他源端器件的 selected_pin。
 
-`matched_rule_sections` 是从运行时 `combined_mapping_rules.md` 的 `### RULE:` 块中召回的候选规则文本。脚本根据来源目录写入 layer/source_file/match_type，先按 source_part_id、link_family、mapping_family、signal_shape 和适用条件确定性召回，再对未结构化规则做关键词补充；召回不做 pin 裁决。
+规则正文按 session 去重保存在 `rule_library`；TASK 的 `matched_rule_refs` 只保存 rule_key、match_type 和 matched_terms。脚本先做确定性召回，再用关键词补充；召回不做 pin 裁决，也不提供 pin 排名。
 
-启动 subagent 前应先读 `global_link_plan.md`、`subagent_session_plan.md` 和 `subagent_task_plan.md`，确认每个 source_device session 的源端器件、组内链路族、目标上下文、line 数量、小 TASK 顺序和 state 文件。不要因为 TASK 文件变多就为同一个源端器件启动多个互不共享状态的 subagent。
+启动 subagent 前只需读取 `subagent_session_plan.json` 和共享 prompt。global/task/Markdown 计划供人工检查或 finish 校验，不要求模型重复读取。
 
 任务 JSON/prompt 使用可读文件名，而不是裸 `CTX_xxx`：
 
@@ -469,7 +442,7 @@ selected_pins: ["PIN_P", "PIN_N"]
 
 ### script/infer_signal_shapes.py
 
-语义映射前的信号形态判断阶段。读取 `normalized_connections.jsonl`、`candidate_mappings.jsonl`、`pin_info.json` 和本地自然语言规则，输出：
+语义映射前的信号形态判断阶段。读取 `normalized_connections.jsonl`、`pin_info.json` 和本地自然语言规则，输出：
 
 ```text
 intermediate/signal_shape_inference.jsonl
@@ -504,10 +477,6 @@ intermediate/signal_shape_inference.jsonl
 6. 信息不足输出 unresolved。
 ```
 
-### prompts/context_group_subagent_instruction.md
-
-说明性 prompt，描述共享 `subagent_task_prompt.md` 的结构和 subagent 任务输入输出。真实任务以自动生成的 prompt 为准。
-
 ## 6. rules 目录
 
 ### rules/natural_language_mapping_rules_template.md
@@ -531,9 +500,9 @@ intermediate/signal_shape_inference.jsonl
 
 说明 context group 隔离原则，避免不同器件/链路语义互相污染。
 
-### rules/template_gate_rules.md
+### rules/model_routing_rules.md
 
-现为“预裁决 Gate 规则”。定义脚本预裁决边界和必须进入模型分析的情况。
+定义 pin_info 模型路由门禁和禁止脚本自动选择 pin 的约束。
 
 ### rules/global_mapping_rules.md
 
@@ -567,10 +536,6 @@ target_block_id/target_block_name/target_port
 connection_id/base_connection_id/connection_name/direction
 link_family_id/link_instance_id/link_contexts
 ```
-
-### schemas/candidate_mapping.schema.json
-
-候选 pin 结构，包含 `available_pins` 和 `candidates`。
 
 ### schemas/analysis_context_group.schema.json
 
@@ -617,7 +582,6 @@ task_dir/
 ├── intermediate/
 │   ├── normalized_connections.jsonl
 │   ├── analysis_context_groups.json
-│   ├── candidate_mappings.jsonl
 │   ├── pre_resolved_decisions.jsonl
 │   ├── needs_model_resolution.jsonl
 │   ├── subagent_output_check.json
@@ -682,7 +646,7 @@ rules/natural_language_mapping_rules_template.md
 ```text
 1. 输入解析。
 2. 数据结构补齐。
-3. 候选生成。
+3. pin_info 门禁。
 4. context group 隔离。
 5. 合并、校验、渲染。
 ```
@@ -696,16 +660,13 @@ rules/natural_language_mapping_rules_template.md
 ```mermaid
 flowchart TD
     A["输入 Excel / JSON / CSV"] --> B["normalize_connections"]
-    P["pin_info.json / csv / xlsx"] --> C["generate_candidates"]
-    B --> C
+    P["pin_info.json / csv / xlsx"] --> D["infer_signal_shapes"]
     R["默认规则 + project/user rules"] --> R2["combined_mapping_rules.md"]
-    B --> D["infer_signal_shapes"]
-    C --> D
-    P --> D
+    B --> D
     R2 --> D
     D --> E["build_analysis_context_groups"]
-    E --> F["pre_resolve_candidates"]
-    C --> F
+    E --> F["route_model_resolution"]
+    P --> F
     F --> G["build_model_resolution_tasks"]
     E --> G
     P --> G
@@ -728,7 +689,7 @@ flowchart TD
 | 工作流说明 | `workflows/` | 阶段顺序、context 隔离、单连接分析方式 | 与 `run_pipeline.py` 不一致的旧流程 |
 | 规则与 prompt | `rules/`, `prompts/` | 自然语言硬件规则、模型分析边界 | Python 脚本里的硬编码语义 |
 | 数据契约 | `schemas/` | JSON/JSONL 字段形状和最终 13 列 | 运行时临时状态 |
-| 脚本管线 | `script/` | 输入解析、候选、形态判断、任务构建、合并校验渲染 | 未经 pin_info 支持的模型猜测 |
+| 脚本管线 | `script/` | 输入解析、形态判断、pin_info 门禁、任务构建、合并校验渲染 | 未经 pin_info 支持的模型猜测 |
 
 ### 契约验证点
 
@@ -736,8 +697,8 @@ flowchart TD
 |--------|--------------|
 | `infer_signal_shapes` 使用合并规则 | `run_pipeline.py` 先生成 `intermediate/combined_mapping_rules.md`，再传给 `infer_signal_shapes.py` |
 | subagent 任务使用同一份规则 | `run_pipeline.py` 调用 `build_model_resolution_tasks(..., combined_mapping_rules.md)` |
-| pin catalog 加载口径一致 | `generate_candidates.py`、`infer_signal_shapes.py`、`build_model_resolution_tasks.py`、`validate_mapping.py` 都使用 `load_pin_catalog()` |
-| 缺少源端器件 pin 时不启动语义任务 | `pre_resolve_candidates.py` 保持 unresolved，`build_model_resolution_tasks.py` 记录 skipped task |
+| pin catalog 加载口径一致 | `route_model_resolution.py`、`infer_signal_shapes.py`、`build_model_resolution_tasks.py`、`validate_mapping.py` 都使用 `load_pin_catalog()` |
+| 缺少源端器件 pin 时不启动语义任务 | `route_model_resolution.py` 保持 unresolved，`build_model_resolution_tasks.py` 记录 skipped task |
 | 最终 sheet 结构不由模型决定 | `render_template_sheets.py` 以输入 workbook 为模板，连接 sheet 重建为标准 13 列 |
 
 ## 12. 已清理的旧结构
@@ -758,7 +719,7 @@ run_prepare.py / run_model_tasks.py / run_finish.py
 
 ```text
 script/run_pipeline.py
-script/pre_resolve_candidates.py
+script/route_model_resolution.py
 script/build_model_resolution_tasks.py
 prompts/semantic_mapping_resolver.md
 script/render_template_sheets.py

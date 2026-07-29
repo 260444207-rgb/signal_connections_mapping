@@ -11,9 +11,8 @@ from pathlib import Path
 from init_task import init_task
 from normalize_connections import normalize_connections
 from build_analysis_context_groups import build_analysis_context_groups
-from generate_candidates import generate_candidates
 from infer_signal_shapes import infer_signal_shapes
-from pre_resolve_candidates import pre_resolve_candidates
+from route_model_resolution import route_model_resolution
 from build_model_resolution_tasks import build_model_resolution_tasks
 from check_subagent_outputs import check_subagent_outputs
 from merge_decisions import merge_decisions
@@ -23,7 +22,6 @@ from render_template_sheets import render_template_sheets
 
 REQUIRED_PREPARE_FILES = [
     "normalized_connections.jsonl",
-    "candidate_mappings.jsonl",
     "signal_shape_inference.jsonl",
 ]
 
@@ -157,16 +155,10 @@ def run_prepare(task_dir: Path, connections: str, pins: str, project_rules: str 
     )
     infer_signal_shapes(
         intermediate / "normalized_connections.jsonl",
-        "",
         pins,
         intermediate / "normalized_connections.jsonl",
         intermediate / "signal_shape_inference.jsonl",
         rules_path,
-    )
-    generate_candidates(
-        intermediate / "normalized_connections.jsonl",
-        pins,
-        intermediate / "candidate_mappings.jsonl"
     )
     build_analysis_context_groups(
         intermediate / "normalized_connections.jsonl",
@@ -189,9 +181,9 @@ def run_apply(
 
     intermediate = task_dir / "intermediate"
 
-    pre_resolve_candidates(
+    route_model_resolution(
         intermediate / "normalized_connections.jsonl",
-        intermediate / "candidate_mappings.jsonl",
+        pins,
         intermediate / "pre_resolved_decisions.jsonl",
         intermediate / "needs_model_resolution.jsonl",
     )
@@ -207,7 +199,6 @@ def run_model_tasks(task_dir: Path, connections: str, pins: str, project_rules: 
     build_model_resolution_tasks(
         intermediate / "analysis_context_groups.json",
         intermediate / "normalized_connections.jsonl",
-        intermediate / "candidate_mappings.jsonl",
         intermediate / "needs_model_resolution.jsonl",
         intermediate / "model_resolution_tasks",
         pins,
@@ -237,7 +228,6 @@ def run_finish(
         build_model_resolution_tasks(
             intermediate / "analysis_context_groups.json",
             intermediate / "normalized_connections.jsonl",
-            intermediate / "candidate_mappings.jsonl",
             intermediate / "needs_model_resolution.jsonl",
             intermediate / "model_resolution_tasks",
             pins,

@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 import os
+import json
 from pathlib import Path
 
 
@@ -11,9 +12,20 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "script"))
 
 from build_model_resolution_tasks import extract_rule_blocks, match_rule_sections
+from check_subagent_outputs import check_subagent_outputs
 from generate_net_name import generate_net_name
 from render_template_sheets import final_net_name
 from infer_signal_shapes import iter_rule_sections, matching_rule_hint
+from route_model_resolution import route_model_resolution
+from build_model_resolution_tasks import (
+    PIN_GROUP_THRESHOLD,
+    build_diagram_link_context,
+    build_pin_allocation_context,
+    build_pin_group_catalog,
+    compact_normalized_connection,
+    pins_for_groups,
+    render_shared_prompt,
+)
 from run_pipeline import (
     append_rule_path,
     build_combined_rules,
@@ -224,6 +236,180 @@ class LayeredRuleRecallTests(unittest.TestCase):
         spi_rule = (ROOT / "rules" / "signal_rules" / "spi_bus.md").read_text(encoding="utf-8")
         self.assertIn("尚未使用的合法 SPI pin 顺序分配", spi_rule)
         self.assertNotIn("不能唯一映射到具体 pin，需要人工确认", spi_rule)
+
+    def test_model_routing_uses_pin_info_gate_without_pin_candidates(self) -> None:
+        normalized = self.task_dir / "normalized.jsonl"
+        pins = self.task_dir / "pins.json"
+        decisions = self.task_dir / "decisions.jsonl"
+        needs_model = self.task_dir / "needs_model.jsonl"
+        rows = [
+            {"line_id": "L1", "source_part_id": "1", "signal_shape": "scalar"},
+            {"line_id": "L2", "source_part_id": "MISSING", "signal_shape": "scalar"},
+        ]
+        normalized.write_text(
+            "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
+            encoding="utf-8",
+        )
+        pins.write_text(
+            json.dumps({"001": ["PIN_A"]}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        route_model_resolution(normalized, pins, decisions, needs_model)
+
+        routed = [
+            json.loads(line)
+            for line in needs_model.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        routed_decisions = [
+            json.loads(line)
+            for line in decisions.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(["L1"], [row["line_id"] for row in routed])
+        self.assertEqual(2, len(routed_decisions))
+        self.assertTrue(all(row["selected_pin"] == "" for row in routed_decisions))
+
+    def test_subagent_payload_helpers_do_not_emit_pin_candidates(self) -> None:
+        row = {
+            "line_id": "L1",
+            "source_sheet_name": "DEV0",
+            "source_part_id": "001",
+            "source_block_id": "B1",
+            "source_block_name": "DEV",
+            "source_port": "CTRL",
+            "target_block_name": "LOAD",
+            "target_port": "EN",
+            "connection_id": "C1",
+            "connection_name": "CTRL_NET",
+            "signal_shape_info": {"shape": "scalar"},
+        }
+        payload = build_pin_allocation_context([row])
+        serialized = json.dumps(payload, ensure_ascii=False)
+        self.assertNotIn("candidate", serialized.lower())
+        self.assertNotIn("rough_pin_search_hints", serialized)
+        self.assertNotIn("line_pin_domains", serialized)
+        self.assertNotIn("candidate_mappings", render_shared_prompt())
+        self.assertNotIn("网络命名依据", render_shared_prompt())
+
+    def test_task_context_uses_one_canonical_per_line_record(self) -> None:
+        row = {
+            "line_id": "L1",
+            "base_line_id": "L1",
+            "source_sheet_name": "DEV0",
+            "output_sheet_name": "DEV0",
+            "source_part_id": "001",
+            "source_block_id": "B1",
+            "source_block_name": "DEV",
+            "source_port": "CTRL",
+            "raw_source_port": "CTRL",
+            "target_block_id": "B2",
+            "target_block_name": "LOAD",
+            "target_port": "EN",
+            "raw_target_port": "EN",
+            "connection_id": "C1",
+            "base_connection_id": "C1",
+            "connection_name": "CTRL_NET",
+            "direction": "OUTPUT",
+            "signal_shape_info": {
+                "shape": "scalar",
+                "expected_physical_pin_count": 1,
+                "parent_line_id": "L1",
+                "member_index": 1,
+                "member_count": 1,
+                "is_expanded_member": False,
+                "confidence": "auto_high",
+                "needs_model_shape_review": False,
+                "evidence": {"source_pins_available": True},
+            },
+        }
+        compact = compact_normalized_connection(row)
+        self.assertNotIn("base_line_id", compact)
+        self.assertNotIn("output_sheet_name", compact)
+        self.assertNotIn("raw_source_port", compact)
+        self.assertNotIn("raw_target_port", compact)
+        self.assertEqual(
+            {"shape": "scalar", "expected_physical_pin_count": 1},
+            compact["signal_shape_info"],
+        )
+
+        diagram = build_diagram_link_context(
+            {
+                "link_family_ids": ["CONTROL"],
+                "link_family_sources": ["explicit_link_info"],
+            },
+            [row],
+        )
+        self.assertNotIn("line_link_contexts", diagram)
+
+    def test_finish_checker_accepts_minimal_task_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output_file = root / "outputs" / "TASK_01.jsonl"
+            output_file.parent.mkdir()
+            output_file.write_text(
+                json.dumps(
+                    {
+                        "line_id": "L1",
+                        "selected_pin": "",
+                        "decision_type": "unresolved",
+                        "confidence": "Low",
+                        "analysis": "insufficient information",
+                        "net_name": "",
+                        "needs_human_review": True,
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            plan = root / "model_resolution_tasks" / "subagent_task_plan.json"
+            plan.parent.mkdir()
+            plan.write_text(
+                json.dumps(
+                    {
+                        "tasks": [
+                            {
+                                "task_id": "TASK_01",
+                                "line_ids": ["L1"],
+                                "output_file": str(output_file),
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            report = check_subagent_outputs(
+                plan,
+                root / "model_resolved_decisions.jsonl",
+                root / "subagent_output_check.json",
+                root / "failed_subagent_rerun_plan.md",
+            )
+            self.assertEqual("PASS", report["status"])
+
+    def test_large_pin_group_catalog_is_lossless_multilabel_and_unranked(self) -> None:
+        pins = ["RFIN0_P", "RFIN0_N", "SPI1_CLK", "VDD_1V8", "SPECIAL_X"]
+        catalog = build_pin_group_catalog("PART_A", pins)
+
+        self.assertEqual(PIN_GROUP_THRESHOLD, catalog["grouping_threshold"])
+        self.assertTrue(catalog["lossless"])
+        self.assertTrue(catalog["multi_label"])
+        self.assertFalse(catalog["ranked"])
+        self.assertEqual(pins, catalog["all_pins"])
+        self.assertIn("RFIN0_P", catalog["groups"]["ANALOG_RF"])
+        self.assertIn("RFIN0_P", catalog["groups"]["DIFFERENTIAL"])
+        self.assertEqual(["SPECIAL_X"], catalog["groups"]["UNCLASSIFIED"])
+
+        grouped_pins = {
+            pin
+            for group_pins in catalog["groups"].values()
+            for pin in group_pins
+        }
+        self.assertEqual(set(pins), grouped_pins)
+        self.assertEqual(
+            ["RFIN0_P", "RFIN0_N"],
+            pins_for_groups(catalog, ["DIFFERENTIAL"]),
+        )
 
 
     def test_net_name_uses_meaningful_port_over_placeholder(self) -> None:
