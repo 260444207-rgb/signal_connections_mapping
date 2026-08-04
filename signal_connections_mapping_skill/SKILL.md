@@ -88,11 +88,15 @@ Markdown 计划、task plan 和 global plan 仅用于人工检查或 finish 校�
 
 每个 session 对应一个源端器件 pin 体系：
 
-1. 同一 session 的 TASK 由同一个 subagent 顺序处理。
-2. session 开始时读取一次 `session_context_file`，其中包含共享链路 profile、规则正文和跨 TASK pin 共享关系。
-3. 每个 TASK 开始前读取最新 `pin_allocation_state_file`。
-4. 只处理 `output_contract.expected_line_ids`。
-5. 写入 `output_contract.output_file` 后更新 state，再处理下一 TASK。
+1. 必须使用 `sessions_spawn` 命令真实启动模型 subagent 分析每个 session / TASK；不得由主控、脚本或其他命令替代模型语义分析，也不得用脚本跳过 subagent。
+2. 启动或等待每个 subagent 时，超时时间必须设置为 30 分钟（1800000 ms）。超时表示该 session 未完成，不能进入 finish。
+3. subagent 不得编写 Python / PowerShell / JavaScript 等脚本来分析 TASK、匹配 pin 或生成 mapping_decision；语义判断必须由模型完成。
+4. subagent 只允许使用工具读取输入、写入 `output_contract.output_file` 和更新 state，或做 JSONL 格式/覆盖校验；这些工具操作不得替代 pin 语义裁决。
+5. 同一 session 的 TASK 由同一个 subagent 顺序处理。
+6. session 开始时读取一次 `session_context_file`，其中包含共享链路 profile、规则正文和跨 TASK pin 共享关系。
+7. 每个 TASK 开始前读取最新 `pin_allocation_state_file`。
+8. 只处理 `output_contract.expected_line_ids`。
+9. 写入 `output_contract.output_file` 后更新 state，再处理下一 TASK。
 
 同料号的多个物理实例可以共享器件 pin 功能理解，但 pin 占用按 `physical_device_instance_id` 隔离。后续实例和 TASK 可以参考前面分析方法及 state，不得直接复制不匹配的 line_id 结论。
 

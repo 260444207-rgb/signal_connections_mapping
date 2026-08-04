@@ -76,7 +76,9 @@ pin_allocation_state_file
 
 ## 5. 执行 session
 
-每个 session 启动一个隔离 subagent；一次最多并行 2 个不同 session。
+每个 session 必须使用 `sessions_spawn` 命令启动一个隔离模型 subagent；一次最多并行 2 个不同 session。启动或等待 subagent 时，超时时间必须设置为 30 分钟（1800000 ms）。超时表示该 session 未完成，不能进入 finish。
+
+不得用主控脚本、Python、PowerShell、JavaScript 或其他程序读取 TASK 后自动分析 pin、匹配 pin、生成 mapping_decision，或跳过 `sessions_spawn`。subagent 的语义裁决必须由模型完成；工具只允许用于读取输入、写入 JSONL/state，以及做格式、覆盖关系和 pin 合法性校验。
 
 同一 session 内：
 

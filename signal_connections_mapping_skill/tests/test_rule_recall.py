@@ -293,6 +293,15 @@ class LayeredRuleRecallTests(unittest.TestCase):
         self.assertNotIn("candidate_mappings", render_shared_prompt())
         self.assertNotIn("网络命名依据", render_shared_prompt())
 
+    def test_shared_prompt_requires_model_subagent_with_30_minute_timeout(self) -> None:
+        prompt = render_shared_prompt()
+        self.assertIn("模型 subagent", prompt)
+        self.assertIn("sessions_spawn", prompt)
+        self.assertIn("30 分钟", prompt)
+        self.assertIn("1800000 ms", prompt)
+        self.assertIn("禁止编写 Python / PowerShell / JavaScript 等脚本", prompt)
+        self.assertIn("selected_pin 的语义裁决必须由模型完成", prompt)
+
     def test_task_context_uses_one_canonical_per_line_record(self) -> None:
         row = {
             "line_id": "L1",

@@ -2,6 +2,8 @@
 
 本文件是语义 subagent 的唯一裁决规则。生成的 `subagent_task_prompt.md` 只说明文件路径和执行顺序，不重复本规则。
 
+必须由 `sessions_spawn` 启动的模型 subagent 完成每个 TASK 的语义裁决。不得编写脚本自动分析 TASK、匹配 pin、生成 mapping_decision，或跳过 `sessions_spawn`；脚本/工具只可用于读取输入、写入 JSONL/state，以及校验格式、覆盖关系和 pin 合法性。
+
 ## 输入
 
 每个 `TASK_xxx.json` 只包含当前小批次：

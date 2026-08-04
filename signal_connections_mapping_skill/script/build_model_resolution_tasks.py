@@ -1356,6 +1356,8 @@ def render_shared_prompt() -> str:
         "# Subagent Model Resolution Task Prompt",
         "",
         "同一个 subagent 按 session_plan 顺序处理所属 TASK；每个 TASK 只裁决 output_contract.expected_line_ids。",
+        "必须使用 sessions_spawn 命令真实启动模型 subagent 分析本 session / TASK；启动或等待超时时间必须设置为 30 分钟（1800000 ms），超时则不能进入 finish。",
+        "禁止编写 Python / PowerShell / JavaScript 等脚本来分析 TASK、匹配 pin、生成 mapping_decision 或跳过 sessions_spawn；selected_pin 的语义裁决必须由模型完成。工具只可用于读取输入、写 JSONL/state、做格式和覆盖校验。",
         f"语义规则只读取一次：{semantic_prompt}",
         "",
         "每个 TASK 的执行顺序：",
