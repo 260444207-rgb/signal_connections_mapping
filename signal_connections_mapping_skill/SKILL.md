@@ -3,7 +3,7 @@ name: diagram-logical-connection-mapping
 description: 基于框图 Excel、pin_info 和自然语言硬件规则生成标准 13 列信号接口列表。用于从框图逻辑连接推导源端原理图 pin、处理差分/总线展开、跨相同器件实例复用分析经验，并输出经过校验的正式 Excel。
 ---
 
-# Signal Interface Mapping
+# diagram-logical-connection-mapping
 
 ## 完成标准
 
@@ -18,7 +18,7 @@ model_tasks
   -> validation_report.json 为 PASS
 ```
 
-`stage=all` 只运行脚本，不会调用语义 subagent；存在大量 unresolved 时不得宣称完成。
+`finish` 不是任务生成入口。新任务必须先运行 `model_tasks`，再执行并等待全部 subagent session；输出文件未齐全时禁止调用 `finish`。`stage=all` 只用于脚本冒烟验证。
 
 完整命令和故障处理见 [RUNBOOK.md](RUNBOOK.md)。只有需要维护内部结构时才阅读 [STRUCTURE.md](STRUCTURE.md)。
 
@@ -81,6 +81,7 @@ output/signal_interface_YYYYMMDD_HHMMSS.xlsx
 
 ```text
 intermediate/model_resolution_tasks/subagent_session_plan.json
+intermediate/model_resolution_tasks/subagent_session_status.json
 intermediate/model_resolution_tasks/subagent_task_prompt.md
 ```
 
@@ -97,6 +98,8 @@ Markdown 计划、task plan 和 global plan 仅用于人工检查或 finish 校�
 7. 每个 TASK 开始前读取最新 `pin_allocation_state_file`。
 8. 只处理 `output_contract.expected_line_ids`。
 9. 写入 `output_contract.output_file` 后更新 state，再处理下一 TASK。
+
+主控必须维护 `subagent_session_status.json`。每个 session 只有同时满足 `spawned=true`、`completed=true`、`failed=false`、`timed_out=false`、`rerun_required=false`，且 `completed_task_ids` 覆盖该 session 全部 TASK，才允许进入 `finish`。失败或超时后必须按 `failed_subagent_rerun_plan.md` 用 `sessions_spawn` 重跑/等待完成，并更新状态文件；不得只因为 output_file 存在就 finish。
 
 同料号的多个物理实例可以共享器件 pin 功能理解，但 pin 占用按 `physical_device_instance_id` 隔离。后续实例和 TASK 可以参考前面分析方法及 state，不得直接复制不匹配的 line_id 结论。
 
@@ -157,7 +160,7 @@ custom/user > link > device > signal > global > lexical fallback
 生成模型任务：
 
 ```bash
-python script/run_pipeline.py \
+python scripts/run_pipeline.py \
   --task-dir data/{uuid} \
   --connections input_block_diagram.xlsx \
   --pins pin_info.json \
@@ -167,7 +170,7 @@ python script/run_pipeline.py \
 subagent 完成全部 TASK 后：
 
 ```bash
-python script/run_pipeline.py \
+python scripts/run_pipeline.py \
   --task-dir data/{uuid} \
   --connections input_block_diagram.xlsx \
   --template-excel input_block_diagram.xlsx \
@@ -176,4 +179,4 @@ python script/run_pipeline.py \
   --stage finish
 ```
 
-`finish` 会检查 JSONL 格式、line 覆盖、重复/额外 line、pin 合法性、合并结果和最终 workbook。失败项按 `failed_subagent_rerun_plan.md` 重跑，不得绕过。
+`finish` 会先检查 `subagent_session_status.json` 的 sessions_spawn 完成状态，再检查 JSONL 格式、line 覆盖、重复/额外 line、pin 合法性、合并结果和最终 workbook。失败项按 `failed_subagent_rerun_plan.md` 重跑，不得绕过。

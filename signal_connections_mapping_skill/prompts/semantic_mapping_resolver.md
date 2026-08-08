@@ -4,6 +4,8 @@
 
 必须由 `sessions_spawn` 启动的模型 subagent 完成每个 TASK 的语义裁决。不得编写脚本自动分析 TASK、匹配 pin、生成 mapping_decision，或跳过 `sessions_spawn`；脚本/工具只可用于读取输入、写入 JSONL/state，以及校验格式、覆盖关系和 pin 合法性。
 
+主控必须等待 `sessions_spawn` 的真实终态。失败、超时或正在重跑时不得进入 finish；完成后必须更新 `subagent_session_status.json`，使对应 session 满足 `spawned=true`、`completed=true`、`failed=false`、`timed_out=false`、`rerun_required=false`，且 `completed_task_ids` 覆盖本 session 全部 TASK。
+
 ## 输入
 
 每个 `TASK_xxx.json` 只包含当前小批次：

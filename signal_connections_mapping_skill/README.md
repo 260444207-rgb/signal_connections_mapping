@@ -173,11 +173,12 @@ intermediate/model_resolution_tasks/global_link_plan.md
 intermediate/model_resolution_tasks/global_link_plan.json
 intermediate/model_resolution_tasks/subagent_session_plan.md
 intermediate/model_resolution_tasks/subagent_session_plan.json
+intermediate/model_resolution_tasks/subagent_session_status.json
 intermediate/model_resolution_tasks/subagent_task_plan.md
 intermediate/model_resolution_tasks/subagent_task_plan.json
 ```
 
-模型只需读取 `subagent_session_plan.json` 和共享 prompt。其他计划文件供人工检查或 finish 校验，不要求重复载入。小 TASK 先按物理实例、再按链路/信号语义、最后按数量上限切分；同一 session 的 TASK 由同一 subagent 顺序处理。每个 TASK 前读取最新 `pin_allocation_state_file`，不再嵌入生成时即过期的 state snapshot。
+模型只需读取 `subagent_session_plan.json`、`subagent_session_status.json` 和共享 prompt。其他计划文件供人工检查或 finish 校验，不要求重复载入。小 TASK 先按物理实例、再按链路/信号语义、最后按数量上限切分；同一 session 的 TASK 由同一 subagent 顺序处理。每个 TASK 前读取最新 `pin_allocation_state_file`，不再嵌入生成时即过期的 state snapshot。主控必须在 sessions_spawn 启动/等待/失败重跑后维护 status；未完成、失败、超时或待重跑的 session 会阻止 finish。
 
 ## 输出约束
 
@@ -228,15 +229,16 @@ output/signal_interface_YYYYMMDD_HHMMSS.xlsx
 2. 检查 intermediate/signal_shape_inference.jsonl，确认 bus/differential 的前置判断是否合理。
 3. 只读取 subagent_session_plan.json 和 subagent_task_prompt.md，按 source_device session 规划 subagent 批次。
 4. 每个 subagent 先读取一次 session_context_file，再顺序处理 TASK；每个 TASK 前读取最新 state，写入 output_file 后更新 state。
-5. 运行 finish；主控流程会先检查所有 subagent output_file，失败则生成 failed_subagent_rerun_plan.md 并中止。
-6. 检查通过后自动合并为 intermediate/model_resolved_decisions.jsonl，并输出 output/signal_interface_YYYYMMDD_HHMMSS.xlsx。
-7. 检查 validation_report.json 和 unresolved 列表。
+5. 主控更新 subagent_session_status.json；只有所有 session 都 spawned/completed、无 failed/timed_out/rerun_required，且 completed_task_ids 覆盖全部 TASK，才运行 finish。
+6. 运行 finish；主控流程会先检查 session 状态和所有 subagent output_file，失败则生成 failed_subagent_rerun_plan.md 并中止。
+7. 检查通过后自动合并为 intermediate/model_resolved_decisions.jsonl，并输出 output/signal_interface_YYYYMMDD_HHMMSS.xlsx。
+8. 检查 validation_report.json 和 unresolved 列表。
 ```
 
 准备中间数据：
 
 ```bash
-python script/run_pipeline.py \
+python scripts/run_pipeline.py \
   --task-dir data/{uuid} \
   --connections input_block_diagram.xlsx \
   --pins pin_info.json \
@@ -246,7 +248,7 @@ python script/run_pipeline.py \
 导出模型任务包：
 
 ```bash
-python script/run_pipeline.py \
+python scripts/run_pipeline.py \
   --task-dir data/{uuid} \
   --connections input_block_diagram.xlsx \
   --pins pin_info.json \
@@ -268,7 +270,7 @@ data/{uuid}/signal_interface/intermediate/model_resolved_decisions.jsonl
 完成渲染：
 
 ```bash
-python script/run_pipeline.py \
+python scripts/run_pipeline.py \
   --task-dir data/{uuid} \
   --connections input_block_diagram.xlsx \
   --template-excel input_block_diagram.xlsx \
@@ -280,7 +282,7 @@ python script/run_pipeline.py \
 单次脚本冒烟验证：
 
 ```bash
-python script/run_pipeline.py \
+python scripts/run_pipeline.py \
   --task-dir data/{uuid} \
   --connections input_block_diagram.xlsx \
   --template-excel input_block_diagram.xlsx \

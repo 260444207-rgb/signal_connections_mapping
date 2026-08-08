@@ -1,4 +1,4 @@
-# Signal Interface Mapping Runbook
+# diagram logical connection mapping Runbook
 
 ## 1. 目标
 
@@ -39,7 +39,7 @@ pin_info.json
 ## 3. 生成任务
 
 ```bash
-python script/run_pipeline.py \
+python scripts/run_pipeline.py \
   --task-dir <task_root> \
   --connections <connections.xlsx> \
   --pins <pin_info.json> \
@@ -60,6 +60,7 @@ python script/run_pipeline.py \
 
 ```text
 intermediate/model_resolution_tasks/subagent_session_plan.json
+intermediate/model_resolution_tasks/subagent_session_status.json
 intermediate/model_resolution_tasks/subagent_task_prompt.md
 ```
 
@@ -79,6 +80,8 @@ pin_allocation_state_file
 每个 session 必须使用 `sessions_spawn` 命令启动一个隔离模型 subagent；一次最多并行 2 个不同 session。启动或等待 subagent 时，超时时间必须设置为 30 分钟（1800000 ms）。超时表示该 session 未完成，不能进入 finish。
 
 不得用主控脚本、Python、PowerShell、JavaScript 或其他程序读取 TASK 后自动分析 pin、匹配 pin、生成 mapping_decision，或跳过 `sessions_spawn`。subagent 的语义裁决必须由模型完成；工具只允许用于读取输入、写入 JSONL/state，以及做格式、覆盖关系和 pin 合法性校验。
+
+主控必须维护 `subagent_session_status.json`：启动 session 后标记 `spawned=true`；全部 TASK 完成且等待结果确认后标记 `completed=true`、`failed=false`、`timed_out=false`、`rerun_required=false`，并让 `completed_task_ids` 覆盖该 session 全部 TASK。失败、超时或需要重跑时不得进入 finish；必须按 `failed_subagent_rerun_plan.md` 用 `sessions_spawn` 重跑/等待完成后再更新状态。
 
 同一 session 内：
 
@@ -161,7 +164,7 @@ net_name
 全部 TASK 完成后：
 
 ```bash
-python script/run_pipeline.py \
+python scripts/run_pipeline.py \
   --task-dir <task_root> \
   --connections <connections.xlsx> \
   --template-excel <connections.xlsx> \
@@ -172,11 +175,12 @@ python script/run_pipeline.py \
 
 `finish` 会：
 
-1. 使用 `subagent_task_plan.json` 检查每个 output file。
-2. 校验 JSONL、line_id/parent_line_id 覆盖、重复和额外行。
-3. 合并到 `model_resolved_decisions.jsonl`。
-4. 针对原始完整 pin_info 运行 `validate_mapping`。
-5. 生成正式 Excel。
+1. 使用 `subagent_session_status.json` 检查每个 sessions_spawn session 是否已完成、无失败、无超时、无待重跑。
+2. 使用 `subagent_task_plan.json` 检查每个 output file。
+3. 校验 JSONL、line_id/parent_line_id 覆盖、重复和额外行。
+4. 合并到 `model_resolved_decisions.jsonl`。
+5. 针对原始完整 pin_info 运行 `validate_mapping`。
+6. 生成正式 Excel。
 
 检查：
 

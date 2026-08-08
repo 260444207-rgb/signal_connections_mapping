@@ -45,7 +45,7 @@ signal_connections_mapping/
 ├── RUNBOOK.md
 ├── STRUCTURE.md
 ├── .gitignore
-├── script/
+├── scripts/
 ├── prompts/
 ├── rules/
 ├── schemas/
@@ -91,7 +91,7 @@ Codex 调用该 skill 时最先读取的入口说明。它描述：
 主入口脚本：
 
 ```text
-script/run_pipeline.py
+scripts/run_pipeline.py
 ```
 
 流程：
@@ -132,9 +132,9 @@ all:         只走脚本路径，不会自动调用真实 subagent；只适合�
 
 正式语义输出必须按 `RUNBOOK.md` 执行，不得停在 `stage=all`。
 
-## 4. script 目录
+## 4. scripts 目录
 
-### script/common.py
+### scripts/common.py
 
 公共工具：
 
@@ -157,7 +157,7 @@ all:         只走脚本路径，不会自动调用真实 subagent；只适合�
 
 脚本直接使用 `{器件料号: [pin名...]}`，不转换为 `{device_part_id, pin}` 对象列表。
 
-### script/init_task.py
+### scripts/init_task.py
 
 创建任务目录：
 
@@ -169,7 +169,7 @@ task_root/
 
 `output/` 只在 `finish` / render 阶段真正写出 Excel 时按需创建；所有本 skill 产物都收拢在 `signal_interface/` 下，不再初始化空的 `logs/`、`rules/` 等目录。
 
-### script/normalize_connections.py
+### scripts/normalize_connections.py
 
 把输入框图表标准化为 `intermediate/normalized_connections.jsonl`。
 
@@ -202,7 +202,7 @@ task_root/
 5. 同一个 sheet 可以出现在多条链路中，例如 HBF 同时属于 TX/RX 链路。
 ```
 
-### script/build_analysis_context_groups.py
+### scripts/build_analysis_context_groups.py
 
 生成 `intermediate/analysis_context_groups.json`。
 
@@ -239,13 +239,13 @@ fallback_device_context: 无显式链路族和明确映射族，按器件上下�
 
 链路级数据、信号族和目标上下文不再用于重新起 subagent；它们只帮助同一个源端器件 subagent 判断每条连接的作用。
 
-### script/route_model_resolution.py
+### scripts/route_model_resolution.py
 
 按 `source_part_id` 读取 `pin_info.json`，只执行模型路由门禁，不生成候选 pin，也不自动预裁决。
 
 有非空源端 pin 列表的连接全部进入 `needs_model_resolution.jsonl`。缺 pin 的连接直接保持 unresolved，不生成语义 TASK。
 
-### script/build_model_resolution_tasks.py
+### scripts/build_model_resolution_tasks.py
 
 根据 `analysis_context_groups.json` 和 `needs_model_resolution.jsonl` 生成隔离 subagent 任务包：
 
@@ -256,6 +256,7 @@ intermediate/model_resolution_tasks/
 ├── global_link_plan.json
 ├── subagent_session_plan.md
 ├── subagent_session_plan.json
+├── subagent_session_status.json
 ├── subagent_task_plan.md
 ├── subagent_task_plan.json
 ├── subagent_task_prompt.md
@@ -296,6 +297,8 @@ previous_task_outputs
 ```
 
 subagent 必须按同一 session 顺序处理 TASK。session 开始时读取一次 `session_context_file`；每个 TASK 前读取最新 `pin_allocation_state_file`，不嵌入生成时即过期的 snapshot。处理后按 `physical_device_instance_id` 写回已用 pin、允许复用 pin、冲突和 completed_task_ids。
+
+`subagent_session_status.json` 是 `finish` 的真实会话门禁。主控必须在 `sessions_spawn` 启动、等待、失败重跑后维护它；每个 session 只有 `spawned=true`、`completed=true`、`failed=false`、`timed_out=false`、`rerun_required=false`，且 `completed_task_ids` 覆盖全部 TASK，才允许合并。
 
 `diagram_link_context` 是从输入框图表/link_info/链路信息 sheet 和逐行连接事实整理出的链路上下文，包含：
 
@@ -366,7 +369,7 @@ TASK_02_SROC_302078562_MULTI_LINK_61889c68782d.json
 TASK_03_TXVGA_47151290_RF_TX_CHAIN_98e63e8c1e3a.json
 ```
 
-### script/merge_decisions.py
+### scripts/merge_decisions.py
 
 合并多来源裁决：
 
@@ -378,7 +381,7 @@ TASK_03_TXVGA_47151290_RF_TX_CHAIN_98e63e8c1e3a.json
 
 后出现的文件可覆盖前面的同 line_id 结果。
 
-### script/check_subagent_outputs.py
+### scripts/check_subagent_outputs.py
 
 `finish` 前的主控门禁脚本。
 
@@ -395,7 +398,7 @@ TASK_03_TXVGA_47151290_RF_TX_CHAIN_98e63e8c1e3a.json
 
 失败的 subagent 必须按 `failed_subagent_rerun_plan.md` 重新启动分析，写入对应 output_file 后再运行 finish。
 
-### script/validate_mapping.py
+### scripts/validate_mapping.py
 
 校验合并后的 `mapping_decisions.jsonl`。
 
@@ -413,7 +416,7 @@ TASK_03_TXVGA_47151290_RF_TX_CHAIN_98e63e8c1e3a.json
 9. 无 pin 时不得 High。
 ```
 
-### script/render_template_sheets.py
+### scripts/render_template_sheets.py
 
 正式 Excel 渲染脚本。
 
@@ -436,11 +439,11 @@ selected_pins: ["PIN_P", "PIN_N"]
 输出连线ID: 1868#1, 1868#2
 ```
 
-### script/render_outputs.py
+### scripts/render_outputs.py
 
 调试用平铺输出。正式信号接口列表应使用 `render_template_sheets.py`。
 
-### script/infer_signal_shapes.py
+### scripts/infer_signal_shapes.py
 
 语义映射前的信号形态判断阶段。读取 `normalized_connections.jsonl`、`pin_info.json` 和本地自然语言规则，输出：
 
@@ -454,11 +457,11 @@ intermediate/signal_shape_inference.jsonl
 
 运行时规则合并文件。由入口模板、`global_mapping_rules.md`、`link_family_guide.md`、`device_rules/*.md`、`link_rules/*.md`、`signal_rules/*.md`，再加可选 `--project-rules`、`--user-rules` 生成。`infer_signal_shapes.py` 和 `build_model_resolution_tasks.py` 都读取这份文件；规则内容变化时 prepare 产物会自动刷新。
 
-### script/generate_net_name.py
+### scripts/generate_net_name.py
 
 网络命名生成器。渲染阶段用于补齐或规范化网络命名。
 
-### script/run_pipeline.py
+### scripts/run_pipeline.py
 
 统一阶段调度入口。
 
@@ -689,7 +692,7 @@ flowchart TD
 | 工作流说明 | `workflows/` | 阶段顺序、context 隔离、单连接分析方式 | 与 `run_pipeline.py` 不一致的旧流程 |
 | 规则与 prompt | `rules/`, `prompts/` | 自然语言硬件规则、模型分析边界 | Python 脚本里的硬编码语义 |
 | 数据契约 | `schemas/` | JSON/JSONL 字段形状和最终 13 列 | 运行时临时状态 |
-| 脚本管线 | `script/` | 输入解析、形态判断、pin_info 门禁、任务构建、合并校验渲染 | 未经 pin_info 支持的模型猜测 |
+| 脚本管线 | `scripts/` | 输入解析、形态判断、pin_info 门禁、任务构建、合并校验渲染 | 未经 pin_info 支持的模型猜测 |
 
 ### 契约验证点
 
@@ -718,9 +721,9 @@ run_prepare.py / run_model_tasks.py / run_finish.py
 对应能力已经收敛到：
 
 ```text
-script/run_pipeline.py
-script/route_model_resolution.py
-script/build_model_resolution_tasks.py
+scripts/run_pipeline.py
+scripts/route_model_resolution.py
+scripts/build_model_resolution_tasks.py
 prompts/semantic_mapping_resolver.md
-script/render_template_sheets.py
+scripts/render_template_sheets.py
 ```

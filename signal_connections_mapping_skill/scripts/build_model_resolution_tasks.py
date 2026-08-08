@@ -1368,12 +1368,64 @@ def render_shared_prompt() -> str:
         "5. selected_pin 必须逐字来自 source_device_pins；大 pin 表找不到时读取 pin_catalog_context.group_file 的其他 groups 或 all_pins。",
         "6. 把 JSONL 写入 output_contract.output_file，并校验 expected_line_ids 覆盖关系。",
         "7. 更新 pin_allocation_state_file 中对应 physical_device_instance_id 的 used_pins、共享组、冲突和 completed_task_ids。",
+        "8. 完成本 session 全部 TASK 后，主控必须把 subagent_session_status.json 中对应 session 标记为 completed=true、failed=false、timed_out=false；失败/超时重跑完成前禁止 finish。",
         "",
         "模型不负责网络命名：为兼容 schema，net_name 固定输出空字符串，net_names 固定输出空数组；最终渲染脚本统一生成网络名和命名依据。",
         "聊天回复只报告 status、output_file、decision_count 和 state 是否更新，不要粘贴完整结果。",
         "",
     ]
     return "\n".join(lines)
+
+
+def build_session_status(sessions: List[Dict[str, Any]], existing_status: Dict[str, Any] | None = None) -> Dict[str, Any]:
+    existing_by_id: Dict[str, Dict[str, Any]] = {}
+    if isinstance(existing_status, dict):
+        for session in existing_status.get("sessions", []):
+            if isinstance(session, dict):
+                session_id = str(session.get("subagent_session_id", ""))
+                if session_id:
+                    existing_by_id[session_id] = session
+
+    status_sessions: List[Dict[str, Any]] = []
+    for session in sessions:
+        session_id = str(session.get("subagent_session_id", ""))
+        task_ids = [str(task.get("task_id", "")) for task in session.get("tasks", [])]
+        output_files = [str(task.get("output_file", "")) for task in session.get("tasks", [])]
+        previous = existing_by_id.get(session_id, {})
+        previous_task_ids = [str(x) for x in previous.get("expected_task_ids", [])]
+        task_set_changed = bool(previous) and previous_task_ids != task_ids
+
+        status_sessions.append({
+            "subagent_session_id": session_id,
+            "source_device_signature": session.get("source_device_signature", ""),
+            "readable_device_type": session.get("readable_device_type", ""),
+            "source_part_id": session.get("source_part_id", ""),
+            "expected_task_ids": task_ids,
+            "output_files": output_files,
+            "sessions_spawn_required": True,
+            "spawned": bool(previous.get("spawned", False)) and not task_set_changed,
+            "completed": bool(previous.get("completed", False)) and not task_set_changed,
+            "failed": bool(previous.get("failed", False)) or task_set_changed,
+            "timed_out": bool(previous.get("timed_out", False)) and not task_set_changed,
+            "rerun_required": bool(previous.get("rerun_required", False)) or task_set_changed,
+            "completed_task_ids": [] if task_set_changed else previous.get("completed_task_ids", []),
+            "failed_task_ids": task_ids if task_set_changed else previous.get("failed_task_ids", []),
+            "sessions_spawn_thread_id": previous.get("sessions_spawn_thread_id", ""),
+            "last_checked_at": previous.get("last_checked_at", ""),
+            "notes": (
+                "TASK list changed after status was recorded; rerun this session before finish."
+                if task_set_changed
+                else previous.get("notes", "")
+            ),
+        })
+
+    return {
+        "status_file_contract": "Main controller updates this file after waiting for each sessions_spawn run. finish requires every session to be spawned and completed with no failed/timed_out/rerun_required flags.",
+        "execution_mode": "balanced_source_device_sessions",
+        "session_count": len(status_sessions),
+        "task_count": sum(len(session.get("expected_task_ids", [])) for session in status_sessions),
+        "sessions": status_sessions,
+    }
 
 
 def build_model_resolution_tasks(
@@ -1717,8 +1769,11 @@ def build_model_resolution_tasks(
     }
     session_plan_json = output_dir / "subagent_session_plan.json"
     session_plan_md = output_dir / "subagent_session_plan.md"
+    session_status_json = output_dir / "subagent_session_status.json"
     write_json(session_plan_json, session_plan)
     session_plan_md.write_text(render_subagent_session_plan(sessions), encoding="utf-8")
+    existing_status = read_json(session_status_json, None)
+    write_json(session_status_json, build_session_status(sessions, existing_status))
 
     subagent_plan = {
         "execution_mode": "balanced_source_device_sessions",
@@ -1728,6 +1783,7 @@ def build_model_resolution_tasks(
         "skipped_task_count": len(skipped_tasks),
         "skipped_line_count": sum(t["line_count"] for t in skipped_tasks),
         "subagent_session_plan_json": str(session_plan_json),
+        "subagent_session_status_json": str(session_status_json),
         "skipped_tasks": skipped_tasks,
         "tasks": plan_tasks,
     }
@@ -1747,6 +1803,7 @@ def build_model_resolution_tasks(
         "global_link_plan_md": str(global_link_plan_md),
         "subagent_session_plan_json": str(session_plan_json),
         "subagent_session_plan_md": str(session_plan_md),
+        "subagent_session_status_json": str(session_status_json),
         "subagent_task_plan_json": str(plan_json),
         "subagent_task_plan_md": str(plan_md),
         "subagent_task_prompt_md": str(shared_prompt_path),

@@ -105,11 +105,89 @@ def validate_task_output(task: Dict[str, Any], plan_path: Path) -> Dict[str, Any
     }
 
 
-def render_rerun_plan(failed_tasks: List[Dict[str, Any]]) -> str:
+def expected_session_status_file(plan: Dict[str, Any], plan_path: Path) -> Path:
+    status_file = plan.get("subagent_session_status_json")
+    if status_file:
+        return Path(status_file)
+    return plan_path.parent / "subagent_session_status.json"
+
+
+def validate_session_status(plan: Dict[str, Any], plan_path: Path) -> Dict[str, Any]:
+    status_file = expected_session_status_file(plan, plan_path)
+    expected_by_session: Dict[str, set[str]] = {}
+    for task in plan.get("tasks", []):
+        session_id = str(task.get("subagent_session_id", ""))
+        if not session_id:
+            continue
+        expected_by_session.setdefault(session_id, set()).add(str(task.get("task_id", "")))
+
+    if not expected_by_session:
+        return {"status": "PASS", "status_file": str(status_file), "sessions": []}
+
+    if not status_file.exists():
+        return {
+            "status": "FAIL",
+            "status_file": str(status_file),
+            "sessions": [],
+            "errors": [f"missing subagent session status file: {status_file}"],
+        }
+
+    status = read_json(status_file, {})
+    sessions = status.get("sessions", []) if isinstance(status, dict) else []
+    actual_by_session = {
+        str(session.get("subagent_session_id", "")): session
+        for session in sessions
+        if isinstance(session, dict)
+    }
+
+    session_reports: List[Dict[str, Any]] = []
+    errors: List[str] = []
+    for session_id, expected_task_ids in sorted(expected_by_session.items()):
+        session = actual_by_session.get(session_id)
+        if not session:
+            message = f"missing session status: {session_id}"
+            errors.append(message)
+            session_reports.append({"subagent_session_id": session_id, "status": "FAIL", "errors": [message]})
+            continue
+
+        session_errors: List[str] = []
+        completed_task_ids = {str(x) for x in session.get("completed_task_ids", [])}
+        missing_completed = sorted(expected_task_ids - completed_task_ids)
+        if not session.get("spawned", False):
+            session_errors.append("spawned is not true")
+        if not session.get("completed", False):
+            session_errors.append("completed is not true")
+        if session.get("failed", False):
+            session_errors.append("failed is true")
+        if session.get("timed_out", False):
+            session_errors.append("timed_out is true")
+        if session.get("rerun_required", False):
+            session_errors.append("rerun_required is true")
+        if missing_completed:
+            session_errors.append("completed_task_ids missing: " + ", ".join(missing_completed))
+        if session_errors:
+            errors.extend(f"{session_id}: {message}" for message in session_errors)
+        session_reports.append({
+            "subagent_session_id": session_id,
+            "status": "PASS" if not session_errors else "FAIL",
+            "expected_task_count": len(expected_task_ids),
+            "completed_task_count": len(completed_task_ids & expected_task_ids),
+            "errors": session_errors,
+        })
+
+    return {
+        "status": "PASS" if not errors else "FAIL",
+        "status_file": str(status_file),
+        "sessions": session_reports,
+        "errors": errors,
+    }
+
+
+def render_rerun_plan(failed_tasks: List[Dict[str, Any]], session_status_report: Dict[str, Any] | None = None) -> str:
     lines = [
         "# Failed Subagent Rerun Plan",
         "",
-        "这些 subagent 输出没有通过主控检查。必须重新启动这些 TASK 的语义分析，写入对应 output_file 后再运行 finish。",
+        "这些 subagent 输出或 session 状态没有通过主控检查。必须重新启动/等待对应 TASK 的语义分析，写入对应 output_file，并把 subagent_session_status.json 更新为完成后再运行 finish。",
         "",
         "| # | task | context_group | expected | actual | output_file | task_json | prompt | failure |",
         "|---|---|---|---:|---:|---|---|---|---|",
@@ -130,7 +208,14 @@ def render_rerun_plan(failed_tasks: List[Dict[str, Any]]) -> str:
             )
         )
     lines.append("")
-    lines.append("重启要求：每个失败 subagent 只读取自己的 task_json，并把 JSONL 写入 output_file；不要在聊天中粘贴结果代替写文件。")
+    if session_status_report and session_status_report.get("status") != "PASS":
+        lines.append("## Session 状态门禁失败")
+        lines.append("")
+        lines.append(f"- status_file: `{session_status_report.get('status_file', '')}`")
+        for error in session_status_report.get("errors", []):
+            lines.append(f"- {error}")
+        lines.append("")
+    lines.append("重启要求：每个失败 subagent 必须用 sessions_spawn 重新启动或等待完成，超时 30 分钟；只读取自己的 task_json，并把 JSONL 写入 output_file。完成后更新 subagent_session_status.json；不要在聊天中粘贴结果代替写文件。")
     return "\n".join(lines)
 
 
@@ -143,13 +228,16 @@ def check_subagent_outputs(
     plan_path = Path(plan_path)
     plan = read_json(plan_path, {"tasks": []})
     tasks = plan.get("tasks", [])
+    session_status_report = validate_session_status(plan, plan_path)
     task_reports = [validate_task_output(task, plan_path) for task in tasks]
     failed_tasks = [task for task in task_reports if task["status"] != "PASS"]
+    session_status_failed = session_status_report.get("status") != "PASS"
 
     report = {
-        "status": "PASS" if not failed_tasks else "FAIL",
+        "status": "PASS" if not failed_tasks and not session_status_failed else "FAIL",
         "task_count": len(task_reports),
         "failed_task_count": len(failed_tasks),
+        "session_status": session_status_report,
         "expected_line_count": sum(task.get("expected_line_count", 0) for task in task_reports),
         "actual_line_count": sum(task.get("actual_line_count", 0) for task in task_reports),
         "tasks": task_reports,
@@ -158,8 +246,8 @@ def check_subagent_outputs(
 
     rerun_plan_path = Path(rerun_plan_path)
     ensure_dir(rerun_plan_path.parent)
-    if failed_tasks:
-        rerun_plan_path.write_text(render_rerun_plan(failed_tasks), encoding="utf-8")
+    if failed_tasks or session_status_failed:
+        rerun_plan_path.write_text(render_rerun_plan(failed_tasks, session_status_report), encoding="utf-8")
         return report
     rerun_plan_path.write_text("# Failed Subagent Rerun Plan\n\nNo failed subagent tasks.\n", encoding="utf-8")
 

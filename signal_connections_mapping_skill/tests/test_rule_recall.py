@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "script"))
+sys.path.insert(0, str(ROOT / "scripts"))
 
 from build_model_resolution_tasks import extract_rule_blocks, match_rule_sections
 from check_subagent_outputs import check_subagent_outputs
@@ -395,6 +395,96 @@ class LayeredRuleRecallTests(unittest.TestCase):
                 root / "failed_subagent_rerun_plan.md",
             )
             self.assertEqual("PASS", report["status"])
+
+    def test_finish_checker_blocks_missing_session_status(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output_file = root / "outputs" / "TASK_01.jsonl"
+            output_file.parent.mkdir()
+            output_file.write_text(json.dumps({"line_id": "L1"}) + "\n", encoding="utf-8")
+            plan = root / "model_resolution_tasks" / "subagent_task_plan.json"
+            plan.parent.mkdir()
+            plan.write_text(
+                json.dumps(
+                    {
+                        "tasks": [
+                            {
+                                "task_id": "TASK_01",
+                                "subagent_session_id": "SESSION_A",
+                                "line_ids": ["L1"],
+                                "output_file": str(output_file),
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            report = check_subagent_outputs(
+                plan,
+                root / "model_resolved_decisions.jsonl",
+                root / "subagent_output_check.json",
+                root / "failed_subagent_rerun_plan.md",
+            )
+
+            self.assertEqual("FAIL", report["status"])
+            self.assertEqual("FAIL", report["session_status"]["status"])
+            self.assertIn("missing subagent session status file", report["session_status"]["errors"][0])
+
+    def test_finish_checker_requires_completed_session_status(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            output_file = root / "outputs" / "TASK_01.jsonl"
+            output_file.parent.mkdir()
+            output_file.write_text(json.dumps({"line_id": "L1"}) + "\n", encoding="utf-8")
+            plan_dir = root / "model_resolution_tasks"
+            plan_dir.mkdir()
+            status_file = plan_dir / "subagent_session_status.json"
+            plan = plan_dir / "subagent_task_plan.json"
+            plan.write_text(
+                json.dumps(
+                    {
+                        "subagent_session_status_json": str(status_file),
+                        "tasks": [
+                            {
+                                "task_id": "TASK_01",
+                                "subagent_session_id": "SESSION_A",
+                                "line_ids": ["L1"],
+                                "output_file": str(output_file),
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            status_file.write_text(
+                json.dumps(
+                    {
+                        "sessions": [
+                            {
+                                "subagent_session_id": "SESSION_A",
+                                "spawned": True,
+                                "completed": True,
+                                "failed": False,
+                                "timed_out": False,
+                                "rerun_required": False,
+                                "completed_task_ids": ["TASK_01"],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            report = check_subagent_outputs(
+                plan,
+                root / "model_resolved_decisions.jsonl",
+                root / "subagent_output_check.json",
+                root / "failed_subagent_rerun_plan.md",
+            )
+
+            self.assertEqual("PASS", report["status"])
+            self.assertEqual("PASS", report["session_status"]["status"])
 
     def test_large_pin_group_catalog_is_lossless_multilabel_and_unranked(self) -> None:
         pins = ["RFIN0_P", "RFIN0_N", "SPI1_CLK", "VDD_1V8", "SPECIAL_X"]

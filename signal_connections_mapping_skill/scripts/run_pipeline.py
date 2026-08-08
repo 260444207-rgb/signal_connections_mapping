@@ -204,6 +204,10 @@ def run_model_tasks(task_dir: Path, connections: str, pins: str, project_rules: 
         pins,
         intermediate / "combined_mapping_rules.md",
     )
+    print(
+        "[NEXT] Execute every session in model_resolution_tasks/subagent_session_plan.json "
+        "and write all TASK output files before running stage=finish."
+    )
 
 def run_finish(
     task_dir: Path,
@@ -220,6 +224,12 @@ def run_finish(
     run_apply(task_dir, connections, pins, project_rules, user_rules)
 
     if jsonl_has_rows(intermediate / "needs_model_resolution.jsonl"):
+        task_plan = intermediate / "model_resolution_tasks" / "subagent_task_plan.json"
+        if not task_plan.exists():
+            raise RuntimeError(
+                "Pipeline order error: model task plan is missing. Run stage=model_tasks, "
+                "execute every subagent session, and only then run stage=finish."
+            )
         build_analysis_context_groups(
             intermediate / "normalized_connections.jsonl",
             intermediate / "analysis_context_groups.json",
@@ -241,8 +251,12 @@ def run_finish(
         )
         if subagent_report.get("status") != "PASS":
             raise RuntimeError(
-                "Subagent output check failed; restart failed subagents listed in "
-                f"{intermediate / 'failed_subagent_rerun_plan.md'} before running finish."
+                "Finish blocked: "
+                f"{subagent_report.get('failed_task_count', 0)}/"
+                f"{subagent_report.get('task_count', 0)} subagent outputs failed. "
+                "Session status must also show every sessions_spawn run as completed. "
+                "Restart or wait only the failed/incomplete tasks listed in "
+                f"{intermediate / 'failed_subagent_rerun_plan.md'}, then run finish again."
             )
 
     merge_decisions(
