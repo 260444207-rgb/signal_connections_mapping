@@ -24,6 +24,8 @@ model_tasks
 
 完整命令和故障处理见 [RUNBOOK.md](RUNBOOK.md)。只有需要维护内部结构时才阅读 [STRUCTURE.md](STRUCTURE.md)。
 
+执行任何 bundled Python 脚本前，必须先在同一终端切换到本 skill 根目录，再使用 `scripts/...` 相对路径运行。不得从 task、design 或 `intermediate` 目录直接执行脚本。`cd` 解决本地模块和相对资源查找；若仍报第三方包缺失，改用已安装依赖的 Python 解释器，并让后续阶段复用同一解释器，不得把缺包误判为路径问题。
+
 ## 输入与输出
 
 必需输入：
@@ -161,18 +163,16 @@ custom/user > link > device > signal > global > lexical fallback
 
 生成模型任务：
 
-```bash
-python scripts/run_pipeline.py \
-  --task-dir data/{uuid} \
-  --connections input_block_diagram.xlsx \
-  --pins pin_info.json \
-  --stage model_tasks
+```powershell
+Set-Location -LiteralPath '<signal_connections_mapping_skill>'
+python .\scripts\run_pipeline.py --task-dir 'data/{uuid}' --connections 'input_block_diagram.xlsx' --pins 'pin_info.json' --stage model_tasks
 ```
 
 subagent 完成全部 TASK 后：
 
-```bash
-python scripts/run_pipeline.py --task-dir data/{uuid}/signal_interface --stage finish
+```powershell
+Set-Location -LiteralPath '<signal_connections_mapping_skill>'
+python .\scripts\run_pipeline.py --task-dir 'data/{uuid}/signal_interface' --stage finish
 ```
 
 上面的命令仅示意；实际必须直接执行 `intermediate/finish_command.txt` 中生成的绝对路径命令。`finish` 从 `pipeline_run_config.json` 恢复全部输入，先检查 `subagent_session_status.json` 的 sessions_spawn 完成状态，再检查 JSONL 格式、line 覆盖、重复/额外 line、pin 合法性、合并结果和最终 workbook。`validation_report.json` 不是 PASS 时禁止渲染。失败项按 `failed_subagent_rerun_plan.md` 重跑，不得绕过。

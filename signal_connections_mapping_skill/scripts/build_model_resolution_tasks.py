@@ -1765,6 +1765,7 @@ def build_model_resolution_tasks(
         "execution_mode": "balanced_source_device_sessions",
         "finish_contract": {
             "required_entrypoint": "run_pipeline.py --stage finish",
+            "working_directory": str(Path(__file__).resolve().parents[1]),
             "command_file": str((output_dir.parent / "finish_command.txt").resolve()),
             "manual_merge_validate_render_forbidden": True,
         },

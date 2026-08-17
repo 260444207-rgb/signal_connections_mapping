@@ -560,6 +560,8 @@ class LayeredRuleRecallTests(unittest.TestCase):
         self.assertEqual(str(connections.resolve()), config["connections"])
         self.assertEqual(str(connections.resolve()), config["template_excel"])
         command = (self.task_dir / "intermediate" / FINISH_COMMAND_FILENAME).read_text(encoding="utf-8")
+        self.assertIn("Set-Location -LiteralPath", command)
+        self.assertIn("scripts\\run_pipeline.py", command)
         self.assertIn("--stage finish", command)
         self.assertNotIn("--normalized", command)
         self.assertNotIn("--decisions", command)

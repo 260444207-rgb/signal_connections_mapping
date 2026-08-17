@@ -38,12 +38,9 @@ pin_info.json
 
 ## 3. 生成任务
 
-```bash
-python scripts/run_pipeline.py \
-  --task-dir <task_root> \
-  --connections <connections.xlsx> \
-  --pins <pin_info.json> \
-  --stage model_tasks
+```powershell
+Set-Location -LiteralPath '<signal_connections_mapping_skill>'
+python .\scripts\run_pipeline.py --task-dir '<task_root>' --connections '<connections.xlsx>' --pins '<pin_info.json>' --stage model_tasks
 ```
 
 实际工作目录会规范为：
@@ -163,8 +160,9 @@ net_name
 
 全部 TASK 完成后：
 
-```bash
-python scripts/run_pipeline.py --task-dir <task_root>/signal_interface --stage finish
+```powershell
+Set-Location -LiteralPath '<signal_connections_mapping_skill>'
+python .\scripts\run_pipeline.py --task-dir '<task_root>/signal_interface' --stage finish
 ```
 
 不要手工填写上述示例。直接执行 `intermediate/finish_command.txt` 的完整命令；它引用 `pipeline_run_config.json` 中已确定的 connections、pin_info 和模板。不得手工 merge/validate/render，不得调用 `render_outputs.py` 生成正式结果，也不得编写替代渲染脚本。

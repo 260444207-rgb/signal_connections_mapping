@@ -172,12 +172,14 @@ def save_pipeline_run_config(
 ) -> Path:
     """Persist the canonical inputs so finish never has to rediscover intermediate paths."""
     intermediate = task_dir / "intermediate"
+    skill_root = Path(__file__).resolve().parents[1]
     resolved_connections = _absolute_path(connections)
     resolved_template = _absolute_path(template_excel or default_template_excel(resolved_connections))
     config_path = intermediate / PIPELINE_CONFIG_FILENAME
     finish_command_path = intermediate / FINISH_COMMAND_FILENAME
     config = {
         "contract": "Formal output must be produced only by run_pipeline.py --stage finish.",
+        "working_directory": str(skill_root),
         "task_dir": _absolute_path(task_dir),
         "connections": resolved_connections,
         "pins": _absolute_path(pins),
@@ -188,11 +190,25 @@ def save_pipeline_run_config(
         "finish_command_file": str(finish_command_path.resolve()),
     }
     write_json(config_path, config)
-    script_path = Path(__file__).resolve()
     python_path = Path(sys.executable).resolve()
-    command_prefix = f'& "{python_path}"' if os.name == "nt" else f'"{python_path}"'
+    relative_script = Path("scripts") / "run_pipeline.py"
+    if os.name == "nt":
+        escaped_root = str(skill_root).replace("'", "''")
+        escaped_python = str(python_path).replace("'", "''")
+        escaped_task_dir = str(Path(task_dir).resolve()).replace("'", "''")
+        command = (
+            f"Set-Location -LiteralPath '{escaped_root}'\n"
+            f"& '{escaped_python}' '.\\scripts\\run_pipeline.py' "
+            f"--task-dir '{escaped_task_dir}' --stage finish\n"
+        )
+    else:
+        command = (
+            f"cd -- '{skill_root}' && "
+            f"'{python_path}' '{relative_script}' "
+            f"--task-dir '{Path(task_dir).resolve()}' --stage finish\n"
+        )
     finish_command_path.write_text(
-        f'{command_prefix} "{script_path}" --task-dir "{Path(task_dir).resolve()}" --stage finish\n',
+        command,
         encoding="utf-8",
     )
     return config_path
