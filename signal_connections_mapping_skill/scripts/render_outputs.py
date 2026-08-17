@@ -184,11 +184,22 @@ def render_outputs(normalized_path: str | Path, decisions_path: str | Path, outp
         writer.writerows(rows)
 
 def main():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description="仅用于调试的平铺 CSV 输出；不能生成正式信号接口列表")
     parser.add_argument("--normalized", required=True)
     parser.add_argument("--decisions", required=True)
     parser.add_argument("--output-dir", required=True)
+    parser.add_argument(
+        "--debug-only-confirm",
+        action="store_true",
+        help="确认该输出仅用于调试；正式输出必须执行 finish_command.txt",
+    )
     args = parser.parse_args()
+    if not args.debug_only_confirm:
+        parser.error(
+            "render_outputs.py cannot produce the formal workbook. "
+            "Execute intermediate/finish_command.txt instead. "
+            "For an intentional debug CSV only, add --debug-only-confirm."
+        )
     render_outputs(args.normalized, args.decisions, args.output_dir)
     print(f"[OK] rendered flat debug outputs -> {args.output_dir}")
 

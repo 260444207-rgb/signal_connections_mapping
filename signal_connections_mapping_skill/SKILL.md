@@ -20,6 +20,8 @@ model_tasks
 
 `finish` 不是任务生成入口。新任务必须先运行 `model_tasks`，再执行并等待全部 subagent session；输出文件未齐全时禁止调用 `finish`。`stage=all` 只用于脚本冒烟验证。
 
+正式收尾只有一个入口：执行 `model_tasks` 生成的 `intermediate/finish_command.txt`。禁止手工调用或替代 `merge_decisions.py`、`validate_mapping.py`、`render_template_sheets.py`，禁止使用 `render_outputs.py` 生成正式结果，也禁止编写自定义 merge/render 脚本。`pipeline_run_config.json` 已保存 connections、pin_info、模板和标准中间路径，不要重新猜测参数或改用非标准文件名。
+
 完整命令和故障处理见 [RUNBOOK.md](RUNBOOK.md)。只有需要维护内部结构时才阅读 [STRUCTURE.md](STRUCTURE.md)。
 
 ## 输入与输出
@@ -170,13 +172,7 @@ python scripts/run_pipeline.py \
 subagent 完成全部 TASK 后：
 
 ```bash
-python scripts/run_pipeline.py \
-  --task-dir data/{uuid} \
-  --connections input_block_diagram.xlsx \
-  --template-excel input_block_diagram.xlsx \
-  --pins pin_info.json \
-  --output-mode template_sheets \
-  --stage finish
+python scripts/run_pipeline.py --task-dir data/{uuid}/signal_interface --stage finish
 ```
 
-`finish` 会先检查 `subagent_session_status.json` 的 sessions_spawn 完成状态，再检查 JSONL 格式、line 覆盖、重复/额外 line、pin 合法性、合并结果和最终 workbook。失败项按 `failed_subagent_rerun_plan.md` 重跑，不得绕过。
+上面的命令仅示意；实际必须直接执行 `intermediate/finish_command.txt` 中生成的绝对路径命令。`finish` 从 `pipeline_run_config.json` 恢复全部输入，先检查 `subagent_session_status.json` 的 sessions_spawn 完成状态，再检查 JSONL 格式、line 覆盖、重复/额外 line、pin 合法性、合并结果和最终 workbook。`validation_report.json` 不是 PASS 时禁止渲染。失败项按 `failed_subagent_rerun_plan.md` 重跑，不得绕过。

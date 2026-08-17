@@ -6,6 +6,7 @@ import unittest
 import os
 import json
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,10 +28,15 @@ from build_model_resolution_tasks import (
     render_shared_prompt,
 )
 from run_pipeline import (
+    PIPELINE_CONFIG_FILENAME,
+    FINISH_COMMAND_FILENAME,
     append_rule_path,
     build_combined_rules,
     combined_rules_are_current,
     discover_external_device_rules,
+    load_pipeline_run_config,
+    run_finish,
+    save_pipeline_run_config,
 )
 from run_pipeline import resolve_signal_interface_task_dir
 
@@ -543,6 +549,37 @@ class LayeredRuleRecallTests(unittest.TestCase):
             "SROC_AMC_SPI1",
             final_net_name(decision, normalized, 0, "HAC_SPI1_CLK"),
         )
+
+    def test_model_tasks_persist_canonical_finish_contract(self) -> None:
+        connections = self.task_dir / "design" / "aggregated_connections.xlsx"
+        pins = self.task_dir / "pin_info.json"
+        config_path = save_pipeline_run_config(self.task_dir, str(connections), str(pins))
+
+        self.assertEqual(self.task_dir / "intermediate" / PIPELINE_CONFIG_FILENAME, config_path)
+        config = load_pipeline_run_config(self.task_dir)
+        self.assertEqual(str(connections.resolve()), config["connections"])
+        self.assertEqual(str(connections.resolve()), config["template_excel"])
+        command = (self.task_dir / "intermediate" / FINISH_COMMAND_FILENAME).read_text(encoding="utf-8")
+        self.assertIn("--stage finish", command)
+        self.assertNotIn("--normalized", command)
+        self.assertNotIn("--decisions", command)
+
+    def test_finish_never_renders_when_validation_fails(self) -> None:
+        with (
+            mock.patch("run_pipeline.run_apply"),
+            mock.patch("run_pipeline.merge_decisions"),
+            mock.patch("run_pipeline.validate_mapping", return_value={"status": "ERROR"}),
+            mock.patch("run_pipeline.render_template_sheets") as render,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "validation_report.json is not PASS"):
+                run_finish(
+                    self.task_dir,
+                    "connections.xlsx",
+                    "pin_info.json",
+                    "connections.xlsx",
+                    "template_sheets",
+                )
+            render.assert_not_called()
 
 
 if __name__ == "__main__":

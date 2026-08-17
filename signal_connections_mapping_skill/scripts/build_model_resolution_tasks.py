@@ -1369,6 +1369,7 @@ def render_shared_prompt() -> str:
         "6. 把 JSONL 写入 output_contract.output_file，并校验 expected_line_ids 覆盖关系。",
         "7. 更新 pin_allocation_state_file 中对应 physical_device_instance_id 的 used_pins、共享组、冲突和 completed_task_ids。",
         "8. 完成本 session 全部 TASK 后，主控必须把 subagent_session_status.json 中对应 session 标记为 completed=true、failed=false、timed_out=false；失败/超时重跑完成前禁止 finish。",
+        "9. 主控正式收尾必须直接执行 intermediate/finish_command.txt；不得手工 merge/validate/render，不得调用 render_outputs.py 或编写替代脚本。",
         "",
         "模型不负责网络命名：为兼容 schema，net_name 固定输出空字符串，net_names 固定输出空数组；最终渲染脚本统一生成网络名和命名依据。",
         "聊天回复只报告 status、output_file、decision_count 和 state 是否更新，不要粘贴完整结果。",
@@ -1762,6 +1763,11 @@ def build_model_resolution_tasks(
 
     session_plan = {
         "execution_mode": "balanced_source_device_sessions",
+        "finish_contract": {
+            "required_entrypoint": "run_pipeline.py --stage finish",
+            "command_file": str((output_dir.parent / "finish_command.txt").resolve()),
+            "manual_merge_validate_render_forbidden": True,
+        },
         "session_count": len(sessions),
         "task_count": len(tasks),
         "line_count": sum(t["line_count"] for t in tasks),
@@ -1794,6 +1800,7 @@ def build_model_resolution_tasks(
 
     manifest = {
         "execution_mode": "balanced_source_device_sessions",
+        "finish_contract": session_plan["finish_contract"],
         "task_count": len(tasks),
         "line_count": sum(t["line_count"] for t in tasks),
         "session_count": len(sessions),

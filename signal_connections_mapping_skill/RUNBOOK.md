@@ -164,14 +164,10 @@ net_name
 全部 TASK 完成后：
 
 ```bash
-python scripts/run_pipeline.py \
-  --task-dir <task_root> \
-  --connections <connections.xlsx> \
-  --template-excel <connections.xlsx> \
-  --pins <pin_info.json> \
-  --output-mode template_sheets \
-  --stage finish
+python scripts/run_pipeline.py --task-dir <task_root>/signal_interface --stage finish
 ```
+
+不要手工填写上述示例。直接执行 `intermediate/finish_command.txt` 的完整命令；它引用 `pipeline_run_config.json` 中已确定的 connections、pin_info 和模板。不得手工 merge/validate/render，不得调用 `render_outputs.py` 生成正式结果，也不得编写替代渲染脚本。
 
 `finish` 会：
 
@@ -180,7 +176,7 @@ python scripts/run_pipeline.py \
 3. 校验 JSONL、line_id/parent_line_id 覆盖、重复和额外行。
 4. 合并到 `model_resolved_decisions.jsonl`。
 5. 针对原始完整 pin_info 运行 `validate_mapping`。
-6. 生成正式 Excel。
+6. 仅在 `validation_report.json` 为 PASS 后调用 `render_template_sheets.py` 生成正式 Excel。
 
 检查：
 

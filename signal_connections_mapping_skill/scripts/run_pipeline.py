@@ -7,6 +7,7 @@ import argparse
 from datetime import datetime
 import os
 from pathlib import Path
+import sys
 
 from init_task import init_task
 from normalize_connections import normalize_connections
@@ -19,6 +20,7 @@ from merge_decisions import merge_decisions
 from validate_mapping import validate_mapping
 from render_outputs import render_outputs
 from render_template_sheets import render_template_sheets
+from common import read_json, write_json
 
 REQUIRED_PREPARE_FILES = [
     "normalized_connections.jsonl",
@@ -28,6 +30,8 @@ REQUIRED_PREPARE_FILES = [
 EXTERNAL_DEVICE_RULES_FILENAME = "external_device_rules.md"
 
 SIGNAL_INTERFACE_TASK_SUBDIR = "signal_interface"
+PIPELINE_CONFIG_FILENAME = "pipeline_run_config.json"
+FINISH_COMMAND_FILENAME = "finish_command.txt"
 
 def _norm_rule_path(path: Path) -> str:
     return str(path.expanduser())
@@ -58,6 +62,9 @@ def append_rule_path(rule_paths: str, rule_path: str | Path | None) -> str:
     if candidate in existing:
         return rule_paths or ""
     return os.pathsep.join(existing + [candidate])
+
+def absolute_rule_paths(rule_paths: str = "") -> str:
+    return os.pathsep.join(_absolute_path(path) for path in split_rule_paths(rule_paths))
 
 def discover_external_device_rules(task_dir: Path, connections: str = "") -> Path | None:
     """
@@ -144,9 +151,69 @@ def timestamped_signal_interface_path(output_dir: Path) -> Path:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     return output_dir / f"signal_interface_{timestamp}.xlsx"
 
-def run_prepare(task_dir: Path, connections: str, pins: str, project_rules: str = "", user_rules: str = "") -> None:
+def _absolute_path(value: str | Path | None) -> str:
+    if not value:
+        return ""
+    return str(Path(value).expanduser().resolve())
+
+def default_template_excel(connections: str = "") -> str:
+    if connections and Path(connections).suffix.lower() in {".xlsx", ".xlsm"}:
+        return connections
+    return ""
+
+def save_pipeline_run_config(
+    task_dir: Path,
+    connections: str,
+    pins: str,
+    template_excel: str = "",
+    output_mode: str = "template_sheets",
+    project_rules: str = "",
+    user_rules: str = "",
+) -> Path:
+    """Persist the canonical inputs so finish never has to rediscover intermediate paths."""
+    intermediate = task_dir / "intermediate"
+    resolved_connections = _absolute_path(connections)
+    resolved_template = _absolute_path(template_excel or default_template_excel(resolved_connections))
+    config_path = intermediate / PIPELINE_CONFIG_FILENAME
+    finish_command_path = intermediate / FINISH_COMMAND_FILENAME
+    config = {
+        "contract": "Formal output must be produced only by run_pipeline.py --stage finish.",
+        "task_dir": _absolute_path(task_dir),
+        "connections": resolved_connections,
+        "pins": _absolute_path(pins),
+        "template_excel": resolved_template,
+        "output_mode": output_mode,
+        "project_rules": absolute_rule_paths(project_rules),
+        "user_rules": absolute_rule_paths(user_rules),
+        "finish_command_file": str(finish_command_path.resolve()),
+    }
+    write_json(config_path, config)
+    script_path = Path(__file__).resolve()
+    python_path = Path(sys.executable).resolve()
+    command_prefix = f'& "{python_path}"' if os.name == "nt" else f'"{python_path}"'
+    finish_command_path.write_text(
+        f'{command_prefix} "{script_path}" --task-dir "{Path(task_dir).resolve()}" --stage finish\n',
+        encoding="utf-8",
+    )
+    return config_path
+
+def load_pipeline_run_config(task_dir: Path) -> dict:
+    return read_json(task_dir / "intermediate" / PIPELINE_CONFIG_FILENAME, {}) or {}
+
+def run_prepare(
+    task_dir: Path,
+    connections: str,
+    pins: str,
+    project_rules: str = "",
+    user_rules: str = "",
+    template_excel: str = "",
+    output_mode: str = "template_sheets",
+) -> None:
     init_task(task_dir)
     intermediate = task_dir / "intermediate"
+    save_pipeline_run_config(
+        task_dir, connections, pins, template_excel, output_mode, project_rules, user_rules
+    )
     rules_path = build_combined_rules(task_dir, project_rules, user_rules)
 
     normalize_connections(
@@ -188,9 +255,20 @@ def run_apply(
         intermediate / "needs_model_resolution.jsonl",
     )
 
-def run_model_tasks(task_dir: Path, connections: str, pins: str, project_rules: str = "", user_rules: str = "") -> None:
+def run_model_tasks(
+    task_dir: Path,
+    connections: str,
+    pins: str,
+    project_rules: str = "",
+    user_rules: str = "",
+    template_excel: str = "",
+    output_mode: str = "template_sheets",
+) -> None:
     intermediate = task_dir / "intermediate"
     run_apply(task_dir, connections, pins, project_rules, user_rules)
+    save_pipeline_run_config(
+        task_dir, connections, pins, template_excel, output_mode, project_rules, user_rules
+    )
     build_analysis_context_groups(
         intermediate / "normalized_connections.jsonl",
         intermediate / "analysis_context_groups.json",
@@ -206,7 +284,8 @@ def run_model_tasks(task_dir: Path, connections: str, pins: str, project_rules: 
     )
     print(
         "[NEXT] Execute every session in model_resolution_tasks/subagent_session_plan.json "
-        "and write all TASK output files before running stage=finish."
+        "and write all TASK output files. Then execute the exact command in "
+        f"{intermediate / FINISH_COMMAND_FILENAME}; do not manually merge, validate, or render."
     )
 
 def run_finish(
@@ -268,12 +347,17 @@ def run_finish(
         ],
     )
 
-    validate_mapping(
+    validation_report = validate_mapping(
         intermediate / "normalized_connections.jsonl",
         intermediate / "mapping_decisions.jsonl",
         pins,
         intermediate / "validation_report.json",
     )
+    if validation_report.get("status") != "PASS":
+        raise RuntimeError(
+            "Finish blocked: validation_report.json is not PASS. Fix or rerun the failed "
+            "semantic TASKs; do not render or write a replacement rendering script."
+        )
 
     if output_mode == "template_sheets":
         if not template_excel:
@@ -298,8 +382,8 @@ def run_finish(
 def main():
     parser = argparse.ArgumentParser(description="Layered signal mapping pipeline")
     parser.add_argument("--task-dir", required=True)
-    parser.add_argument("--connections", required=True, help="输入框图连接表。若为 xlsx，则输出分页严格沿用该 xlsx 的 sheet")
-    parser.add_argument("--pins", required=True)
+    parser.add_argument("--connections", default="", help="输入框图连接表。finish 可从 pipeline_run_config.json 自动恢复")
+    parser.add_argument("--pins", default="", help="pin_info。finish 可从 pipeline_run_config.json 自动恢复")
     parser.add_argument("--project-rules", default="")
     parser.add_argument("--user-rules", default="")
     parser.add_argument("--template-excel", default="", help="正式输出模板 Excel。通常与 --connections 相同")
@@ -307,7 +391,7 @@ def main():
     parser.add_argument(
         "--output-mode",
         choices=["template_sheets", "flat_debug"],
-        default="template_sheets",
+        default=None,
         help="template_sheets=正式模式，严格按输入 Excel sheet 输出；flat_debug=仅调试用平铺 CSV"
     )
     args = parser.parse_args()
@@ -315,24 +399,38 @@ def main():
     task_root = Path(args.task_dir)
     task_dir = resolve_signal_interface_task_dir(task_root)
 
-    project_rules = args.project_rules
-    external_device_rules = discover_external_device_rules(task_root, args.connections)
+    saved_config = load_pipeline_run_config(task_dir) if args.stage == "finish" else {}
+    connections = args.connections or str(saved_config.get("connections", ""))
+    pins = args.pins or str(saved_config.get("pins", ""))
+    template_excel = args.template_excel or str(saved_config.get("template_excel", ""))
+    output_mode = args.output_mode or str(saved_config.get("output_mode", "template_sheets"))
+    if not connections or not pins:
+        raise ValueError(
+            "--connections and --pins are required for prepare/model_tasks, or must exist in "
+            "intermediate/pipeline_run_config.json for finish"
+        )
+
+    project_rules = args.project_rules or str(saved_config.get("project_rules", ""))
+    user_rules = args.user_rules or str(saved_config.get("user_rules", ""))
+    external_device_rules = discover_external_device_rules(task_root, connections)
     if external_device_rules:
         project_rules = append_rule_path(project_rules, external_device_rules)
         print(f"[INFO] external device rules detected -> {external_device_rules}")
+    project_rules = absolute_rule_paths(project_rules)
+    user_rules = absolute_rule_paths(user_rules)
 
     if args.stage in {"prepare", "all"}:
-        run_prepare(task_dir, args.connections, args.pins, project_rules, args.user_rules)
+        run_prepare(task_dir, connections, pins, project_rules, user_rules, template_excel, output_mode)
 
     if args.stage == "apply":
-        run_apply(task_dir, args.connections, args.pins, project_rules, args.user_rules)
+        run_apply(task_dir, connections, pins, project_rules, user_rules)
 
     if args.stage == "model_tasks":
-        run_model_tasks(task_dir, args.connections, args.pins, project_rules, args.user_rules)
+        run_model_tasks(task_dir, connections, pins, project_rules, user_rules, template_excel, output_mode)
 
     if args.stage in {"finish", "all"}:
-        template_excel = args.template_excel or (args.connections if Path(args.connections).suffix.lower() in {".xlsx", ".xlsm"} else "")
-        run_finish(task_dir, args.connections, args.pins, template_excel, args.output_mode, project_rules, args.user_rules)
+        template_excel = template_excel or default_template_excel(connections)
+        run_finish(task_dir, connections, pins, template_excel, output_mode, project_rules, user_rules)
 
     print(f"[OK] stage={args.stage} task_dir={task_dir} task_root={task_root}")
 

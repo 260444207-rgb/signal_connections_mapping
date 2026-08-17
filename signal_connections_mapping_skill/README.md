@@ -230,7 +230,7 @@ output/signal_interface_YYYYMMDD_HHMMSS.xlsx
 3. 只读取 subagent_session_plan.json 和 subagent_task_prompt.md，按 source_device session 规划 subagent 批次。
 4. 每个 subagent 先读取一次 session_context_file，再顺序处理 TASK；每个 TASK 前读取最新 state，写入 output_file 后更新 state。
 5. 主控更新 subagent_session_status.json；只有所有 session 都 spawned/completed、无 failed/timed_out/rerun_required，且 completed_task_ids 覆盖全部 TASK，才运行 finish。
-6. 运行 finish；主控流程会先检查 session 状态和所有 subagent output_file，失败则生成 failed_subagent_rerun_plan.md 并中止。
+6. 直接执行 intermediate/finish_command.txt；不得手动 merge/validate/render 或自写替代脚本。主控流程会先检查 session 状态和所有 subagent output_file，失败则生成 failed_subagent_rerun_plan.md 并中止。
 7. 检查通过后自动合并为 intermediate/model_resolved_decisions.jsonl，并输出 output/signal_interface_YYYYMMDD_HHMMSS.xlsx。
 8. 检查 validation_report.json 和 unresolved 列表。
 ```
@@ -270,14 +270,10 @@ data/{uuid}/signal_interface/intermediate/model_resolved_decisions.jsonl
 完成渲染：
 
 ```bash
-python scripts/run_pipeline.py \
-  --task-dir data/{uuid} \
-  --connections input_block_diagram.xlsx \
-  --template-excel input_block_diagram.xlsx \
-  --pins pin_info.json \
-  --output-mode template_sheets \
-  --stage finish
+python scripts/run_pipeline.py --task-dir data/{uuid}/signal_interface --stage finish
 ```
+
+实际运行时直接执行 `intermediate/finish_command.txt`。`pipeline_run_config.json` 已记录原始连接表、pin_info、模板和输出模式，finish 不需要重新猜参数。正式结果不得使用 `render_outputs.py` 或自写脚本生成。
 
 单次脚本冒烟验证：
 
