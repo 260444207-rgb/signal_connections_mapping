@@ -37,10 +37,12 @@ rule_library
 ## 硬门禁
 
 1. 原始 `pin_info` 是唯一 pin 来源。
-2. `selected_pin` / `selected_pins` 必须逐字来自当前源端器件的完整 pin 列表，不得翻译、改写、补全或使用其他器件的 pin。
-3. `inline_full` 模式下，`source_device_pins` 是完整列表。
-4. `grouped_large_catalog` 模式下，当前组无排序且不是闭集；找不到合理 pin 时必须读取 `group_file` 的其他 `groups` 或 `all_pins`。
-5. 查看完整列表后仍无合理 pin，输出 `unresolved / Low / needs_human_review=true`，不得把框图 port、规则文本或器件常识伪造成 pin。
+2. 如果单 pin 连接的 `source_port` 与当前器件完整 pin 列表中的某个字符串逐字一致，`selected_pin` 必须直接等于 `source_port`。这是连接事实，不得再翻译成另一 pin；器件规则、链路规则和历史映射都不能覆盖它。这类行通常已在路由阶段预裁决，不应进入 TASK。
+3. 只有 `source_port` 未精确命中 pin，或当前连接确实需要差分/总线展开时，才进行语义映射。
+4. `selected_pin` / `selected_pins` 必须逐字来自当前源端器件的完整 pin 列表，不得翻译、改写、补全或使用其他器件的 pin。
+5. `inline_full` 模式下，`source_device_pins` 是完整列表。
+6. `grouped_large_catalog` 模式下，当前组无排序且不是闭集；找不到合理 pin 时必须读取 `group_file` 的其他 `groups` 或 `all_pins`。
+7. 查看完整列表后仍无合理 pin，输出 `unresolved / Low / needs_human_review=true`，不得把框图 port、规则文本或器件常识伪造成 pin。
 
 ## 分析顺序
 
@@ -60,7 +62,7 @@ custom/user > link > device > signal > global > lexical fallback
 规则依据：<layer>/<rule_id>/<match_type>
 ```
 
-6. 对每条 `normalized_connection` 先判断链路语义、方向、源/目的角色、端口编号和 `signal_shape_info`，再从权威 pin 列表选择同功能 pin。
+6. 对每条 `normalized_connection` 先检查 `source_port` 是否逐字存在于权威 pin 列表；精确命中时直接使用。仅在未命中时，再判断链路语义、方向、源/目的角色、端口编号和 `signal_shape_info`，选择或展开 pin。
 7. 只有 `needs_model_shape_review=true`、证据冲突或明显违背连接语义时，才修正前置形态判断，并在 `analysis` 中说明。
 
 ## 物理实例与 pin 复用

@@ -15,7 +15,7 @@ from common import (
 
 
 def route_model_resolution(normalized_path, pins_path, decisions_out, needs_model_out):
-    """按 pin_info 门禁把连接送入语义模型，不做候选 pin 猜测或自动预裁决。"""
+    """按 pin_info 门禁路由；只预裁决 source_port 与单 pin 事实完全相同的连接。"""
     pin_catalog = load_pin_catalog(pins_path)
     decisions = []
     needs_model = []
@@ -31,6 +31,17 @@ def route_model_resolution(normalized_path, pins_path, decisions_out, needs_mode
             else {}
         )
         signal_shape = signal_shape_info.get("shape", row.get("signal_shape", "scalar"))
+        source_port = str(row.get("source_port", "") or "").strip()
+        is_single_pin_shape = (
+            signal_shape == "scalar"
+            or bool(signal_shape_info.get("is_expanded_member", False))
+        )
+        exact_source_port_pin = (
+            bool(source_port)
+            and source_port in source_pins
+            and is_single_pin_shape
+            and not bool(signal_shape_info.get("needs_model_shape_review", False))
+        )
 
         if not source_pins:
             decisions.append({
@@ -45,6 +56,23 @@ def route_model_resolution(normalized_path, pins_path, decisions_out, needs_mode
                 ),
                 "net_name": "",
                 "needs_human_review": True,
+            })
+            continue
+
+        if exact_source_port_pin:
+            decisions.append({
+                "line_id": line_id,
+                "selected_pin": source_port,
+                "selected_pins": [],
+                "decision_type": "pre_resolved",
+                "confidence": "High",
+                "analysis": (
+                    "source_port 与当前源端器件 pin_info 中的单 pin 名逐字一致；"
+                    "这是直接连接事实，不再进行二级语义映射。"
+                ),
+                "net_name": "",
+                "net_names": [],
+                "needs_human_review": False,
             })
             continue
 

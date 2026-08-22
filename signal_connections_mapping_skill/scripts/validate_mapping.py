@@ -41,6 +41,12 @@ def is_legal_expanded_decision(decision,normalized_by_id):
     if line in normalized_by_id: return True
     parent=decision_parent_line_id(decision)
     return bool(parent and parent in normalized_by_id and line.startswith(parent+'#'))
+def exact_source_port_pin(row,catalog):
+    source_port=str(row.get('source_port','') or '').strip()
+    shape_info=row.get('signal_shape_info',{}) if isinstance(row.get('signal_shape_info',{}),dict) else {}
+    shape=shape_info.get('shape',row.get('signal_shape','scalar'))
+    is_single=shape=='scalar' or bool(shape_info.get('is_expanded_member',False))
+    return source_port if source_port and source_port in pins_for_part(catalog,row.get('source_part_id','')) and is_single and not bool(shape_info.get('needs_model_shape_review',False)) else ''
 def validate_mapping(normalized_path,decisions_path,pins_path,report_path):
     normalized=list(iter_jsonl(normalized_path)); decisions=list(iter_jsonl(decisions_path)); catalog=load_pin_catalog(pins_path)
     normalized_by_id={r['line_id']:r for r in normalized}
@@ -59,6 +65,9 @@ def validate_mapping(normalized_path,decisions_path,pins_path,report_path):
         row=decision_source_row(d,normalized_by_id)
         source_part_id=row.get('source_part_id','')
         source_pins=set(pins_for_part(catalog,source_part_id))
+        direct_pin=exact_source_port_pin(row,catalog)
+        if direct_pin and pins != [direct_pin]:
+            errors.append({'severity':'ERROR','line_id':line,'message':f'source_port exactly matches authoritative single pin {direct_pin}; selected_pin must equal source_port and must not be remapped'})
         for pin in pins:
             if pin and pin not in source_pins:
                 errors.append({'severity':'ERROR','line_id':line,'message':f'selected_pin must come from input pin_info for source_part_id={source_part_id}: {pin}'})

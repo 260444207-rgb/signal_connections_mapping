@@ -1,6 +1,6 @@
 # 模型路由 Gate 规则
 
-本文件定义语义模型任务的 pin_info 门禁。脚本不生成候选 pin，也不自动选择 pin；具体映射统一交给 `prompts/semantic_mapping_resolver.md` 对应的隔离 subagent。
+本文件定义语义模型任务的 pin_info 门禁。脚本不生成候选 pin。唯一允许的确定性预裁决是：单 pin `source_port` 与当前器件 pin_info 逐字相同时直接同名连接；其余映射交给 `prompts/semantic_mapping_resolver.md` 对应的隔离 subagent。
 
 ## 进入模型分析
 
@@ -13,6 +13,8 @@
 ```
 
 链路族、器件规则、差分/总线、片选、方向、上下游功能和 pin 分配均由语义模型结合完整 pin 列表判断。
+
+如果单 pin `source_port` 已逐字存在于当前器件 pin_info，则直接写入 `pre_resolved_decisions.jsonl`，设置 `selected_pin=source_port`、`confidence=High`，且不写入 `needs_model_resolution.jsonl`。这属于身份映射事实，不属于脚本语义猜测。
 
 ## 跳过模型分析
 
@@ -31,7 +33,7 @@
 
 ```text
 1. 禁止脚本按名称相似度生成或排序候选 pin。
-2. 禁止脚本自动预裁决 selected_pin。
+2. 除 `source_port` 与单 pin 逐字一致的身份映射外，禁止脚本自动预裁决 selected_pin。
 3. 禁止脚本改写 normalized_connection 的前 9 列连接事实。
 4. 禁止脚本或模型改写 pin_info.json 中的 pin 字符串。
 5. 禁止在缺少源端器件 pin 列表时生成 selected_pin 或语义 TASK。

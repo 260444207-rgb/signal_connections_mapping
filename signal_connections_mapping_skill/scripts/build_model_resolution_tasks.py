@@ -1365,7 +1365,7 @@ def render_shared_prompt() -> str:
         "2. 读取 task_scope.pin_allocation_state_file 的最新状态；不要使用生成 TASK 时的旧快照。",
         "3. 按 matched_rule_refs 在 session_context.rule_library 中读取本 TASK 的规则正文。",
         "4. 分析 normalized_connections；connection_defaults 说明省略字段的确定默认值。",
-        "5. selected_pin 必须逐字来自 source_device_pins；大 pin 表找不到时读取 pin_catalog_context.group_file 的其他 groups 或 all_pins。",
+        "5. 单 pin source_port 若逐字存在于 source_device_pins，selected_pin 必须直接等于 source_port，任何规则不得再次映射；否则才做语义选择。大 pin 表找不到时读取 pin_catalog_context.group_file 的其他 groups 或 all_pins。",
         "6. 把 JSONL 写入 output_contract.output_file，并校验 expected_line_ids 覆盖关系。",
         "7. 更新 pin_allocation_state_file 中对应 physical_device_instance_id 的 used_pins、共享组、冲突和 completed_task_ids。",
         "8. 完成本 session 全部 TASK 后，主控必须把 subagent_session_status.json 中对应 session 标记为 completed=true、failed=false、timed_out=false；失败/超时重跑完成前禁止 finish。",

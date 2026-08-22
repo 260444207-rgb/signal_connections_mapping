@@ -24,7 +24,7 @@ model_tasks
 
 完整命令和故障处理见 [RUNBOOK.md](RUNBOOK.md)。只有需要维护内部结构时才阅读 [STRUCTURE.md](STRUCTURE.md)。
 
-执行任何 bundled Python 脚本前，必须先在同一终端切换到本 skill 根目录，再使用 `scripts/...` 相对路径运行。不得从 task、design 或 `intermediate` 目录直接执行脚本。`cd` 解决本地模块和相对资源查找；若仍报第三方包缺失，改用已安装依赖的 Python 解释器，并让后续阶段复用同一解释器，不得把缺包误判为路径问题。
+先确定本 skill 根目录的绝对路径；所有阶段都用 `<skill_root>\scripts\run_pipeline.py` 的绝对路径执行，与当前工作目录无关。禁止在 TASK_ROOT 下调用 `.\scripts\run_pipeline.py`，也禁止把 `scripts` 复制到 task、`signal_interface` 或 `intermediate`。遇到 `ModuleNotFoundError` 时重新确认 skill 绝对路径和 Python 解释器后重试原命令，不得创建包装脚本规避。
 
 ## 输入与输出
 
@@ -42,6 +42,8 @@ link_info / 链路信息 sheet
 external_device_rules.md
 --project-rules / --user-rules
 ```
+
+`block_info.器件信息` 可以是直接器件编码，也可以是包含 `componentUuid` 的 JSON/转义 JSON/键值长字符串；预处理必须提取 `componentUuid` 作为 `source_part_id`。`pin_info.json` 同时支持旧的 `{器件编码: [pin]}`、`{pins: {器件编码: [pin]}}`，以及包含 `{componentUuid, pins}` 记录的组件列表/容器格式。
 
 正式输出：
 
@@ -61,6 +63,7 @@ output/signal_interface_YYYYMMDD_HHMMSS.xlsx
 `pin_info` 是唯一可信 pin 来源。
 
 - `selected_pin` / `selected_pins` 必须逐字来自当前源端器件的原始完整 pin 列表。
+- 单 pin `source_port` 若逐字存在于当前器件 pin_info，直接令 `selected_pin=source_port` 并跳过语义 TASK；任何器件/链路规则不得把它再次映射到另一 pin。
 - 不得用框图 port、连线名、block 名、规则文本或器件常识生成 pin。
 - 缺少源端 pin 时直接保留 `unresolved / Low`，不生成该器件的语义 TASK。
 - 信息不足时输出 unresolved，不得硬猜。
@@ -164,15 +167,13 @@ custom/user > link > device > signal > global > lexical fallback
 生成模型任务：
 
 ```powershell
-Set-Location -LiteralPath '<signal_connections_mapping_skill>'
-python .\scripts\run_pipeline.py --task-dir 'data/{uuid}' --connections 'input_block_diagram.xlsx' --pins 'pin_info.json' --stage model_tasks
+python '<signal_connections_mapping_skill>\scripts\run_pipeline.py' --task-dir '<task_root>' --connections '<connections.xlsx>' --pins '<pin_info.json>' --stage model_tasks
 ```
 
 subagent 完成全部 TASK 后：
 
 ```powershell
-Set-Location -LiteralPath '<signal_connections_mapping_skill>'
-python .\scripts\run_pipeline.py --task-dir 'data/{uuid}/signal_interface' --stage finish
+python '<signal_connections_mapping_skill>\scripts\run_pipeline.py' --task-dir '<task_root>\signal_interface' --stage finish
 ```
 
-上面的命令仅示意；实际必须直接执行 `intermediate/finish_command.txt` 中生成的绝对路径命令。`finish` 从 `pipeline_run_config.json` 恢复全部输入，先检查 `subagent_session_status.json` 的 sessions_spawn 完成状态，再检查 JSONL 格式、line 覆盖、重复/额外 line、pin 合法性、合并结果和最终 workbook。`validation_report.json` 不是 PASS 时禁止渲染。失败项按 `failed_subagent_rerun_plan.md` 重跑，不得绕过。
+上面的命令仅示意；实际必须直接执行 `intermediate/finish_command.txt` 中生成的命令，其中 Python、`run_pipeline.py` 和 task_dir 都是绝对路径。`finish` 从 `pipeline_run_config.json` 恢复全部输入，先检查 `subagent_session_status.json` 的 sessions_spawn 完成状态，再检查 JSONL 格式、line 覆盖、重复/额外 line、pin 合法性、合并结果和最终 workbook。`validation_report.json` 不是 PASS 时禁止渲染。失败项按 `failed_subagent_rerun_plan.md` 重跑，不得绕过。

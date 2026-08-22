@@ -177,9 +177,11 @@ def save_pipeline_run_config(
     resolved_template = _absolute_path(template_excel or default_template_excel(resolved_connections))
     config_path = intermediate / PIPELINE_CONFIG_FILENAME
     finish_command_path = intermediate / FINISH_COMMAND_FILENAME
+    script_path = skill_root / "scripts" / "run_pipeline.py"
     config = {
         "contract": "Formal output must be produced only by run_pipeline.py --stage finish.",
         "working_directory": str(skill_root),
+        "script_path": str(script_path),
         "task_dir": _absolute_path(task_dir),
         "connections": resolved_connections,
         "pins": _absolute_path(pins),
@@ -191,20 +193,17 @@ def save_pipeline_run_config(
     }
     write_json(config_path, config)
     python_path = Path(sys.executable).resolve()
-    relative_script = Path("scripts") / "run_pipeline.py"
     if os.name == "nt":
-        escaped_root = str(skill_root).replace("'", "''")
         escaped_python = str(python_path).replace("'", "''")
+        escaped_script = str(script_path).replace("'", "''")
         escaped_task_dir = str(Path(task_dir).resolve()).replace("'", "''")
         command = (
-            f"Set-Location -LiteralPath '{escaped_root}'\n"
-            f"& '{escaped_python}' '.\\scripts\\run_pipeline.py' "
+            f"& '{escaped_python}' '{escaped_script}' "
             f"--task-dir '{escaped_task_dir}' --stage finish\n"
         )
     else:
         command = (
-            f"cd -- '{skill_root}' && "
-            f"'{python_path}' '{relative_script}' "
+            f"'{python_path}' '{script_path}' "
             f"--task-dir '{Path(task_dir).resolve()}' --stage finish\n"
         )
     finish_command_path.write_text(

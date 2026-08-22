@@ -238,15 +238,13 @@ output/signal_interface_YYYYMMDD_HHMMSS.xlsx
 准备中间数据：
 
 ```powershell
-Set-Location -LiteralPath '<signal_connections_mapping_skill>'
-python .\scripts\run_pipeline.py --task-dir 'data/{uuid}' --connections 'input_block_diagram.xlsx' --pins 'pin_info.json' --stage prepare
+python '<signal_connections_mapping_skill>\scripts\run_pipeline.py' --task-dir '<task_root>' --connections '<connections.xlsx>' --pins '<pin_info.json>' --stage prepare
 ```
 
 导出模型任务包：
 
 ```powershell
-Set-Location -LiteralPath '<signal_connections_mapping_skill>'
-python .\scripts\run_pipeline.py --task-dir 'data/{uuid}' --connections 'input_block_diagram.xlsx' --pins 'pin_info.json' --stage model_tasks
+python '<signal_connections_mapping_skill>\scripts\run_pipeline.py' --task-dir '<task_root>' --connections '<connections.xlsx>' --pins '<pin_info.json>' --stage model_tasks
 ```
 
 模型分析后，把每个 TASK 的结果写入：
@@ -264,17 +262,15 @@ data/{uuid}/signal_interface/intermediate/model_resolved_decisions.jsonl
 完成渲染：
 
 ```powershell
-Set-Location -LiteralPath '<signal_connections_mapping_skill>'
-python .\scripts\run_pipeline.py --task-dir 'data/{uuid}/signal_interface' --stage finish
+python '<signal_connections_mapping_skill>\scripts\run_pipeline.py' --task-dir '<task_root>\signal_interface' --stage finish
 ```
 
-实际运行时直接执行 `intermediate/finish_command.txt`。`pipeline_run_config.json` 已记录原始连接表、pin_info、模板和输出模式，finish 不需要重新猜参数。正式结果不得使用 `render_outputs.py` 或自写脚本生成。
+实际运行时直接执行 `intermediate/finish_command.txt`；其中脚本和 task_dir 都是绝对路径。禁止从 TASK_ROOT 调用 `.\scripts\run_pipeline.py` 或复制 skill 的 `scripts`。`pipeline_run_config.json` 已记录原始连接表、pin_info、模板和输出模式，finish 不需要重新猜参数。正式结果不得使用 `render_outputs.py` 或自写脚本生成。
 
 单次脚本冒烟验证：
 
 ```powershell
-Set-Location -LiteralPath '<signal_connections_mapping_skill>'
-python .\scripts\run_pipeline.py --task-dir 'data/{uuid}' --connections 'input_block_diagram.xlsx' --template-excel 'input_block_diagram.xlsx' --pins 'pin_info.json' --output-mode template_sheets --stage all
+python '<signal_connections_mapping_skill>\scripts\run_pipeline.py' --task-dir '<task_root>' --connections '<connections.xlsx>' --template-excel '<connections.xlsx>' --pins '<pin_info.json>' --output-mode template_sheets --stage all
 ```
 
 `all` 只执行脚本路径，不会自动调用真实 subagent；未解决项会保留为 `unresolved`。如果用户要的是正式语义结果，不要停在 `all`。

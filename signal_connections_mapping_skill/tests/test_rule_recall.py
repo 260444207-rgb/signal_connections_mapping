@@ -14,8 +14,10 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from build_model_resolution_tasks import extract_rule_blocks, match_rule_sections
 from check_subagent_outputs import check_subagent_outputs
+from common import extract_component_uuid, load_pin_catalog, normalize_component_reference, pins_for_part
 from generate_net_name import generate_net_name
 from render_template_sheets import final_net_name
+from validate_mapping import validate_mapping
 from infer_signal_shapes import iter_rule_sections, matching_rule_hint
 from route_model_resolution import route_model_resolution
 from build_model_resolution_tasks import (
@@ -145,6 +147,69 @@ class LayeredRuleRecallTests(unittest.TestCase):
         self.assertEqual("exact_source_part", sroc["match_type"])
         self.assertNotIn("AMC7964", [match["rule_id"] for match in matches])
         self.assertNotIn("TXCAL_RXCAL", [match["rule_id"] for match in matches])
+
+    def test_extracts_component_uuid_from_block_info_metadata(self) -> None:
+        component_uuid = "6c33dd64-9afd-4e31-87c4-5023b323be7f"
+        samples = [
+            json.dumps({"componentName": "SROC", "componentUuid": component_uuid}),
+            rf'prefix {{\"componentUuid\":\"{component_uuid}\",\"name\":\"SROC\"}} suffix',
+            f"componentUuid={component_uuid};componentName=SROC",
+            json.dumps(json.dumps({"componentUuid": component_uuid})),
+        ]
+        for sample in samples:
+            with self.subTest(sample=sample):
+                self.assertEqual(component_uuid, extract_component_uuid(sample))
+                self.assertEqual(component_uuid, normalize_component_reference(sample))
+
+    def test_loads_component_uuid_pin_catalog_record_format(self) -> None:
+        component_uuid = "6c33dd64-9afd-4e31-87c4-5023b323be7f"
+        pins_path = self.task_dir / "component_pins.json"
+        pins_path.write_text(
+            json.dumps({
+                "components": [
+                    {
+                        "componentUuid": component_uuid,
+                        "pins": [
+                            {"pinName": "PA_SW0"},
+                            {"name": "FEM_TDDSW00"},
+                        ],
+                    }
+                ]
+            }),
+            encoding="utf-8",
+        )
+
+        catalog = load_pin_catalog(pins_path)
+
+        self.assertEqual(["PA_SW0", "FEM_TDDSW00"], catalog[component_uuid])
+        long_block_info_value = json.dumps({"componentUuid": component_uuid, "other": "metadata"})
+        self.assertEqual(["PA_SW0", "FEM_TDDSW00"], pins_for_part(catalog, long_block_info_value))
+
+    def test_loads_component_uuid_one_pin_per_record_format(self) -> None:
+        component_uuid = "6c33dd64-9afd-4e31-87c4-5023b323be7f"
+        pins_path = self.task_dir / "component_pin_rows.json"
+        pins_path.write_text(
+            json.dumps([
+                {"componentUuid": component_uuid, "pinName": "PIN_A"},
+                {"componentUuid": component_uuid, "pinInfo": {"pinName": "PIN_B"}},
+            ]),
+            encoding="utf-8",
+        )
+
+        catalog = load_pin_catalog(pins_path)
+
+        self.assertEqual(["PIN_A", "PIN_B"], catalog[component_uuid])
+
+    def test_preserves_legacy_part_number_pin_catalog(self) -> None:
+        pins_path = self.task_dir / "legacy_pins.json"
+        pins_path.write_text(
+            json.dumps({"0302078562": ["PIN_A", "PIN_B"]}),
+            encoding="utf-8",
+        )
+
+        catalog = load_pin_catalog(pins_path)
+
+        self.assertEqual(["PIN_A", "PIN_B"], pins_for_part(catalog, "302078562"))
 
     def test_general_rules_are_deterministically_recalled(self) -> None:
         power_group = make_group("999999", "POWER_CHAIN", "POWER_ENABLE", "MYSTERY", "PMU")
@@ -277,6 +342,79 @@ class LayeredRuleRecallTests(unittest.TestCase):
         self.assertEqual(2, len(routed_decisions))
         self.assertTrue(all(row["selected_pin"] == "" for row in routed_decisions))
 
+    def test_exact_source_port_pin_is_pre_resolved_without_subagent_task(self) -> None:
+        normalized = self.task_dir / "normalized.jsonl"
+        pins = self.task_dir / "pins.json"
+        decisions = self.task_dir / "decisions.jsonl"
+        needs_model = self.task_dir / "needs_model.jsonl"
+        rows = [
+            {
+                "line_id": "L_DIRECT",
+                "source_part_id": "001",
+                "source_port": "PA_SW0",
+                "signal_shape_info": {"shape": "scalar", "needs_model_shape_review": False},
+            },
+            {
+                "line_id": "L_SEMANTIC",
+                "source_part_id": "001",
+                "source_port": "LOGICAL_CTRL",
+                "signal_shape_info": {"shape": "scalar", "needs_model_shape_review": False},
+            },
+        ]
+        normalized.write_text(
+            "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n",
+            encoding="utf-8",
+        )
+        pins.write_text(
+            json.dumps({"001": ["PA_SW0", "PA_PD_SW0"]}, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+        route_model_resolution(normalized, pins, decisions, needs_model)
+
+        routed = [json.loads(line) for line in needs_model.read_text(encoding="utf-8").splitlines() if line]
+        by_line = {
+            row["line_id"]: row
+            for row in (json.loads(line) for line in decisions.read_text(encoding="utf-8").splitlines() if line)
+        }
+        self.assertEqual(["L_SEMANTIC"], [row["line_id"] for row in routed])
+        self.assertEqual("PA_SW0", by_line["L_DIRECT"]["selected_pin"])
+        self.assertEqual("pre_resolved", by_line["L_DIRECT"]["decision_type"])
+        self.assertEqual("High", by_line["L_DIRECT"]["confidence"])
+
+    def test_validation_rejects_second_mapping_of_exact_source_port_pin(self) -> None:
+        normalized = self.task_dir / "normalized.jsonl"
+        decisions = self.task_dir / "decisions.jsonl"
+        pins = self.task_dir / "pins.json"
+        report = self.task_dir / "validation.json"
+        normalized.write_text(
+            json.dumps({
+                "line_id": "L1",
+                "source_part_id": "001",
+                "source_sheet_name": "SROC",
+                "source_port": "PA_SW0",
+                "signal_shape_info": {"shape": "scalar", "needs_model_shape_review": False},
+            }) + "\n",
+            encoding="utf-8",
+        )
+        decisions.write_text(
+            json.dumps({
+                "line_id": "L1",
+                "selected_pin": "PA_PD_SW0",
+                "decision_type": "model_resolved",
+                "confidence": "High",
+                "analysis": "incorrect second mapping",
+                "net_name": "",
+            }) + "\n",
+            encoding="utf-8",
+        )
+        pins.write_text(json.dumps({"001": ["PA_SW0", "PA_PD_SW0"]}), encoding="utf-8")
+
+        result = validate_mapping(normalized, decisions, pins, report)
+
+        self.assertEqual("ERROR", result["status"])
+        self.assertTrue(any("must equal source_port" in error["message"] for error in result["errors"]))
+
     def test_subagent_payload_helpers_do_not_emit_pin_candidates(self) -> None:
         row = {
             "line_id": "L1",
@@ -307,6 +445,7 @@ class LayeredRuleRecallTests(unittest.TestCase):
         self.assertIn("1800000 ms", prompt)
         self.assertIn("禁止编写 Python / PowerShell / JavaScript 等脚本", prompt)
         self.assertIn("selected_pin 的语义裁决必须由模型完成", prompt)
+        self.assertIn("selected_pin 必须直接等于 source_port", prompt)
 
     def test_task_context_uses_one_canonical_per_line_record(self) -> None:
         row = {
@@ -559,9 +698,10 @@ class LayeredRuleRecallTests(unittest.TestCase):
         config = load_pipeline_run_config(self.task_dir)
         self.assertEqual(str(connections.resolve()), config["connections"])
         self.assertEqual(str(connections.resolve()), config["template_excel"])
+        self.assertEqual(str((ROOT / "scripts" / "run_pipeline.py").resolve()), config["script_path"])
         command = (self.task_dir / "intermediate" / FINISH_COMMAND_FILENAME).read_text(encoding="utf-8")
-        self.assertIn("Set-Location -LiteralPath", command)
-        self.assertIn("scripts\\run_pipeline.py", command)
+        self.assertNotIn("Set-Location", command)
+        self.assertIn(str((ROOT / "scripts" / "run_pipeline.py").resolve()), command)
         self.assertIn("--stage finish", command)
         self.assertNotIn("--normalized", command)
         self.assertNotIn("--decisions", command)

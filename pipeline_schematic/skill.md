@@ -296,6 +296,8 @@ evidence:block_info_*.xlsx,pin_info.json
 
 **多阶段执行流程：**
 
+先把`{diagram_mapping_skill_dir}`解析为`diagram-logical-connection-mapping`Skill根目录的绝对路径。A4所有阶段必须调用`{python_executable} "{diagram_mapping_skill_dir}\scripts\run_pipeline.py" ...`，不得因当前目录位于`{working_directory}`而改用`.\scripts\run_pipeline.py`。禁止把该Skill的`scripts`复制到TASK_ROOT、`signal_interface`或`intermediate`；遇到`ModuleNotFoundError`时重新确认Skill绝对路径和Python解释器后重试原命令。
+
 **A4-1:Prepare+ModelTasks（主Agent串行）**
 
 ```
@@ -310,8 +312,8 @@ deliverable:normalized_connections.jsonl+model_resolved_decisions.jsonl+subagent
 ---ENDORCHESTRATORCONTEXT---
 ```
 
-1.调用`diagram-logical-connection-mapping`Skilltool，执行`prepare`阶段
-2.执行`model_tasks`阶段
+1.调用`diagram-logical-connection-mapping`Skilltool，使用绝对脚本路径执行`prepare`阶段
+2.使用同一绝对脚本路径执行`model_tasks`阶段
 3.读取生成的subagent_task_plan
 
 **A4-2:SemanticSubagents（按映射族隔离，每批2个并行）**
@@ -350,7 +352,7 @@ evidence:subagent_session_plan.json,subagent_task_plan.json,TASK_PLAN.md,subagen
 
 **A4-3:Finish（主Agent串行）**
 
-1.执行`finish`阶段，渲染最终信号接口Excel
+1.直接执行`signal_interface\intermediate\finish_command.txt`中生成的绝对路径命令，完成`finish`并渲染最终信号接口Excel；不得重组为TASK_ROOT下的相对脚本命令
 2.输出`signal_interface_{timestamp}.xlsx`（标准13列）
 
 ####AnchorA4Finish:A4输出结构完整性
