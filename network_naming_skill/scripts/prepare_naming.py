@@ -23,22 +23,70 @@ from xlsx_io import read_workbook_rows
 
 MODEL_RULES_START = "<!-- MODEL_TASK_RULES_START -->"
 MODEL_RULES_END = "<!-- MODEL_TASK_RULES_END -->"
+CLASSIFICATION_RULES_START = "<!-- SIGNAL_CLASSIFICATION_RULES_START -->"
+CLASSIFICATION_RULES_END = "<!-- SIGNAL_CLASSIFICATION_RULES_END -->"
+TYPE_RULE_MARKERS = {
+    "DIGITAL": ("<!-- DIGITAL_NAMING_RULES_START -->", "<!-- DIGITAL_NAMING_RULES_END -->"),
+    "RF": ("<!-- RF_NAMING_RULES_START -->", "<!-- RF_NAMING_RULES_END -->"),
+    "POWER": ("<!-- POWER_NAMING_RULES_START -->", "<!-- POWER_NAMING_RULES_END -->"),
+    "GROUND": ("<!-- GROUND_NAMING_RULES_START -->", "<!-- GROUND_NAMING_RULES_END -->"),
+}
+DIRECT_NET_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,30}$")
+PLACEHOLDER_NET_NAME_RE = re.compile(r"^LINE(?:_|$)", re.IGNORECASE)
 
 
 def naming_rules_path() -> Path:
     return Path(__file__).resolve().parents[1] / "rules" / "net_naming_rules.md"
 
 
-def load_model_rules(path: str | Path | None = None) -> list[str]:
+def extract_rule_list(
+    content: str,
+    start: str,
+    end: str,
+    rules_path: Path,
+    *,
+    required: bool,
+) -> list[str]:
+    if start not in content or end not in content:
+        raise ValueError(f"命名规则缺少标记 {start} / {end}: {rules_path}")
+    section = content.split(start, 1)[1].split(end, 1)[0]
+    rules = [line.strip()[2:].strip() for line in section.splitlines() if line.strip().startswith("- ")]
+    if required and not rules:
+        raise ValueError(f"命名规则标记区为空 {start}: {rules_path}")
+    return rules
+
+
+def load_model_rule_bundle(path: str | Path | None = None) -> dict[str, Any]:
     rules_path = Path(path) if path else naming_rules_path()
     content = rules_path.read_text(encoding="utf-8")
-    if MODEL_RULES_START not in content or MODEL_RULES_END not in content:
-        raise ValueError(f"命名规则缺少模型抽取区标记: {rules_path}")
-    section = content.split(MODEL_RULES_START, 1)[1].split(MODEL_RULES_END, 1)[0]
-    rules = [line.strip()[2:].strip() for line in section.splitlines() if line.strip().startswith("- ")]
-    if not rules:
-        raise ValueError(f"命名规则的模型抽取区为空: {rules_path}")
-    return rules
+    return {
+        "general": extract_rule_list(
+            content, MODEL_RULES_START, MODEL_RULES_END, rules_path, required=True
+        ),
+        "classification": extract_rule_list(
+            content,
+            CLASSIFICATION_RULES_START,
+            CLASSIFICATION_RULES_END,
+            rules_path,
+            required=True,
+        ),
+        "by_signal_type": {
+            signal_type: extract_rule_list(content, start, end, rules_path, required=False)
+            for signal_type, (start, end) in TYPE_RULE_MARKERS.items()
+        },
+    }
+
+
+def load_model_rules(path: str | Path | None = None) -> list[str]:
+    return load_model_rule_bundle(path)["general"]
+
+
+def is_legal_direct_net_name(value: str) -> bool:
+    candidate = text(value)
+    return bool(
+        DIRECT_NET_NAME_RE.fullmatch(candidate)
+        and not PLACEHOLDER_NET_NAME_RE.match(candidate)
+    )
 
 
 class UnionFind:
@@ -99,8 +147,8 @@ def merged_group(connection_ids: list[str], connections: OrderedDict) -> dict[st
     bus_members = []
     polarities = []
     connection_names = []
-    output_connection_names = []
     analysis_notes = []
+    connection_details = []
     for connection_id in connection_ids:
         item = connections[connection_id]
         for key, endpoint in item["endpoints"].items():
@@ -122,20 +170,25 @@ def merged_group(connection_ids: list[str], connections: OrderedDict) -> dict[st
         for connection_name in item["connection_names"]:
             if connection_name not in connection_names:
                 connection_names.append(connection_name)
-        for connection_name in item["output_connection_names"]:
-            if connection_name not in output_connection_names:
-                output_connection_names.append(connection_name)
         for analysis in item["analysis_notes"]:
             if analysis not in analysis_notes:
                 analysis_notes.append(analysis)
+        connection_details.append({
+            "connection_id": connection_id,
+            "connection_names": list(item["connection_names"]),
+            "analysis_notes": list(item["analysis_notes"]),
+            "endpoints": list(item["endpoints"].values()),
+        })
+    valid_connection_names = [name for name in connection_names if is_legal_direct_net_name(name)]
     return {
         "connection_ids": connection_ids,
         "suffix": suffixes[0] if len(suffixes) == 1 else "",
         "bus_members": bus_members,
         "polarity": polarities[0] if len(polarities) == 1 else "",
         "connection_names": connection_names,
-        "output_connection_names": output_connection_names,
+        "valid_connection_names": valid_connection_names,
         "analysis_notes": analysis_notes,
+        "connection_details": connection_details,
         "pins": list(pins.values()),
         "output_pins": list(output_pins.values()),
         "ends": list(endpoints.values()),
@@ -149,7 +202,7 @@ def prepare_naming(input_path: str | Path, task_dir: str | Path) -> dict[str, An
     input_path = Path(input_path).resolve()
     task_dir = Path(task_dir).resolve()
     task_dir.mkdir(parents=True, exist_ok=True)
-    model_rules = load_model_rules()
+    model_rule_bundle = load_model_rule_bundle()
     connections: OrderedDict[str, dict[str, Any]] = OrderedDict()
     errors: list[dict[str, str]] = []
 
@@ -182,7 +235,6 @@ def prepare_naming(input_path: str | Path, task_dir: str | Path) -> dict[str, An
                 "output_pin_keys": set(),
                 "polarities": set(),
                 "connection_names": [],
-                "output_connection_names": [],
                 "analysis_notes": [],
                 "refs": [],
             })
@@ -200,8 +252,6 @@ def prepare_naming(input_path: str | Path, task_dir: str | Path) -> dict[str, An
             connection_name = values["connection_name"]
             if connection_name and connection_name not in item["connection_names"]:
                 item["connection_names"].append(connection_name)
-            if connection_name and values["direction"].upper() == "OUTPUT" and connection_name not in item["output_connection_names"]:
-                item["output_connection_names"].append(connection_name)
             analysis = text(cells.get(columns["analysis"], ""))
             if analysis and analysis not in item["analysis_notes"]:
                 item["analysis_notes"].append(analysis)
@@ -229,16 +279,17 @@ def prepare_naming(input_path: str | Path, task_dir: str | Path) -> dict[str, An
     for index, component_ids in enumerate(components.values(), 1):
         group = merged_group(component_ids, connections)
         group["id"] = f"G{index:04d}"
-        preferred_names = group["output_connection_names"] or group["connection_names"]
-        if len(preferred_names) == 1:
-            group["fixed_net_name"] = preferred_names[0]
-        elif len(preferred_names) > 1:
+        valid_names = group["valid_connection_names"]
+        group["name_conflict"] = len(valid_names) > 1
+        if len(valid_names) == 1:
+            group["fixed_net_name"] = valid_names[0]
+        elif group["name_conflict"]:
             group["fixed_net_name"] = ""
             errors.append({
                 "sheet": "",
                 "message": (
-                    f"{group['id']} 同一命名组存在多个同优先级非空连线名称，无法直接采用: "
-                    + ", ".join(preferred_names)
+                    f"{group['id']} 同一命名组存在多个不同的合法连线名称，无法直接采用: "
+                    + ", ".join(valid_names)
                 ),
             })
         else:
@@ -275,7 +326,11 @@ def prepare_naming(input_path: str | Path, task_dir: str | Path) -> dict[str, An
         group["id"]: {
             "connection_ids": group["connection_ids"],
             "refs": group["refs"],
-            "decision_source": "connection_name" if group["fixed_net_name"] else "model",
+            "decision_source": (
+                "connection_name" if group["fixed_net_name"]
+                else "conflict" if group["name_conflict"]
+                else "model"
+            ),
             "fixed_net_name": group["fixed_net_name"],
         }
         for group in groups
@@ -284,7 +339,7 @@ def prepare_naming(input_path: str | Path, task_dir: str | Path) -> dict[str, An
         {
             "id": group["id"],
             "net_name": group["fixed_net_name"],
-            "basis": "连线名称非空，按最高优先级直接采用。",
+            "basis": "连线名称非空且为合法网络名，按最高优先级逐字采用。",
             "source": "connection_name",
         }
         for group in groups
@@ -304,19 +359,27 @@ def prepare_naming(input_path: str | Path, task_dir: str | Path) -> dict[str, An
                 if group["fixed_net_name"]:
                     fixed_names.append({"id": group["id"], "net_name": group["fixed_net_name"]})
                     continue
-                if len(group["connection_names"]) > 1:
+                if group["name_conflict"]:
                     continue
                 task_groups.append({
-                    key: value
-                    for key, value in group.items()
-                    if key not in {"refs", "pin_keys", "output_pin_keys", "fixed_net_name"}
+                    "id": group["id"],
+                    "connection_ids": group["connection_ids"],
+                    "suffix": group["suffix"],
+                    "bus_members": group["bus_members"],
+                    "polarity": group["polarity"],
+                    "connection_names": group["connection_names"],
+                    "analysis_notes": group["analysis_notes"],
+                    "connection_details": group["connection_details"],
                 })
             if task_groups:
                 model_family_count += 1
                 model_group_count += len(task_groups)
                 handle.write(json.dumps({
                     "family_id": f"F{family_number:04d}",
-                    "rules": model_rules,
+                    "signal_types": list(TYPE_RULE_MARKERS),
+                    "rules": model_rule_bundle["general"],
+                    "classification_rules": model_rule_bundle["classification"],
+                    "type_naming_rules": model_rule_bundle["by_signal_type"],
                     "fixed_names": fixed_names,
                     "groups": task_groups,
                 }, ensure_ascii=False) + "\n")
@@ -342,7 +405,7 @@ def prepare_naming(input_path: str | Path, task_dir: str | Path) -> dict[str, An
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="仅按相同 OUTPUT Block+实际pin 与连线ID _数字后缀建立命名组；#成员联合分析")
+    parser = argparse.ArgumentParser(description="合法连线名称直接采用；其余按命名组汇总两端 pin 后生成四类信号模型任务")
     parser.add_argument("--input", required=True)
     parser.add_argument("--task-dir", required=True)
     args = parser.parse_args()

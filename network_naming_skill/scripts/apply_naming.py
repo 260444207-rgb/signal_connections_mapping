@@ -15,6 +15,7 @@ from xlsx_io import patch_workbook, read_workbook_rows
 
 NET_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,30}$")
 NAMING_BASIS_MARKER = "网络命名依据："
+SIGNAL_TYPES = {"DIGITAL", "RF", "POWER", "GROUND"}
 
 
 def read_jsonl(path: Path, required: bool = True) -> list[dict[str, Any]]:
@@ -66,6 +67,7 @@ def apply_naming(input_path: str | Path, task_dir: str | Path, output_path: str 
             group_id = text(decision.get("id"))
             net_name = text(decision.get("net_name"))
             basis = text(decision.get("basis"))
+            signal_type = text(decision.get("signal_type")).upper()
             if not group_id:
                 errors.append({"id": "", "message": "decision 缺少 id"})
                 continue
@@ -80,11 +82,19 @@ def apply_naming(input_path: str | Path, task_dir: str | Path, output_path: str 
                 expected_name = text(row_index.get(group_id, {}).get("fixed_net_name"))
                 if not net_name or net_name != expected_name:
                     errors.append({"id": group_id, "message": "自动 decision 必须逐字采用命名组的非空连线名称"})
-            elif not NET_RE.fullmatch(net_name):
-                errors.append({"id": group_id, "message": "net_name 必须为字母开头、最长31字符的 SCREAMING_SNAKE_CASE"})
+            else:
+                if signal_type not in SIGNAL_TYPES:
+                    errors.append({"id": group_id, "message": "模型 decision 的 signal_type 必须为 DIGITAL、RF、POWER 或 GROUND"})
+                if not NET_RE.fullmatch(net_name):
+                    errors.append({"id": group_id, "message": "net_name 必须为字母开头、最长31字符的 SCREAMING_SNAKE_CASE"})
             if not basis:
                 errors.append({"id": group_id, "message": "basis 不能为空"})
-            by_id[group_id] = {"net_name": net_name, "basis": basis, "source": decision_source}
+            by_id[group_id] = {
+                "net_name": net_name,
+                "basis": basis,
+                "source": decision_source,
+                "signal_type": signal_type,
+            }
     for missing in sorted(set(row_index) - set(by_id)):
         errors.append({"id": missing, "message": "缺少命名 decision"})
     if errors:

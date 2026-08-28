@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from apply_naming import apply_naming
-from prepare_naming import load_model_rules, prepare_naming
+from prepare_naming import load_model_rule_bundle, load_model_rules, prepare_naming
 
 
 HEADERS = [
@@ -69,8 +69,8 @@ class NetworkNamingTests(unittest.TestCase):
             output = root / "output.xlsx"
             task_dir = root / "tasks"
             make_workbook(source, [[
-                "B1", "SRC", "OUT", "B2", "DST", "IN", "C1", "原始 Name-1",
-                "OUTPUT", "PIN_A", "pin 分析依据", "High", "",
+                "B1", "SRC", "OUT", "B2", "DST", "IN", "C1", "valid_name_1",
+                "INPUT", "PIN_A", "pin 分析依据", "High", "",
             ]])
 
             report = prepare_naming(source, task_dir)
@@ -79,25 +79,25 @@ class NetworkNamingTests(unittest.TestCase):
             self.assertEqual(0, report["model_group_count"])
             self.assertEqual("", (task_dir / "naming_groups.jsonl").read_text(encoding="utf-8"))
             automatic = json.loads((task_dir / "automatic_decisions.jsonl").read_text(encoding="utf-8"))
-            self.assertEqual("原始 Name-1", automatic["net_name"])
+            self.assertEqual("valid_name_1", automatic["net_name"])
 
             result = apply_naming(source, task_dir, output)
             self.assertEqual("PASS", result["status"])
             workbook = load_workbook(output)
-            self.assertEqual("原始 Name-1", workbook["DEV"]["M2"].value)
-            self.assertIn("pin 分析依据；网络命名依据：连线名称非空", workbook["DEV"]["K2"].value)
+            self.assertEqual("valid_name_1", workbook["DEV"]["M2"].value)
+            self.assertIn("pin 分析依据；网络命名依据：连线名称非空且为合法网络名", workbook["DEV"]["K2"].value)
             workbook.close()
 
-    def test_blank_connection_name_creates_model_task_with_analysis_and_rules(self) -> None:
+    def test_invalid_connection_names_create_two_end_model_task_with_type_rules(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             source = root / "input.xlsx"
             output = root / "output.xlsx"
             task_dir = root / "tasks"
-            make_workbook(source, [[
-                "B1", "SRC", "CTRL", "B2", "DST", "EN", "C2", "",
-                "OUTPUT", "PIN_CTRL", "该 pin 用于目标使能控制", "High", "",
-            ]])
+            make_workbook(source, [
+                ["B1", "SRC", "CTRL", "B2", "DST", "EN", "C2", "LINE_175", "OUTPUT", "PIN_CTRL", "该 pin 用于目标使能控制", "High", ""],
+                ["B2", "DST", "EN", "B1", "SRC", "CTRL", "C2", "BAD NAME", "INPUT", "PIN_EN", "目标端实际使能 pin", "High", ""],
+            ])
 
             report = prepare_naming(source, task_dir)
             self.assertEqual(0, report["automatic_group_count"])
@@ -105,8 +105,16 @@ class NetworkNamingTests(unittest.TestCase):
             task = json.loads((task_dir / "naming_groups.jsonl").read_text(encoding="utf-8"))
             self.assertIn("该 pin 用于目标使能控制", task["groups"][0]["analysis_notes"])
             self.assertEqual(load_model_rules(), task["rules"])
+            self.assertEqual(["DIGITAL", "RF", "POWER", "GROUND"], task["signal_types"])
+            bundle = load_model_rule_bundle()
+            self.assertEqual(bundle["classification"], task["classification_rules"])
+            self.assertEqual(bundle["by_signal_type"], task["type_naming_rules"])
+            self.assertEqual({"DIGITAL", "RF", "POWER", "GROUND"}, set(task["type_naming_rules"]))
+            details = task["groups"][0]["connection_details"][0]
+            self.assertEqual(["LINE_175", "BAD NAME"], details["connection_names"])
+            self.assertEqual({"PIN_CTRL", "PIN_EN"}, {endpoint["pin"] for endpoint in details["endpoints"]})
             (task_dir / "naming_decisions.jsonl").write_text(
-                json.dumps({"id": "G0001", "net_name": "SRC_DST_EN", "basis": "结合分析说明判断为使能信号。"}, ensure_ascii=False) + "\n",
+                json.dumps({"id": "G0001", "signal_type": "DIGITAL", "net_name": "SRC_DST_EN", "basis": "结合两端 pin 判断为使能信号。"}, ensure_ascii=False) + "\n",
                 encoding="utf-8",
             )
             result = apply_naming(source, task_dir, output)
@@ -126,9 +134,9 @@ class NetworkNamingTests(unittest.TestCase):
             ])
             report = prepare_naming(source, task_dir)
             self.assertEqual("ERROR", report["status"])
-            self.assertTrue(any("多个同优先级非空连线名称" in error["message"] for error in report["errors"]))
+            self.assertTrue(any("多个不同的合法连线名称" in error["message"] for error in report["errors"]))
 
-    def test_output_connection_name_overrides_different_input_name(self) -> None:
+    def test_direction_does_not_resolve_connection_name_conflict(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             source = root / "input.xlsx"
@@ -138,9 +146,29 @@ class NetworkNamingTests(unittest.TestCase):
                 ["B2", "DST", "IN", "B1", "SRC", "OUT", "C1", "INPUT_NAME", "INPUT", "PIN_B", "B", "High", ""],
             ])
             report = prepare_naming(source, task_dir)
-            self.assertEqual("PASS", report["status"])
-            decision = json.loads((task_dir / "automatic_decisions.jsonl").read_text(encoding="utf-8"))
-            self.assertEqual("OUTPUT_NAME", decision["net_name"])
+            self.assertEqual("ERROR", report["status"])
+            self.assertEqual(0, report["automatic_group_count"])
+            self.assertEqual(0, report["model_group_count"])
+            self.assertTrue(any("OUTPUT_NAME" in error["message"] and "INPUT_NAME" in error["message"] for error in report["errors"]))
+
+    def test_model_decision_requires_signal_type(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "input.xlsx"
+            output = root / "output.xlsx"
+            task_dir = root / "tasks"
+            make_workbook(source, [[
+                "B1", "SRC", "OUT", "B2", "DST", "IN", "C1", "LINE_1",
+                "OUTPUT", "PIN_A", "analysis", "High", "",
+            ]])
+            prepare_naming(source, task_dir)
+            (task_dir / "naming_decisions.jsonl").write_text(
+                json.dumps({"id": "G0001", "net_name": "SRC_DST_SIG", "basis": "测试。"}, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+            result = apply_naming(source, task_dir, output)
+            self.assertEqual("ERROR", result["status"])
+            self.assertTrue(any("signal_type" in error["message"] for error in result["errors"]))
 
     def test_output_suffix_grouping_still_requires_output_direction(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
