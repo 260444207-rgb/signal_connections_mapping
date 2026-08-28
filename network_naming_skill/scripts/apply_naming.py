@@ -17,8 +17,12 @@ NET_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,30}$")
 NAMING_BASIS_MARKER = "网络命名依据："
 
 
-def read_jsonl(path: Path) -> list[dict[str, Any]]:
+def read_jsonl(path: Path, required: bool = True) -> list[dict[str, Any]]:
     rows = []
+    if not path.exists():
+        if required:
+            raise FileNotFoundError(path)
+        return rows
     with path.open(encoding="utf-8") as handle:
         for line_number, line in enumerate(handle, 1):
             if line.strip():
@@ -53,26 +57,34 @@ def apply_naming(input_path: str | Path, task_dir: str | Path, output_path: str 
             "errors": [{"id": "", "message": "row_index.json 不属于当前 --input，请重新运行 prepare_naming.py"}],
         }
     row_index = index_data["groups"]
-    decisions = read_jsonl(task_dir / "naming_decisions.jsonl")
+    automatic_decisions = read_jsonl(task_dir / "automatic_decisions.jsonl", required=False)
+    model_decisions = read_jsonl(task_dir / "naming_decisions.jsonl", required=False)
     by_id: dict[str, dict[str, str]] = {}
     errors: list[dict[str, str]] = []
-    for decision in decisions:
-        group_id = text(decision.get("id"))
-        net_name = text(decision.get("net_name"))
-        basis = text(decision.get("basis"))
-        if not group_id:
-            errors.append({"id": "", "message": "decision 缺少 id"})
-            continue
-        if group_id in by_id:
-            errors.append({"id": group_id, "message": "同一命名组存在重复 decision"})
-            continue
-        if group_id not in row_index:
-            errors.append({"id": group_id, "message": "decision id 不在命名组中"})
-        if not NET_RE.fullmatch(net_name):
-            errors.append({"id": group_id, "message": "net_name 必须为字母开头、最长31字符的 SCREAMING_SNAKE_CASE"})
-        if not basis:
-            errors.append({"id": group_id, "message": "basis 不能为空"})
-        by_id[group_id] = {"net_name": net_name, "basis": basis}
+    for decision_source, decisions in (("connection_name", automatic_decisions), ("model", model_decisions)):
+        for decision in decisions:
+            group_id = text(decision.get("id"))
+            net_name = text(decision.get("net_name"))
+            basis = text(decision.get("basis"))
+            if not group_id:
+                errors.append({"id": "", "message": "decision 缺少 id"})
+                continue
+            if group_id in by_id:
+                errors.append({"id": group_id, "message": "同一命名组存在重复 decision"})
+                continue
+            if group_id not in row_index:
+                errors.append({"id": group_id, "message": "decision id 不在命名组中"})
+            elif row_index[group_id].get("decision_source") != decision_source:
+                errors.append({"id": group_id, "message": f"decision 来源应为 {row_index[group_id].get('decision_source')}，实际为 {decision_source}"})
+            if decision_source == "connection_name":
+                expected_name = text(row_index.get(group_id, {}).get("fixed_net_name"))
+                if not net_name or net_name != expected_name:
+                    errors.append({"id": group_id, "message": "自动 decision 必须逐字采用命名组的非空连线名称"})
+            elif not NET_RE.fullmatch(net_name):
+                errors.append({"id": group_id, "message": "net_name 必须为字母开头、最长31字符的 SCREAMING_SNAKE_CASE"})
+            if not basis:
+                errors.append({"id": group_id, "message": "basis 不能为空"})
+            by_id[group_id] = {"net_name": net_name, "basis": basis, "source": decision_source}
     for missing in sorted(set(row_index) - set(by_id)):
         errors.append({"id": missing, "message": "缺少命名 decision"})
     if errors:
@@ -117,7 +129,24 @@ def apply_naming(input_path: str | Path, task_dir: str | Path, output_path: str 
             sheet_changes[(row_number, columns["analysis"])] = append_or_replace_basis(original_analysis, decision["basis"])
             written_rows += 1
     patch_workbook(input_path, output_path, changes)
-    return {"status": "PASS", "output": str(output_path), "written_rows": written_rows, "group_count": len(row_index), "errors": []}
+    written_workbook = read_workbook_rows(output_path)
+    for sheet, sheet_changes in changes.items():
+        for (row_number, column), expected in sheet_changes.items():
+            actual = text(written_workbook.get(sheet, {}).get(row_number, {}).get(column, ""))
+            if actual != text(expected):
+                errors.append({"id": "", "message": f"回写校验失败: {sheet}!{column}:{row_number}"})
+    if errors:
+        output_path.unlink(missing_ok=True)
+        return {"status": "ERROR", "written_rows": 0, "errors": errors}
+    return {
+        "status": "PASS",
+        "output": str(output_path),
+        "written_rows": written_rows,
+        "group_count": len(row_index),
+        "automatic_group_count": len(automatic_decisions),
+        "model_group_count": len(model_decisions),
+        "errors": [],
+    }
 
 
 def main() -> int:
