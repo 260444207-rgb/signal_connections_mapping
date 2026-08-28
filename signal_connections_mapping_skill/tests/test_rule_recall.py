@@ -15,8 +15,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 from build_model_resolution_tasks import extract_rule_blocks, match_rule_sections
 from check_subagent_outputs import check_subagent_outputs
 from common import extract_component_uuid, load_pin_catalog, normalize_component_reference, pins_for_part
-from generate_net_name import generate_net_name
-from render_template_sheets import final_net_name
+from render_template_sheets import rows_for_decision
 from validate_mapping import validate_mapping
 from infer_signal_shapes import iter_rule_sections, matching_rule_hint
 from route_model_resolution import route_model_resolution
@@ -381,6 +380,7 @@ class LayeredRuleRecallTests(unittest.TestCase):
         self.assertEqual("PA_SW0", by_line["L_DIRECT"]["selected_pin"])
         self.assertEqual("pre_resolved", by_line["L_DIRECT"]["decision_type"])
         self.assertEqual("High", by_line["L_DIRECT"]["confidence"])
+        self.assertTrue(all("net_name" not in row and "net_names" not in row for row in by_line.values()))
 
     def test_validation_rejects_second_mapping_of_exact_source_port_pin(self) -> None:
         normalized = self.task_dir / "normalized.jsonl"
@@ -404,7 +404,6 @@ class LayeredRuleRecallTests(unittest.TestCase):
                 "decision_type": "model_resolved",
                 "confidence": "High",
                 "analysis": "incorrect second mapping",
-                "net_name": "",
             }) + "\n",
             encoding="utf-8",
         )
@@ -435,7 +434,7 @@ class LayeredRuleRecallTests(unittest.TestCase):
         self.assertNotIn("rough_pin_search_hints", serialized)
         self.assertNotIn("line_pin_domains", serialized)
         self.assertNotIn("candidate_mappings", render_shared_prompt())
-        self.assertNotIn("网络命名依据", render_shared_prompt())
+        self.assertIn("分析说明不得添加网络命名依据", render_shared_prompt())
 
     def test_shared_prompt_requires_model_subagent_with_30_minute_timeout(self) -> None:
         prompt = render_shared_prompt()
@@ -510,7 +509,6 @@ class LayeredRuleRecallTests(unittest.TestCase):
                         "decision_type": "unresolved",
                         "confidence": "Low",
                         "analysis": "insufficient information",
-                        "net_name": "",
                         "needs_human_review": True,
                     }
                 )
@@ -656,38 +654,23 @@ class LayeredRuleRecallTests(unittest.TestCase):
         )
 
 
-    def test_net_name_uses_meaningful_port_over_placeholder(self) -> None:
-        nc = {
-            "connection_name": "OLD_VALID_NAME",
-            "source_block_name": "SROC",
-            "target_block_name": "功放模组00_00-01",
-            "source_port": "default",
-            "target_port": "PA_SW_AB",
-        }
-        self.assertEqual("SROC_PAM_PA_SW_AB", generate_net_name(nc, "PIN1"))
-
-    def test_net_name_prefers_numeric_port_when_both_ports_are_meaningful(self) -> None:
-        nc = {
-            "source_block_name": "集成驱动0",
-            "target_block_name": "SROC",
-            "source_port": "告警1",
-            "target_port": "ALERT",
-        }
-        self.assertEqual("DRV0_SROC_ALERT1", generate_net_name(nc, "PIN1"))
-
-    def test_final_net_name_ignores_model_and_connection_name_override(self) -> None:
-        decision = {"net_name": "MODEL_NAME", "net_names": ["MODEL_LIST_NAME"]}
-        normalized = {
-            "connection_name": "OLD_VALID_NAME",
-            "source_block_name": "SROC",
-            "target_block_name": "AMC7964",
-            "source_port": "SPI1",
-            "target_port": "SPI",
-        }
-        self.assertEqual(
-            "SROC_AMC_SPI1",
-            final_net_name(decision, normalized, 0, "HAC_SPI1_CLK"),
+    def test_pin_renderer_keeps_standard_network_column_empty_and_preserves_analysis(self) -> None:
+        rows = rows_for_decision(
+            {
+                "source_block_name": "SROC",
+                "source_port": "SPI1",
+                "target_block_name": "AMC7964",
+                "target_port": "SPI",
+                "connection_id": "C1",
+            },
+            {
+                "selected_pin": "HAC_SPI1_CLK",
+                "analysis": "pin mapping basis",
+                "confidence": "High",
+            },
         )
+        self.assertEqual("", rows[0]["网络命名"])
+        self.assertEqual("pin mapping basis", rows[0]["分析说明"])
 
     def test_model_tasks_persist_canonical_finish_contract(self) -> None:
         connections = self.task_dir / "design" / "aggregated_connections.xlsx"

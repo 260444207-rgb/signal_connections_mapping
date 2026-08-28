@@ -5,8 +5,7 @@
     "selected_pin",
     "decision_type",
     "confidence",
-    "analysis",
-    "net_name"
+    "analysis"
   ],
   "properties": {
     "line_id": {
@@ -42,15 +41,6 @@
     },
     "analysis": {
       "type": "string"
-    },
-    "net_name": {
-      "type": "string"
-    },
-    "net_names": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
     },
     "analyses": {
       "type": "array",

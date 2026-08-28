@@ -22,7 +22,7 @@
 
 ```text
 1. 输出 unresolved / Low / needs_human_review=true。
-2. selected_pin、selected_pins、net_name 和 net_names 保持为空。
+2. selected_pin、selected_pins 保持为空；不输出网络命名字段。
 3. 不写入 needs_model_resolution.jsonl。
 4. 不创建 subagent/TASK，等待用户补充 pin 信息。
 ```

@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Dict, Any, List
 
 from common import iter_jsonl, ensure_dir, FINAL_HEADERS
-from generate_net_name import generate_net_name, is_effective_connection_name
 
 SKIP_SHEETS = {"BLOCK_INFO", "LINK_INFO", "链路信息", "说明", "README", "INDEX", "目录"}
 MULTI_RESULT_CONNECTION_ID_SEPARATOR = "#"
@@ -26,54 +25,6 @@ def decision_list_value(decision: Dict[str, Any], key: str, index: int, default:
         return str(values[index] or "")
     return str(decision.get(key[:-1] if key.endswith("s") else key, default) or default)
 
-def is_placeholder_net_name(value: str) -> bool:
-    """LINE/line 类名称是画图工具默认连线名，不能作为有效网络名。"""
-    text = str(value or "").strip()
-    return bool(text) and "line" in text.lower()
-
-def is_invalid_model_net_name(value: str) -> bool:
-    text = str(value or "").strip().upper()
-    if not text:
-        return True
-    if is_placeholder_net_name(text):
-        return True
-    return text in {
-        "INPUT",
-        "OUTPUT",
-        "IN",
-        "OUT",
-        "HIGH",
-        "MEDIUM",
-        "LOW",
-        "MODEL_RESOLVED",
-        "UNRESOLVED",
-    }
-
-def final_net_name(decision: Dict[str, Any], normalized: Dict[str, Any], index: int, selected_pin: str) -> str:
-    """
-    生成最终网络名。
-    优先级：
-    1. 未选中原理图 pin 时网络名为空。
-    2. connection_name 和模型 net_name 不覆盖脚本规范命名。
-    3. 其他情况按脚本规范生成。
-    """
-    if not str(selected_pin or "").strip():
-        return ""
-    return generate_net_name(normalized, selected_pin)
-
-
-def net_naming_basis(normalized: Dict[str, Any], selected_pin: str, net_name: str) -> str:
-    if not str(selected_pin or "").strip():
-        return "网络命名依据：未选中原理图 pin，按规则网络命名为空。"
-    return f"网络命名依据：连线名称和模型 net_name 不覆盖脚本生成结果，按源/目的 block 英文简称 + 有含义或含数字优先的源/目的 port 生成 {net_name}。"
-def append_net_naming_basis(analysis: str, normalized: Dict[str, Any], selected_pin: str, net_name: str) -> str:
-    basis = net_naming_basis(normalized, selected_pin, net_name)
-    text = str(analysis or "").strip()
-    if not text:
-        return basis
-    if "网络命名依据" in text:
-        return text
-    return f"{text}；{basis}"
 def expanded_connection_id(base_connection_id: str, original_connection_id: str, should_expand: bool, index: int) -> str:
     if not should_expand:
         return original_connection_id
@@ -137,7 +88,6 @@ def rows_for_decision(normalized: Dict[str, Any], decision: Dict[str, Any], conn
     rows: List[Dict[str, Any]] = []
     for idx, selected_pin in enumerate(selected_pins):
         decision_index = decision_index_offset + idx
-        net_name = final_net_name(decision, normalized, decision_index, selected_pin)
         rendered_connection_id = connection_id or expanded_connection_id(
             base_connection_id,
             normalized.get("connection_id", ""),
@@ -155,9 +105,9 @@ def rows_for_decision(normalized: Dict[str, Any], decision: Dict[str, Any], conn
             "连线名称": connection_name,
             "连线方向": normalized.get("direction", ""),
             "原理图Pin脚": selected_pin,
-            "分析说明": append_net_naming_basis(decision_list_value(decision, "analyses", decision_index, decision.get("analysis", "")), normalized, selected_pin, net_name),
+            "分析说明": decision_list_value(decision, "analyses", decision_index, decision.get("analysis", "")),
             "映射置信度": decision_list_value(decision, "confidences", decision_index, decision.get("confidence", "")),
-            "网络命名": net_name,
+            "网络命名": "",
         })
     return rows
 

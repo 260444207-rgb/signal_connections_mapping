@@ -25,7 +25,7 @@
 如果 source_device_pins 中没有当前 source_part_id，或列表为空：
   不进入链路/端口/规则分析
   不使用 source_port / target_port / connection_name 生成 pin
-  直接输出 unresolved / Low / needs_human_review=true，selected_pin 和 net_name 为空
+  直接输出 unresolved / Low / needs_human_review=true，selected_pin 为空
 ```
 
 ```text
@@ -63,7 +63,7 @@
 
 selected_pin / selected_pins 必须逐字来自当前 source_part_id 对应的 source_device_pins。没有该 source_part_id 的 pin 列表或列表为空时，不分析该器件 pin，直接 unresolved；不得把框图端口名、连线名、规则里的信号名或器件常识写成 selected_pin。
 
-同一个 physical_device_instance_id 内，同一个 selected_pin 默认只能给一个不同语义 line_id。只有同一网络、同一 base_connection、多端口别名或用户规则明确说明一个器件引脚给多个端口时，才允许复用。
+同一个 physical_device_instance_id 内，同一个 selected_pin 默认只能给一个不同语义 line_id。只有同一连线名称、同一 base_connection、多端口别名或用户规则明确说明一个器件引脚给多个端口时，才允许复用。
 
 ## 输出
 
@@ -77,13 +77,11 @@ selected_pin / selected_pins 必须逐字来自当前 source_part_id 对应的 s
   "decision_type": "model_resolved",
   "confidence": "High",
   "analysis": "该逻辑连接对应差分 P/N 两个物理 pin。",
-  "net_name": "",
-  "net_names": [],
   "needs_human_review": false
 }
 ```
 
-模型不分析网络名，`net_name` / `net_names` 固定为空；渲染阶段统一生成。旧数组模式会由渲染阶段展开，并保证原始连接事实不变。
+本 skill 的 decision 不包含网络命名字段；渲染后的“网络命名”列保持为空。旧数组模式会由渲染阶段展开，并保证原始连接事实不变。
 
 信息不足时：
 
@@ -95,8 +93,6 @@ selected_pin / selected_pins 必须逐字来自当前 source_part_id 对应的 s
   "decision_type": "unresolved",
   "confidence": "Low",
   "analysis": "缺少链路实例、总线编号或 pin 功能规则，无法唯一选择 pin。",
-  "net_name": "",
-  "net_names": [],
   "needs_human_review": true
 }
 ```

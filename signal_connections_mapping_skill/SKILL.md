@@ -1,6 +1,6 @@
 ---
 name: diagram-logical-connection-mapping
-description: 基于框图 Excel、pin_info 和自然语言硬件规则生成标准 13 列信号接口列表。用于从框图逻辑连接推导源端原理图 pin、处理差分/总线展开、跨相同器件实例复用分析经验，并输出经过校验的正式 Excel。
+description: 基于框图 Excel、pin_info 和自然语言硬件规则分析器件实际 pin，并生成标准 13 列信号接口列表。用于从框图逻辑连接推导源端原理图 pin、处理差分/总线展开及校验 pin 结论；不负责网络命名。
 ---
 
 # diagram-logical-connection-mapping
@@ -156,11 +156,11 @@ custom/user > link > device > signal > global > lexical fallback
 - 已展开成员只输出一个 `selected_pin`。
 - 未展开的多 pin 连接优先输出 `原line_id#数字` 多行，并设置 `parent_line_id`。
 - 普通 scalar pin 在同一物理实例内默认不能被不同语义 line 重复使用。
-- 只有同一源端口扇出、同一网络、同一 base connection、多端口别名、session 共享组或明确规则允许时才可复用。
+- 只有同一源端口扇出、同一连线名称、同一 base connection、多端口别名、session 共享组或明确规则允许时才可复用。
 
-## 网络命名
+## 网络命名边界
 
-模型不负责网络命名；为兼容 schema 输出 `net_name=""`、`net_names=[]`。`render_template_sheets.py` 根据源/目的 block 和 port 统一生成网络名并追加命名依据。没有 selected pin 时网络名为空。
+本 skill 不负责网络命名，pin decision 中不包含网络命名字段。正式 Excel 为保持标准 13 列，仍保留空的“网络命名”列；“分析说明”只描述 pin 映射。需要网络名时，将正式 Excel 输出交给独立的 `signal-interface-net-naming` skill。
 
 ## 阶段命令
 

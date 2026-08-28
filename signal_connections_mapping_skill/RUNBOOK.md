@@ -126,7 +126,7 @@ TASK 的 `matched_rule_refs` 指向 `rule_library`；不要按引用顺序或 ma
 - `grouped_large_catalog`：当前语义组无排序且不是闭集；找不到合理 pin 时读取 `group_file` 的其他组或 `all_pins`。
 - 完整列表仍找不到时输出 unresolved。
 - 不得改写、补全、翻译 pin 名。
-- 同一实例普通 scalar pin 默认不得重复分配；只在 session 共享组、扇出、同网、别名或明确规则允许时复用。
+- 同一实例普通 scalar pin 默认不得重复分配；只在 session 共享组、同一源端口扇出、同一连线名称、同一 base connection、别名或明确规则允许时复用。
 
 ## 8. 输出格式
 
@@ -138,21 +138,14 @@ selected_pin
 decision_type
 confidence
 analysis
-net_name
 ```
 
-模型不负责网络命名：
-
-```json
-{"net_name":"","net_names":[]}
-```
-
-最终渲染脚本生成网络名和命名依据。
+本 skill 的 decision 不包含网络命名字段。最终渲染保持“网络命名”列为空，“分析说明”只保留 pin 映射依据。需要网络名时，在 finish 之后单独运行 `signal-interface-net-naming` skill。
 
 未解决项：
 
 ```json
-{"selected_pin":"","decision_type":"unresolved","confidence":"Low","needs_human_review":true,"net_name":""}
+{"selected_pin":"","decision_type":"unresolved","confidence":"Low","needs_human_review":true}
 ```
 
 ## 9. 完成

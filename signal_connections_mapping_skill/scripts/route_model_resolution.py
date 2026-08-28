@@ -54,7 +54,6 @@ def route_model_resolution(normalized_path, pins_path, decisions_out, needs_mode
                     f"{source_part_id} / {resolved_part_id or source_part_id} 的 pin 列表，"
                     "跳过该器件的语义模型分析。"
                 ),
-                "net_name": "",
                 "needs_human_review": True,
             })
             continue
@@ -70,8 +69,6 @@ def route_model_resolution(normalized_path, pins_path, decisions_out, needs_mode
                     "source_port 与当前源端器件 pin_info 中的单 pin 名逐字一致；"
                     "这是直接连接事实，不再进行二级语义映射。"
                 ),
-                "net_name": "",
-                "net_names": [],
                 "needs_human_review": False,
             })
             continue
@@ -82,7 +79,6 @@ def route_model_resolution(normalized_path, pins_path, decisions_out, needs_mode
             "decision_type": "unresolved",
             "confidence": "Low",
             "analysis": "已通过 pin_info 门禁，等待隔离语义模型分析。",
-            "net_name": "",
             "needs_human_review": True,
         })
         needs_model.append({

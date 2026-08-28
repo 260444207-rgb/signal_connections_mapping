@@ -331,7 +331,7 @@ physical_device_pin_spaces
 potential_shared_pin_groups
 ```
 
-默认规则是：同一个 `physical_device_instance_id` 内，普通 scalar 连接的同一个物理 pin 只能分配给一个不同语义的 line_id。总线/差分需要先识别为 bus/differential，并优先输出 `parent_line_id=原line_id` 且 `line_id=原line_id#数字` 的多行 decision，每行一个 selected_pin。只有相同源端口扇出到多个目标端口、相同网络名、相同 base_connection_id、多端口别名，或用户/规则明确说明一个器件引脚给多个端口时，才允许多个 line_id 共用同一个 pin 和网络名。不同 sheet 表示不同物理器件实例，因此可以使用相同 pin 名。
+默认规则是：同一个 `physical_device_instance_id` 内，普通 scalar 连接的同一个物理 pin 只能分配给一个不同语义的 line_id。总线/差分需要先识别为 bus/differential，并优先输出 `parent_line_id=原line_id` 且 `line_id=原line_id#数字` 的多行 decision，每行一个 selected_pin。只有相同源端口扇出到多个目标端口、相同连线名称、相同 base_connection_id、多端口别名，或用户/规则明确说明一个器件引脚给多个端口时，才允许多个 line_id 共用同一个 pin。不同 sheet 表示不同物理器件实例，因此可以使用相同 pin 名。
 
 `link_family_profiles` 是同一 link_family 跨 source_device subagent 共享的链路级上下文，包含：
 
@@ -410,10 +410,9 @@ TASK_03_TXVGA_47151290_RF_TX_CHAIN_98e63e8c1e3a.json
 3. line_id 不重复。
 4. selected_pin / selected_pins 必须存在于源端 pin 列表。
 5. selected_pin / selected_pins 必须属于当前 line_id 的源端器件编码对应的 pin 列表，而不是仅仅存在于任意器件 pin 列表。
-6. 同一 physical_device_instance_id 内重复使用同一个 selected_pin 时，必须能被同一源端口扇出、同网、同 base_connection、多端口别名或用户规则解释；否则 validation 输出 warning。
+6. 同一 physical_device_instance_id 内重复使用同一个 selected_pin 时，必须能被同一源端口扇出、同一连线名称、同一 base_connection、多端口别名或用户规则解释；否则 validation 输出 warning。
 7. confidence 合法。
-8. 有 pin 时应有 net_name 或可生成网络名。
-9. 无 pin 时不得 High。
+8. 无 pin 时不得 High。
 ```
 
 ### scripts/render_template_sheets.py
@@ -456,10 +455,6 @@ intermediate/signal_shape_inference.jsonl
 ### intermediate/combined_mapping_rules.md
 
 运行时规则合并文件。由入口模板、`global_mapping_rules.md`、`link_family_guide.md`、`device_rules/*.md`、`link_rules/*.md`、`signal_rules/*.md`，再加可选 `--project-rules`、`--user-rules` 生成。`infer_signal_shapes.py` 和 `build_model_resolution_tasks.py` 都读取这份文件；规则内容变化时 prepare 产物会自动刷新。
-
-### scripts/generate_net_name.py
-
-网络命名生成器。渲染阶段用于补齐或规范化网络命名。
 
 ### scripts/run_pipeline.py
 
@@ -515,10 +510,6 @@ intermediate/signal_shape_inference.jsonl
 
 校验阶段原则。
 
-### rules/net_naming_rules.md
-
-网络命名原则。
-
 ## 7. schemas 目录
 
 ### schemas/normalized_connection.schema.json
@@ -553,8 +544,6 @@ link_family_id/link_instance_id/link_contexts
 ```text
 selected_pin: 单 pin
 selected_pins: 多物理 pin
-net_name: 单网络名
-net_names: 多网络名
 analyses/confidences: 多物理 pin 的逐项说明
 ```
 

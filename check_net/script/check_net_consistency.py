@@ -18,9 +18,9 @@ REPO_ROOT = ROOT.parent
 LOCAL_DEPS = ROOT / ".local_pydeps"
 if LOCAL_DEPS.exists():
     sys.path.insert(0, str(LOCAL_DEPS))
-MAIN_SCRIPT_DIR = REPO_ROOT / "script"
-if MAIN_SCRIPT_DIR.exists():
-    sys.path.insert(0, str(MAIN_SCRIPT_DIR))
+NAMING_SCRIPT_DIR = REPO_ROOT / "network_naming_skill" / "scripts"
+if NAMING_SCRIPT_DIR.exists():
+    sys.path.insert(0, str(NAMING_SCRIPT_DIR))
 
 try:
     from openpyxl import load_workbook
@@ -33,7 +33,7 @@ try:
     from generate_net_name import generate_net_name
 except ImportError as exc:  # pragma: no cover - exercised only if repo layout changes
     raise SystemExit(
-        "generate_net_name.py is required. Keep check_net inside signal_connections_mapping."
+        "generate_net_name.py is required from network_naming_skill/scripts."
     ) from exc
 
 
@@ -178,8 +178,9 @@ class Record:
         return tuple(sorted(endpoints))  # type: ignore[return-value]
 
     @property
-    def physical_key(self) -> tuple[str, int, tuple[tuple[str, str], tuple[str, str]]]:
-        return (self.base_connection_id, self.expansion_index, self.endpoint_key)
+    def physical_key(self) -> str:
+        # 完整连线 ID（含 # 后缀）就是命名组键；同 ID 的所有器件端点必须同名。
+        return self.connection_id
 
     @property
     def output_source_pin_key(self) -> tuple[str, str, str]:
@@ -387,9 +388,10 @@ def uniquify(candidate: str, used: set[str], record: Record) -> str:
 
 
 def canonical_for_group(records: list[Record], aliases: dict[str, str]) -> tuple[str, str]:
-    # The checker follows the same deterministic naming rule as the signal-interface generator.
-    # connection_name, existing net_name, and model decision_net_name are diagnostic inputs only;
-    # they no longer override the generated standard name when an automatic rename is needed.
+    # 优先保留组级命名 skill 已生成的有效名称；只有全组都为空或占位时才兜底生成。
+    for record in records:
+        if record.proposed_net_name and not is_placeholder_name(record.proposed_net_name) and is_format_valid(record.proposed_net_name):
+            return record.proposed_net_name, "existing_group_decision"
     return generated_name(records, aliases), "generated_block_port"
 
 
@@ -451,10 +453,10 @@ def collect_connection_mismatches(records: list[Record]) -> list[dict[str, Any]]
     return groups
 
 
-def collect_physical_groups(records: list[Record]) -> dict[tuple[str, int, tuple[tuple[str, str], tuple[str, str]]], list[Record]]:
-    by_physical: dict[tuple[str, int, tuple[tuple[str, str], tuple[str, str]]], list[Record]] = defaultdict(list)
+def collect_physical_groups(records: list[Record]) -> dict[str, list[Record]]:
+    by_physical: dict[str, list[Record]] = defaultdict(list)
     for record in records:
-        if record.base_connection_id:
+        if record.connection_id:
             by_physical[record.physical_key].append(record)
     return by_physical
 
@@ -664,7 +666,7 @@ def propose_duplicate_fixes(records: list[Record], aliases: dict[str, str]) -> l
         if legal_fanout:
             continue
 
-        by_physical: dict[tuple[str, int, tuple[tuple[str, str], tuple[str, str]]], list[Record]] = defaultdict(list)
+        by_physical: dict[str, list[Record]] = defaultdict(list)
         for record in rows:
             by_physical[record.physical_key].append(record)
 

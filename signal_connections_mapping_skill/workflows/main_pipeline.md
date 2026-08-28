@@ -136,7 +136,7 @@ session 共享的 `sheet_device_context`、`pin_allocation_context`、`link_fami
 
 subagent 使用 `prompts/semantic_mapping_resolver.md`。
 
-模型根据源端 pin 列表、目的端描述、连接方向、网络名、自然语言规则判断信号作用，再选择承担同样作用的源端 pin。
+模型根据源端 pin 列表、目的端描述、连接方向、连线名称和自然语言规则判断信号作用，再选择承担同样作用的源端 pin。
 
 模型输出写入：
 
@@ -189,7 +189,9 @@ output/signal_interface_YYYYMMDD_HHMMSS.xlsx
 
 `原理图Pin脚` 只能逐字使用入参 `pin_info.json` 中当前源端器件编码对应的 pin 字符串。模型不得补全、改写、翻译、调整大小写或使用其他器件的 pin。
 
-同一物理器件实例内重复使用同一个 pin 时，必须有同网、同 base_connection、多端口别名或用户规则依据；否则应 unresolved 或在 validation 中暴露 warning。
+同一物理器件实例内重复使用同一个 pin 时，必须有同一连线名称、同一 base_connection、多端口别名或用户规则依据；否则应 unresolved 或在 validation 中暴露 warning。
+
+“网络命名”列在本流程中固定为空，且“分析说明”不得包含网络命名依据。网络命名由独立的 `signal-interface-net-naming` skill 在本流程完成后处理。
 
 ## 5. 规则入口
 
@@ -228,7 +230,6 @@ external_device_rules.md
 
 ```text
 rules/global_mapping_rules.md
-rules/net_naming_rules.md
 rules/validation_rules.md
 ```
 

@@ -18,7 +18,7 @@ FIELD_ALIASES = {
     "target_block_name": ["target_block_name", "目的Block名称", "目标Block名称", "target_name"],
     "target_port": ["target_port", "目的Port", "目标Port"],
     "connection_id": ["connection_id", "连线ID", "连线标识", "line_id", "edge_id"],
-    "connection_name": ["connection_name", "连线名称", "net_name"],
+    "connection_name": ["connection_name", "连线名称"],
     "direction": ["direction", "连线方向"],
 }
 

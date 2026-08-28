@@ -69,7 +69,7 @@ custom/user > link > device > signal > global > lexical fallback
 
 - 同一个 `source_sheet_name` 表示一个物理器件实例；同 sheet 内不同 block 是逻辑块或端口视图。
 - 普通 scalar pin 在同一物理实例内默认不能分配给多个不同语义 line。
-- 只有 session context 的 `potential_shared_pin_groups`、同一源端口扇出、同一网络、同一 `base_connection_id`、多端口别名或明确规则允许时，才可共享。
+- 只有 session context 的 `potential_shared_pin_groups`、同一源端口扇出、同一连线名称、同一 `base_connection_id`、多端口别名或明确规则允许时，才可共享。
 - 不同 `physical_device_instance_id` 可以各自使用同名 pin。
 - 两条不同语义连接竞争同一个 pin 时，不得硬分配；保留更匹配的一条，另一条输出 unresolved 并说明冲突。
 
@@ -95,14 +95,14 @@ selected_pin = 单个 pin
 
 ```text
 line_id, parent_line_id, selected_pin, selected_pins,
-decision_type, confidence, analysis, net_name, net_names,
+decision_type, confidence, analysis,
 analyses, confidences, needs_human_review
 ```
 
 必填字段：
 
 ```text
-line_id, selected_pin, decision_type, confidence, analysis, net_name
+line_id, selected_pin, decision_type, confidence, analysis
 ```
 
 约束：
@@ -110,13 +110,13 @@ line_id, selected_pin, decision_type, confidence, analysis, net_name
 - `decision_type` 只能是 `model_resolved` 或 `unresolved`。
 - `confidence` 只能是 `High`、`Medium`、`Low` 或空字符串。
 - 不得输出中文 Excel 列名、`source_sheet_name`、`output_sheet_name` 或自造字段。
-- 模型不负责网络命名：`net_name=""`，`net_names=[]`。最终渲染脚本统一生成网络名和命名依据。
+- 不得输出 `net_name`、`net_names` 或其他网络命名字段。最终 Excel 的“网络命名”列由渲染器保持为空，“分析说明”不得添加网络命名依据。
 - 每个 `expected_line_ids` 必须由同名 `line_id`，或合法的 `parent_line_id` 展开行覆盖。
 
 推荐单行格式：
 
 ```json
-{"line_id":"","parent_line_id":"","selected_pin":"","selected_pins":[],"decision_type":"model_resolved|unresolved","confidence":"High|Medium|Low","analysis":"","net_name":"","net_names":[],"needs_human_review":false}
+{"line_id":"","parent_line_id":"","selected_pin":"","selected_pins":[],"decision_type":"model_resolved|unresolved","confidence":"High|Medium|Low","analysis":"","needs_human_review":false}
 ```
 
 写入后重新读取输出文件，检查 JSONL、覆盖、重复/额外 line_id 和 pin 合法性。然后更新 `pin_allocation_state_file`；只有来自完整原始 pin 列表的非空 pin 才能写入 `used_pins`。

@@ -93,15 +93,6 @@ def normalize_direction(v):
     if s in {'IN','INPUT'}: return 'INPUT'
     if s in {'OUT','OUTPUT'}: return 'OUTPUT'
     return s if s in VALID_DIRECTIONS else ''
-def extract_index(text):
-    m=re.findall(r'(\d+)',text or '')
-    return int(m[-1]) if m else None
-def tokenize_signal_name(name): return [x for x in re.split(r'[^A-Z0-9]+',normalize_text(name).upper()) if x]
-def simple_similarity(a,b):
-    ta,tb=set(tokenize_signal_name(a)),set(tokenize_signal_name(b))
-    return 0.0 if not ta or not tb else len(ta&tb)/len(ta|tb)
-def make_net_name(*parts):
-    raw='_'.join([p for p in parts if p]).upper(); raw=re.sub(r'[^A-Z0-9_]+','_',raw); return re.sub(r'_+','_',raw).strip('_')
 
 def _read_xlsx_rows(path: Path) -> List[Dict[str, Any]]:
     """读取输入框图 Excel：保留分页信息。默认跳过 BLOCK_INFO 等非器件页。"""
@@ -231,10 +222,3 @@ def resolve_catalog_key(catalog, part_id):
 
 def pins_for_part(catalog, part_id):
     return catalog.get(resolve_catalog_key(catalog, part_id), [])
-
-def find_pin(pins, pattern):
-    rx=re.compile(pattern, re.I)
-    for pin in pins:
-        if rx.search(pin):
-            return pin
-    return ""

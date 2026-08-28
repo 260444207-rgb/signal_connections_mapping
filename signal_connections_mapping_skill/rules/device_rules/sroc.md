@@ -87,4 +87,4 @@
 
 #### SROC 电源网络
 
-- VDD_0V65_PMU_SROC0_AVS_40A 和 VDD_1V8_TRX_DVDD 是电源网络连接，既有表中不映射到 SROC 器件 pin，原理图Pin脚留空，置信度 Low，网络命名按电源网络名处理。
+- VDD_0V65_PMU_SROC0_AVS_40A 和 VDD_1V8_TRX_DVDD 是电源网络连接，既有表中不映射到 SROC 器件 pin，原理图Pin脚留空，置信度 Low；本 skill 不处理其网络命名。

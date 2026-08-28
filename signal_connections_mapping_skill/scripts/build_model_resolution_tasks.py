@@ -516,7 +516,7 @@ def semantic_hints_for_link_family(family_id: str) -> List[str]:
     family = normalize_match_text(family_id)
     hints = [
         "同一个 link_family 下的不同 link_instance 可以互相借鉴链路拓扑、方向、实例索引、差分/总线展开规律和器件角色。",
-        "借鉴的是链路语义和分析方法，不是直接复制某一行的 selected_pin；每条 line_id 仍必须结合当前源端 pin 列表、端口、对端和网络名独立判断。",
+        "借鉴的是链路语义和分析方法，不是直接复制某一行的 selected_pin；每条 line_id 仍必须结合当前源端 pin 列表、端口、对端和连线信息独立判断。",
     ]
     if "RF" in family or "TX" in family:
         hints.append("RF/TX 类链路通常需要先判断通道索引、P/N 极性、RFIN/RFOUT 方向和上下游器件角色，再选择当前源端器件 pin。")
@@ -751,7 +751,7 @@ def build_pin_allocation_context(
     给模型显式提供同一物理器件实例内的 pin 分配约束。
 
     这里不预先选择 pin，只告诉模型哪些连接共享同一物理器件 pin 空间，
-    哪些连接可能因为同一网络/连接名而允许共享同一个 pin。
+    哪些连接可能因为同一连线名称或连接 ID 而允许共享同一个 pin。
     """
     instances: Dict[str, Dict[str, Any]] = {}
     shared_groups: Dict[str, Dict[str, Any]] = {}
@@ -788,7 +788,7 @@ def build_pin_allocation_context(
                 "source_block_id": row.get("source_block_id", ""),
                 "source_block_name": row.get("source_block_name", ""),
                 "source_port": row.get("source_port", ""),
-                "reason": "同一个源端端口连接到多个目标端口，表示扇出/多目标连接；通常可共享同一个源端 pin 和网络名。",
+                "reason": "同一个源端端口连接到多个目标端口，表示扇出/多目标连接；通常可共享同一个源端 pin。",
                 "line_ids": [],
                 "target_endpoints": set(),
             })
@@ -1371,7 +1371,7 @@ def render_shared_prompt() -> str:
         "8. 完成本 session 全部 TASK 后，主控必须把 subagent_session_status.json 中对应 session 标记为 completed=true、failed=false、timed_out=false；失败/超时重跑完成前禁止 finish。",
         "9. 主控正式收尾必须直接执行 intermediate/finish_command.txt；不得手工 merge/validate/render，不得调用 render_outputs.py 或编写替代脚本。",
         "",
-        "模型不负责网络命名：为兼容 schema，net_name 固定输出空字符串，net_names 固定输出空数组；最终渲染脚本统一生成网络名和命名依据。",
+        "本 skill 只输出 pin 裁决字段，不输出网络命名字段；最终 Excel 的网络命名列保持为空，分析说明不得添加网络命名依据。",
         "聊天回复只报告 status、output_file、decision_count 和 state 是否更新，不要粘贴完整结果。",
         "",
     ]

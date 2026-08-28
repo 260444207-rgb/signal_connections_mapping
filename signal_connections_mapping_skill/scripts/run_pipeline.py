@@ -36,9 +36,6 @@ FINISH_COMMAND_FILENAME = "finish_command.txt"
 def _norm_rule_path(path: Path) -> str:
     return str(path.expanduser())
 
-def default_rules_path() -> Path:
-    return Path(__file__).resolve().parents[1] / "rules" / "natural_language_mapping_rules_template.md"
-
 def resolve_signal_interface_task_dir(task_dir: Path) -> Path:
     """把本 skill 的全部运行产物收拢到 task_dir/signal_interface 下。"""
     task_dir = Path(task_dir)

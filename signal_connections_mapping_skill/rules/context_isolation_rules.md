@@ -59,8 +59,8 @@ target_device_instances
 ```text
 1. subagent 先理解当前 source_device_signature 的 pin 列表和器件级 pin 功能。
 2. 再阅读组内 link_family_ids、mapping_families、target_device_signatures 和 link_contexts。
-3. 对每条 line_id，结合当前连接的源/目的端口、方向、网络名、链路上下文独立判断。
-4. 同类型不同实例可以共享 pin 功能理解，但不能共享实例编号、网络名或链路归属结论。
+3. 对每条 line_id，结合当前连接的源/目的端口、方向、连线名称和链路上下文独立判断。
+4. 同类型不同实例可以共享 pin 功能理解，但不能共享实例编号或链路归属结论。
 5. 信息不足时输出 unresolved，不得硬猜。
 ```
 
