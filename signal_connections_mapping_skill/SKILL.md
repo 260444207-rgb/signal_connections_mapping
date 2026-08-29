@@ -1,6 +1,6 @@
 ---
 name: diagram-logical-connection-mapping
-description: 基于框图 Excel、pin_info 和自然语言硬件规则分析器件实际 pin，并生成标准 13 列信号接口列表。用于从框图逻辑连接推导源端原理图 pin、处理差分/总线展开及校验 pin 结论；不负责网络命名。
+description: 基于框图 Excel、pin_info 和自然语言硬件规则分析器件实际 pin，并生成标准 14 列信号接口列表。用于从框图逻辑连接推导源端原理图 pin、处理差分/总线展开及校验 pin 结论；不负责网络命名。
 ---
 
 # diagram-logical-connection-mapping
@@ -54,9 +54,10 @@ output/signal_interface_YYYYMMDD_HHMMSS.xlsx
 必须保持输入 workbook 的 sheet 结构：
 
 - `block_info`、`link_info` / `链路信息` 原样保留。
-- 其他连接 sheet 重建为标准 13 列。
+- 其他连接 sheet 重建为标准 14 列。
 - 不得按模型结果新建、删除或合并 sheet。
-- 前 9 列是原始连接事实，模型不得修改。
+- 前 10 列是原始连接事实，模型不得修改；第 10 列固定为“连线属性”。旧输入缺少该列时按空值兼容。
+- 4 个结果列始终追加在原始连接事实之后，顺序为“原理图Pin脚、分析说明、映射置信度、网络命名”。其中前三列来自本 skill 的分析结果，“网络命名”保持为空。
 
 ## 核心门禁
 
@@ -129,7 +130,7 @@ output_contract
 schema_file
 ```
 
-`normalized_connections` 是唯一逐行事实。其他结构不得重复逐行 block、port、shape 或 line 信息。
+`normalized_connections` 是唯一逐行事实。`connection_attribute` 对应输入第 10 列“连线属性”，有值时可作为语义判断依据，但不得修改或作为模型输出；空值在 TASK 紧凑视图中可省略。其他结构不得重复逐行 block、port、shape 或 line 信息。
 
 `connection_defaults` 表示省略字段的确定默认值；异常字段仍保留在对应 connection 中。
 
@@ -160,7 +161,7 @@ custom/user > link > device > signal > global > lexical fallback
 
 ## 网络命名边界
 
-本 skill 不负责网络命名，pin decision 中不包含网络命名字段。正式 Excel 为保持标准 13 列，仍保留空的“网络命名”列；“分析说明”只描述 pin 映射。需要网络名时，将正式 Excel 输出交给独立的 `signal-interface-net-naming` skill。
+本 skill 不负责网络命名，pin decision 中不包含网络命名字段。正式 Excel 为保持标准 14 列，仍保留空的“网络命名”列；“分析说明”只描述 pin 映射。需要网络名时，将正式 Excel 输出交给独立的 `signal-interface-net-naming` skill。
 
 ## 阶段命令
 

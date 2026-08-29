@@ -15,7 +15,8 @@
     "connection_id",
     "base_connection_id",
     "connection_name",
-    "direction"
+    "direction",
+    "connection_attribute"
   ],
   "properties": {
     "line_id": {
@@ -85,6 +86,10 @@
         "OUTPUT",
         ""
       ]
+    },
+    "connection_attribute": {
+      "type": "string",
+      "description": "输入聚合表格中的连线属性；属于不可改写的逐行连接事实。"
     },
     "link_family_id": {
       "type": "string"

@@ -32,7 +32,7 @@ link_family_profiles
 rule_library
 ```
 
-`connection_defaults` 是逐行省略字段的确定默认值；不是推测。逐行连接事实只读取 `normalized_connections`，不要从其他汇总结构复制或改写。
+`connection_defaults` 是逐行省略字段的确定默认值；不是推测。逐行连接事实只读取 `normalized_connections`，不要从其他汇总结构复制或改写。`connection_attribute` 对应聚合表格第 10 列“连线属性”：有值时可辅助理解连接语义，但它不是 pin 候选、不得被模型改写，也不得写入 decision；空值可能为压缩上下文而省略。
 
 ## 硬门禁
 

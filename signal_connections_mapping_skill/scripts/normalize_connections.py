@@ -20,6 +20,7 @@ FIELD_ALIASES = {
     "connection_id": ["connection_id", "连线ID", "连线标识", "line_id", "edge_id"],
     "connection_name": ["connection_name", "连线名称"],
     "direction": ["direction", "连线方向"],
+    "connection_attribute": ["connection_attribute", "连线属性", "连接属性", "line_attribute"],
 }
 
 SKIP_SHEETS = {"BLOCK_INFO", "LINK_INFO", "链路信息", "说明", "README", "INDEX", "目录"}
@@ -388,6 +389,7 @@ def normalize_connections(input_path: str | Path, output_path: str | Path) -> Li
                     "base_connection_id": connection_id_raw,
                     "connection_name": pick(row, "connection_name"),
                     "direction": normalize_direction(pick(row, "direction")),
+                    "connection_attribute": pick(row, "connection_attribute"),
                     "link_family_id": link_meta.get("link_family_id", ""),
                     "link_instance_id": link_meta.get("link_instance_id", ""),
                     "link_member_sheets": link_meta.get("link_member_sheets", []),

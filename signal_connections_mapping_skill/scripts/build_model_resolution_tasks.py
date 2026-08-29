@@ -447,6 +447,7 @@ def compact_normalized_connection(row: Dict[str, Any]) -> Dict[str, Any]:
         "user_link_info",
         "device_role_info",
         "link_contexts",
+        "connection_attribute",
     ]
     for key in optional:
         value = row.get(key)

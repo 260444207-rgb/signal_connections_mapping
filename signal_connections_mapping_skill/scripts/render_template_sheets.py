@@ -104,6 +104,7 @@ def rows_for_decision(normalized: Dict[str, Any], decision: Dict[str, Any], conn
             "连线ID": rendered_connection_id,
             "连线名称": connection_name,
             "连线方向": normalized.get("direction", ""),
+            "连线属性": normalized.get("connection_attribute", ""),
             "原理图Pin脚": selected_pin,
             "分析说明": decision_list_value(decision, "analyses", decision_index, decision.get("analysis", "")),
             "映射置信度": decision_list_value(decision, "confidences", decision_index, decision.get("confidence", "")),

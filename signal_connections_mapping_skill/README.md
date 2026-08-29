@@ -1,6 +1,6 @@
 # openclaw_signal_mapping_layered_skill
 
-基于框图连接表、`pin_info.json`、自然语言硬件规则，生成标准 13 列信号接口列表。
+基于框图连接表、`pin_info.json`、自然语言硬件规则，生成标准 14 列信号接口列表。
 
 详细目录和数据结构说明见：
 
@@ -40,7 +40,7 @@ stage=all 只做脚本冒烟验证，不会自动调用语义 subagent。
 
 ```text
 1. normalize_connections
-   读取输入 Excel，保留 sheet 和前 9 列连接事实。
+   读取输入 Excel，保留 sheet 和前 10 列连接事实；第 10 列为“连线属性”。
 
 2. infer_signal_shapes
    在语义映射前判断 scalar / bus / differential，输出 signal_shape_inference.jsonl，并把 signal_shape_info 写回 normalized_connections。
@@ -151,7 +151,7 @@ subagent 分析优先级：
 
 其中 `链路类型` 相同表示同一个 link family，`链路编号` 表示一条具体链路，`器件Sheet` 写这条链路涉及的器件 sheet 名，`器件角色说明` 用自然语言描述同一个 sheet 在不同链路里的角色。`相关连线ID` 是可选列，只在需要精确约束时填写；多个值可用逗号、分号或顿号分隔，连线 ID 也可以写成 `sheet:连线ID`。这些链路信息会作为对应源端器件 subagent 的上下文，不会单独触发新的 subagent 分组。
 
-该 sheet 会被原样保留，不参与最终 13 列重建。
+该 sheet 会被原样保留，不参与最终 14 列重建。
 
 不提供 `link_info` / `链路信息` 时流程仍然正常工作：系统会根据 block_info 的器件信息、源/目的 Block、端口名、连线名推断 mapping_family，并按器件上下文生成 subagent 任务。
 
@@ -193,16 +193,16 @@ output/signal_interface_YYYYMMDD_HHMMSS.xlsx
 ```text
 1. 输入 workbook 的 sheet 结构必须保留。
 2. block_info 原样保留。
-3. 其他连接 sheet 重建为标准 13 列。
-4. 前 9 列是原始连接事实，模型不得修改。
+3. 其他连接 sheet 重建为标准 14 列。
+4. 前 10 列是原始连接事实，模型不得修改；旧的 9 列输入会补空“连线属性”。
 5. 信息不足时输出 unresolved。
 6. 一条逻辑连接对应多个物理 pin 时，优先在映射前或 subagent 输出阶段展开为 `主line_id#数字` 多行；兼容旧任务时才使用 `selected_pins` 数组。
 7. `原理图Pin脚` 必须逐字来自入参 `pin_info.json` 中该源端器件编码对应的 pin 列表；不得改写、翻译、补全、大小写规范化或使用其他器件 pin。
-8. pin decision 不包含网络命名字段；最终 Excel 为保持标准 13 列，“网络命名”列固定为空。
+8. pin decision 不包含网络命名字段；最终 Excel 为保持标准 14 列，“网络命名”列固定为空。
 9. 网络命名是独立后处理，使用 `signal-interface-net-naming` skill，不属于本 skill 的完成标准。
 ```
 
-标准 13 列：
+标准 14 列：
 
 ```text
 源Block标识
@@ -214,6 +214,7 @@ output/signal_interface_YYYYMMDD_HHMMSS.xlsx
 连线ID
 连线名称
 连线方向
+连线属性
 原理图Pin脚
 分析说明
 映射置信度

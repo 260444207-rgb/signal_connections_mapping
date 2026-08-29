@@ -14,8 +14,9 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from build_model_resolution_tasks import extract_rule_blocks, match_rule_sections
 from check_subagent_outputs import check_subagent_outputs
-from common import extract_component_uuid, load_pin_catalog, normalize_component_reference, pins_for_part
-from render_template_sheets import rows_for_decision
+from common import FINAL_HEADERS, extract_component_uuid, load_pin_catalog, normalize_component_reference, pins_for_part, write_jsonl
+from render_template_sheets import render_template_sheets, rows_for_decision
+from normalize_connections import normalize_connections
 from validate_mapping import validate_mapping
 from infer_signal_shapes import iter_rule_sections, matching_rule_hint
 from route_model_resolution import route_model_resolution
@@ -662,6 +663,7 @@ class LayeredRuleRecallTests(unittest.TestCase):
                 "target_block_name": "AMC7964",
                 "target_port": "SPI",
                 "connection_id": "C1",
+                "connection_attribute": "控制信号",
             },
             {
                 "selected_pin": "HAC_SPI1_CLK",
@@ -671,6 +673,97 @@ class LayeredRuleRecallTests(unittest.TestCase):
         )
         self.assertEqual("", rows[0]["网络命名"])
         self.assertEqual("pin mapping basis", rows[0]["分析说明"])
+        self.assertEqual("控制信号", rows[0]["连线属性"])
+
+    def test_final_headers_are_ten_input_facts_followed_by_four_result_columns(self) -> None:
+        self.assertEqual(14, len(FINAL_HEADERS))
+        self.assertEqual(
+            [
+                "源Block标识", "源Block名称", "源Port", "目的Block标识", "目的Block名称",
+                "目的Port", "连线ID", "连线名称", "连线方向", "连线属性",
+            ],
+            FINAL_HEADERS[:10],
+        )
+        self.assertEqual(["原理图Pin脚", "分析说明", "映射置信度", "网络命名"], FINAL_HEADERS[10:])
+
+    def test_normalizer_reads_new_connection_attribute_and_keeps_old_input_compatible(self) -> None:
+        source = self.task_dir / "connections.json"
+        output = self.task_dir / "normalized.jsonl"
+        source.write_text(json.dumps([
+            {
+                "source_sheet_name": "S1", "源Block标识": "B1", "源Block名称": "SRC",
+                "源Port": "GPIO0", "目的Block标识": "B2", "目的Block名称": "DST",
+                "目的Port": "EN", "连线ID": "C1", "连线名称": "ENABLE",
+                "连线方向": "OUTPUT", "连线属性": "低有效",
+            },
+            {
+                "source_sheet_name": "S1", "源Block标识": "B1", "源Block名称": "SRC",
+                "源Port": "GPIO1", "目的Block标识": "B2", "目的Block名称": "DST",
+                "目的Port": "MODE", "连线ID": "C2", "连线名称": "MODE",
+                "连线方向": "OUTPUT",
+            },
+        ], ensure_ascii=False), encoding="utf-8")
+
+        rows = normalize_connections(source, output)
+
+        self.assertEqual("低有效", rows[0]["connection_attribute"])
+        self.assertEqual("", rows[1]["connection_attribute"])
+
+    def test_formal_excel_renderer_writes_fourteen_columns_in_order(self) -> None:
+        from openpyxl import Workbook, load_workbook
+
+        template = self.task_dir / "template.xlsx"
+        normalized = self.task_dir / "normalized.jsonl"
+        decisions = self.task_dir / "decisions.jsonl"
+        result = self.task_dir / "result.xlsx"
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "S1"
+        sheet.append(FINAL_HEADERS[:10])
+        workbook.save(template)
+        write_jsonl(normalized, [{
+            "line_id": "S1:2:C1", "source_sheet_name": "S1", "output_sheet_name": "S1",
+            "source_block_id": "B1", "source_block_name": "SRC", "source_port": "GPIO0",
+            "target_block_id": "B2", "target_block_name": "DST", "target_port": "EN",
+            "connection_id": "C1", "connection_name": "ENABLE", "direction": "OUTPUT",
+            "connection_attribute": "低有效",
+        }])
+        write_jsonl(decisions, [{
+            "line_id": "S1:2:C1", "selected_pin": "GPIO0", "analysis": "逐字命中",
+            "confidence": "High", "decision_type": "model_resolved",
+        }])
+
+        render_template_sheets(template, normalized, decisions, result)
+
+        rendered = load_workbook(result, data_only=True)
+        try:
+            values = list(rendered["S1"].iter_rows(values_only=True))
+            self.assertEqual(tuple(FINAL_HEADERS), values[0])
+            self.assertEqual("低有效", values[1][9])
+            self.assertEqual("GPIO0", values[1][10])
+            self.assertEqual("逐字命中", values[1][11])
+            self.assertEqual("High", values[1][12])
+            self.assertIsNone(values[1][13])
+        finally:
+            rendered.close()
+
+    def test_compact_task_connection_preserves_connection_attribute(self) -> None:
+        compact = compact_normalized_connection({
+            "line_id": "S:2:C1",
+            "source_sheet_name": "S",
+            "source_part_id": "P1",
+            "source_block_id": "B1",
+            "source_block_name": "SRC",
+            "source_port": "GPIO0",
+            "target_block_id": "B2",
+            "target_block_name": "DST",
+            "target_port": "EN",
+            "connection_id": "C1",
+            "connection_name": "ENABLE",
+            "direction": "OUTPUT",
+            "connection_attribute": "低有效",
+        })
+        self.assertEqual("低有效", compact["connection_attribute"])
 
     def test_model_tasks_persist_canonical_finish_contract(self) -> None:
         connections = self.task_dir / "design" / "aggregated_connections.xlsx"

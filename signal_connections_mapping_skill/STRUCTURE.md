@@ -4,7 +4,7 @@
 
 ## 1. 总体目标
 
-该 skill 用于把输入框图 Excel 和 `pin_info.json` 转换成标准 13 列信号接口列表。
+该 skill 用于把输入框图 Excel 和 `pin_info.json` 转换成标准 14 列信号接口列表。
 
 核心约束：
 
@@ -12,13 +12,13 @@
 1. 输出 workbook 沿用输入 workbook 的 sheet 顺序和分页结构。
 2. block_info 原样保留。
 3. link_info / 链路信息 如果存在，也原样保留。
-4. 其他连接 sheet 重建为标准 13 列。
-5. 前 9 列连接事实来自输入框图，除多物理 pin 展开时连线ID追加 #数字外，不得被模型或脚本改写。
+4. 其他连接 sheet 重建为标准 14 列。
+5. 前 10 列连接事实来自输入框图，第 10 列为“连线属性”；除多物理 pin 展开时连线ID追加 #数字外，不得被模型或脚本改写。旧的 9 列输入按空“连线属性”兼容。
 6. 后 4 列由脚本预裁决、模型语义分析、人工覆盖结果合并得到。
 7. `原理图Pin脚` 必须逐字来自入参 `pin_info.json` 中当前源端器件编码对应的 pin 列表；不得改写 pin 字符串。入参没有该器件编码时，跳过该器件语义分析并保持 unresolved。
 ```
 
-标准 13 列：
+标准 14 列：
 
 ```text
 源Block标识
@@ -30,6 +30,7 @@
 连线ID
 连线名称
 连线方向
+连线属性
 原理图Pin脚
 分析说明
 映射置信度
@@ -143,7 +144,7 @@ all:         只走脚本路径，不会自动调用真实 subagent；只适合�
 2. 文本标准化、方向标准化、简单名称相似度。
 3. pin_info.json 加载。
 4. 前导零料号兼容匹配。
-5. 标准 13 列表头常量。
+5. 标准 14 列表头常量。
 ```
 
 `pin_info.json` 原生格式：
@@ -181,7 +182,7 @@ task_root/
 3. 读取 block_info 中的 框图标识 -> 器件信息。
 4. 建立 block_id/block_name/sheet_name 到器件信息的别名。
 5. 读取可选 link_info / 链路信息 sheet。
-6. 保留输入前 9 列连接事实。
+6. 保留输入前 10 列连接事实。
 7. 只展开显式总线格式，例如 XXX[7:0] 或 XXX*4。
 8. 生成 source_part_id、target_part_id、link_contexts 等模型上下文字段。
 ```
@@ -425,7 +426,7 @@ TASK_03_TXVGA_47151290_RF_TX_CHAIN_98e63e8c1e3a.json
 1. 复制输入 workbook 的 sheet 结构和顺序。
 2. block_info 原样保留。
 3. link_info / 链路信息 原样保留。
-4. 连接 sheet 清空后重建为标准 13 列。
+4. 连接 sheet 清空后重建为标准 14 列。
 5. 根据 selected_pins 展开多物理 pin 行。
 6. 展开时只有连线ID和后 4 列可变化，前 8 列保持输入事实不变。
 ```
@@ -549,7 +550,7 @@ analyses/confidences: 多物理 pin 的逐项说明
 
 ### schemas/final_mapping_row.schema.json
 
-最终 13 列输出行结构。
+最终 14 列输出行结构。
 
 ## 8. workflows 目录
 
@@ -680,7 +681,7 @@ flowchart TD
 | Skill 入口 | `SKILL.md`, `README.md`, `RUNBOOK.md` | 执行契约、正式流程、完成条件 | 具体器件 pin 裁决 |
 | 工作流说明 | `workflows/` | 阶段顺序、context 隔离、单连接分析方式 | 与 `run_pipeline.py` 不一致的旧流程 |
 | 规则与 prompt | `rules/`, `prompts/` | 自然语言硬件规则、模型分析边界 | Python 脚本里的硬编码语义 |
-| 数据契约 | `schemas/` | JSON/JSONL 字段形状和最终 13 列 | 运行时临时状态 |
+| 数据契约 | `schemas/` | JSON/JSONL 字段形状和最终 14 列 | 运行时临时状态 |
 | 脚本管线 | `scripts/` | 输入解析、形态判断、pin_info 门禁、任务构建、合并校验渲染 | 未经 pin_info 支持的模型猜测 |
 
 ### 契约验证点
@@ -691,7 +692,7 @@ flowchart TD
 | subagent 任务使用同一份规则 | `run_pipeline.py` 调用 `build_model_resolution_tasks(..., combined_mapping_rules.md)` |
 | pin catalog 加载口径一致 | `route_model_resolution.py`、`infer_signal_shapes.py`、`build_model_resolution_tasks.py`、`validate_mapping.py` 都使用 `load_pin_catalog()` |
 | 缺少源端器件 pin 时不启动语义任务 | `route_model_resolution.py` 保持 unresolved，`build_model_resolution_tasks.py` 记录 skipped task |
-| 最终 sheet 结构不由模型决定 | `render_template_sheets.py` 以输入 workbook 为模板，连接 sheet 重建为标准 13 列 |
+| 最终 sheet 结构不由模型决定 | `render_template_sheets.py` 以输入 workbook 为模板，连接 sheet 重建为标准 14 列 |
 
 ## 12. 已清理的旧结构
 

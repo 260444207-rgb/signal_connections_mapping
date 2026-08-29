@@ -34,7 +34,7 @@
 ```text
 1. 禁止脚本按名称相似度生成或排序候选 pin。
 2. 除 `source_port` 与单 pin 逐字一致的身份映射外，禁止脚本自动预裁决 selected_pin。
-3. 禁止脚本改写 normalized_connection 的前 9 列连接事实。
+3. 禁止脚本改写 normalized_connection 的前 10 列连接事实。
 4. 禁止脚本或模型改写 pin_info.json 中的 pin 字符串。
 5. 禁止在缺少源端器件 pin 列表时生成 selected_pin 或语义 TASK。
 ```

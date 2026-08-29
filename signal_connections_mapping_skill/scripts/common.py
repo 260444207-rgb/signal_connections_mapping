@@ -5,7 +5,7 @@ import csv,json,re,hashlib
 from pathlib import Path
 from typing import Any,Dict,Iterable,List,Optional
 
-FINAL_HEADERS=["源Block标识","源Block名称","源Port","目的Block标识","目的Block名称","目的Port","连线ID","连线名称","连线方向","原理图Pin脚","分析说明","映射置信度","网络命名"]
+FINAL_HEADERS=["源Block标识","源Block名称","源Port","目的Block标识","目的Block名称","目的Port","连线ID","连线名称","连线方向","连线属性","原理图Pin脚","分析说明","映射置信度","网络命名"]
 VALID_DIRECTIONS={"INPUT","OUTPUT",""}; VALID_CONFIDENCE={"High","Medium","Low",""}
 EXCLUDED_INPUT_SHEETS={"BLOCK_INFO","目录","说明","README","INDEX"}
 

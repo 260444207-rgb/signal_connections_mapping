@@ -72,7 +72,7 @@ target_device_instances
 3. 禁止因为 target_device_signature 不同而把同一个源端器件拆成多个普通 subagent。
 4. 禁止因为 mapping_family 不同而把同一个源端器件拆成多个普通 subagent。
 5. 禁止使用 context_group_id、link_family_id、mapping_family 生成输出 sheet。
-6. 禁止让 subagent 修改 output_sheet_name/source_sheet_name 或前 9 列连接事实。
+6. 禁止让 subagent 修改 output_sheet_name/source_sheet_name 或前 10 列连接事实。
 7. 禁止让 subagent 输出不属于当前 context_group 的 line_id。
 ```
 

@@ -2,13 +2,13 @@
 
 ## 1. 核心目标
 
-根据输入框图 Excel 的连接事实、`pin_info.json` 的源端器件 pin 列表、自然语言项目规则，生成标准 13 列信号接口列表。
+根据输入框图 Excel 的连接事实、`pin_info.json` 的源端器件 pin 列表、自然语言项目规则，生成标准 14 列信号接口列表。
 
 最终输出严格沿用输入 Excel 的 sheet 结构：
 
 ```text
 block_info 原样保留
-其他连接 sheet 重建为标准 13 列
+其他连接 sheet 重建为标准 14 列
 ```
 
 ## 2. 主流程
@@ -47,13 +47,13 @@ render_template_sheets
 
 ```text
 1. 保留 source_sheet_name / output_sheet_name
-2. 保留前 9 列连接事实
+2. 保留前 10 列连接事实（第 10 列为“连线属性”；旧输入缺失时补空）
 3. 读取 block_info 中的框图标识 -> 器件信息，并建立 block_id/block_name 别名
 4. 读取可选 link_info / 链路信息 sheet，注入 link_family_id、link_instance_id、user_link_info；没有该 sheet 时保持字段为空，后续按器件上下文兜底
 5. 只展开显式总线格式，如 XXX[7:0] 或 XXX*4
 ```
 
-不得根据器件语义修改端口名，不得把端口改成 default，不得用模型推断覆盖前 9 列。
+不得根据器件语义修改端口名，不得把端口改成 default，不得用模型推断覆盖前 10 列。
 
 ### infer_signal_shapes
 
@@ -165,7 +165,7 @@ output/signal_interface_YYYYMMDD_HHMMSS.xlsx
 
 ## 4. 正式输出约束
 
-标准 13 列：
+标准 14 列：
 
 ```text
 源Block标识
@@ -177,13 +177,14 @@ output/signal_interface_YYYYMMDD_HHMMSS.xlsx
 连线ID
 连线名称
 连线方向
+连线属性
 原理图Pin脚
 分析说明
 映射置信度
 网络命名
 ```
 
-前 9 列是连接事实字段，模型不得修改。
+前 10 列是连接事实字段，模型不得修改。
 
 如果模型阶段判断一条逻辑连接对应多个物理 pin，应输出多行 decision：`line_id=原line_id#数字`、`parent_line_id=原line_id`、每行一个 `selected_pin`。渲染阶段会复制 parent 原始连接事实并把连线ID改为 `主连线ID#数字`，除连线ID和后 4 列外，前置字段不得变化。
 
