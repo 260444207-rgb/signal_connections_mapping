@@ -9,18 +9,22 @@ import os
 from pathlib import Path
 import sys
 
-from init_task import init_task
-from normalize_connections import normalize_connections
-from build_analysis_context_groups import build_analysis_context_groups
-from infer_signal_shapes import infer_signal_shapes
-from route_model_resolution import route_model_resolution
-from build_model_resolution_tasks import build_model_resolution_tasks
-from check_subagent_outputs import check_subagent_outputs
-from merge_decisions import merge_decisions
-from validate_mapping import validate_mapping
-from render_outputs import render_outputs
-from render_template_sheets import render_template_sheets
-from common import read_json, write_json
+PROJECT_ROOT = Path(__file__).resolve().parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from signal_mapping.init_task import init_task
+from signal_mapping.normalize_connections import normalize_connections
+from signal_mapping.build_analysis_context_groups import build_analysis_context_groups
+from signal_mapping.infer_signal_shapes import infer_signal_shapes
+from signal_mapping.route_model_resolution import route_model_resolution
+from signal_mapping.build_model_resolution_tasks import build_model_resolution_tasks
+from signal_mapping.check_subagent_outputs import check_subagent_outputs
+from signal_mapping.merge_decisions import merge_decisions
+from signal_mapping.validate_mapping import validate_mapping
+from signal_mapping.render_outputs import render_outputs
+from signal_mapping.render_template_sheets import render_template_sheets
+from signal_mapping.common import read_json, write_json
 
 REQUIRED_PREPARE_FILES = [
     "normalized_connections.jsonl",
@@ -32,6 +36,20 @@ EXTERNAL_DEVICE_RULES_FILENAME = "external_device_rules.md"
 SIGNAL_INTERFACE_TASK_SUBDIR = "signal_interface"
 PIPELINE_CONFIG_FILENAME = "pipeline_run_config.json"
 FINISH_COMMAND_FILENAME = "finish_command.txt"
+
+def require_runtime_dependencies() -> None:
+    """Fail early with an interpreter-specific install command."""
+    try:
+        import openpyxl  # noqa: F401
+    except ModuleNotFoundError as exc:
+        if exc.name != "openpyxl":
+            raise
+        requirements = Path(__file__).resolve().parents[1] / "requirements.txt"
+        raise RuntimeError(
+            "Missing required dependency 'openpyxl' for the active Python interpreter. "
+            f"Install the declared runtime dependencies with: "
+            f"'{sys.executable}' -m pip install -r '{requirements}'"
+        ) from exc
 
 def _norm_rule_path(path: Path) -> str:
     return str(path.expanduser())
@@ -407,6 +425,7 @@ def main():
         help="template_sheets=正式模式，严格按输入 Excel sheet 输出；flat_debug=仅调试用平铺 CSV"
     )
     args = parser.parse_args()
+    require_runtime_dependencies()
 
     task_root = Path(args.task_dir)
     task_dir = resolve_signal_interface_task_dir(task_root)

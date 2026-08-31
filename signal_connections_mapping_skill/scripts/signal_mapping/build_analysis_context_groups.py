@@ -8,7 +8,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
 
-from common import iter_jsonl, write_json, stable_hash, normalize_text
+from .common import iter_jsonl, write_json, stable_hash, normalize_text
 
 
 FAMILY_KEYWORDS = [

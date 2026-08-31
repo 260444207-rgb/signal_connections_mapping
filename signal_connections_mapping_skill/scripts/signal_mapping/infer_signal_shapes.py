@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List
 
-from common import (
+from .common import (
     iter_jsonl,
     load_pin_catalog,
     normalize_text,

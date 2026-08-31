@@ -1,6 +1,6 @@
 ---
 name: diagram-logical-connection-mapping
-description: 基于框图 Excel、pin_info 和自然语言硬件规则分析器件实际 pin，并生成标准 14 列信号接口列表。用于从框图逻辑连接推导源端原理图 pin、处理差分/总线展开及校验 pin 结论；不负责网络命名。
+description: 基于框图 Excel、pin_info 和自然语言硬件规则分析器件实际 pin，并生成标准 14 列框图逻辑映射表。用于从框图逻辑连接推导源端原理图 pin、处理差分/总线展开及校验 pin 结论；不负责网络命名。
 ---
 
 # diagram-logical-connection-mapping
@@ -25,6 +25,14 @@ model_tasks
 完整命令和故障处理见 [RUNBOOK.md](RUNBOOK.md)。只有需要维护内部结构时才阅读 [STRUCTURE.md](STRUCTURE.md)。
 
 先确定本 skill 根目录的绝对路径；所有阶段都用 `<skill_root>\scripts\run_pipeline.py` 的绝对路径执行，与当前工作目录无关。禁止在 TASK_ROOT 下调用 `.\scripts\run_pipeline.py`，也禁止把 `scripts` 复制到 task、`signal_interface` 或 `intermediate`。遇到 `ModuleNotFoundError` 时重新确认 skill 绝对路径和 Python 解释器后重试原命令，不得创建包装脚本规避。
+
+首次使用某个 Python 解释器前，确认它能导入 `openpyxl`；缺失时按根目录 `requirements.txt` 安装声明依赖：
+
+```powershell
+python -m pip install -r '<skill_root>\requirements.txt'
+```
+
+入口会在实际执行阶段提前检查依赖，并在报错中给出当前 `sys.executable` 对应的精确安装命令。`finish_command.txt` 会继续固定使用生成任务时的同一解释器。
 
 ## 输入与输出
 

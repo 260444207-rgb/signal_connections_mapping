@@ -46,6 +46,7 @@ signal_connections_mapping/
 ├── RUNBOOK.md
 ├── STRUCTURE.md
 ├── .gitignore
+├── requirements.txt
 ├── scripts/
 ├── prompts/
 ├── rules/
@@ -135,7 +136,9 @@ all:         只走脚本路径，不会自动调用真实 subagent；只适合�
 
 ## 4. scripts 目录
 
-### scripts/common.py
+`scripts/run_pipeline.py` 是唯一入口；其余实现位于私有包 `scripts/signal_mapping/`。入口通过 `Path(__file__).resolve().parent` 取得自身所在的 `scripts` 绝对路径并插入 `sys.path[0]`，因此不依赖当前工作目录，也不会把 `common` 等通用模块名暴露为顶层导入。
+
+### scripts/signal_mapping/common.py
 
 公共工具：
 
@@ -158,7 +161,7 @@ all:         只走脚本路径，不会自动调用真实 subagent；只适合�
 
 脚本直接使用 `{器件料号: [pin名...]}`，不转换为 `{device_part_id, pin}` 对象列表。
 
-### scripts/init_task.py
+### scripts/signal_mapping/init_task.py
 
 创建任务目录：
 
@@ -170,7 +173,7 @@ task_root/
 
 `output/` 只在 `finish` / render 阶段真正写出 Excel 时按需创建；所有本 skill 产物都收拢在 `signal_interface/` 下，不再初始化空的 `logs/`、`rules/` 等目录。
 
-### scripts/normalize_connections.py
+### scripts/signal_mapping/normalize_connections.py
 
 把输入框图表标准化为 `intermediate/normalized_connections.jsonl`。
 
@@ -203,7 +206,7 @@ task_root/
 5. 同一个 sheet 可以出现在多条链路中，例如 HBF 同时属于 TX/RX 链路。
 ```
 
-### scripts/build_analysis_context_groups.py
+### scripts/signal_mapping/build_analysis_context_groups.py
 
 生成 `intermediate/analysis_context_groups.json`。
 
@@ -240,13 +243,13 @@ fallback_device_context: 无显式链路族和明确映射族，按器件上下�
 
 链路级数据、信号族和目标上下文不再用于重新起 subagent；它们只帮助同一个源端器件 subagent 判断每条连接的作用。
 
-### scripts/route_model_resolution.py
+### scripts/signal_mapping/route_model_resolution.py
 
 按 `source_part_id` 读取 `pin_info.json`，只执行模型路由门禁，不生成候选 pin，也不自动预裁决。
 
 有非空源端 pin 列表的连接全部进入 `needs_model_resolution.jsonl`。缺 pin 的连接直接保持 unresolved，不生成语义 TASK。
 
-### scripts/build_model_resolution_tasks.py
+### scripts/signal_mapping/build_model_resolution_tasks.py
 
 根据 `analysis_context_groups.json` 和 `needs_model_resolution.jsonl` 生成隔离 subagent 任务包：
 
@@ -370,7 +373,7 @@ TASK_02_SROC_302078562_MULTI_LINK_61889c68782d.json
 TASK_03_TXVGA_47151290_RF_TX_CHAIN_98e63e8c1e3a.json
 ```
 
-### scripts/merge_decisions.py
+### scripts/signal_mapping/merge_decisions.py
 
 合并多来源裁决：
 
@@ -382,7 +385,7 @@ TASK_03_TXVGA_47151290_RF_TX_CHAIN_98e63e8c1e3a.json
 
 后出现的文件可覆盖前面的同 line_id 结果。
 
-### scripts/check_subagent_outputs.py
+### scripts/signal_mapping/check_subagent_outputs.py
 
 `finish` 前的主控门禁脚本。
 
@@ -399,7 +402,7 @@ TASK_03_TXVGA_47151290_RF_TX_CHAIN_98e63e8c1e3a.json
 
 失败的 subagent 必须按 `failed_subagent_rerun_plan.md` 重新启动分析，写入对应 output_file 后再运行 finish。
 
-### scripts/validate_mapping.py
+### scripts/signal_mapping/validate_mapping.py
 
 校验合并后的 `mapping_decisions.jsonl`。
 
@@ -416,7 +419,7 @@ TASK_03_TXVGA_47151290_RF_TX_CHAIN_98e63e8c1e3a.json
 8. 无 pin 时不得 High。
 ```
 
-### scripts/render_template_sheets.py
+### scripts/signal_mapping/render_template_sheets.py
 
 正式 Excel 渲染脚本。
 
@@ -439,11 +442,11 @@ selected_pins: ["PIN_P", "PIN_N"]
 输出连线ID: 1868#1, 1868#2
 ```
 
-### scripts/render_outputs.py
+### scripts/signal_mapping/render_outputs.py
 
 调试用平铺输出。正式信号接口列表应使用 `render_template_sheets.py`。
 
-### scripts/infer_signal_shapes.py
+### scripts/signal_mapping/infer_signal_shapes.py
 
 语义映射前的信号形态判断阶段。读取 `normalized_connections.jsonl`、`pin_info.json` 和本地自然语言规则，输出：
 
@@ -712,8 +715,8 @@ run_prepare.py / run_model_tasks.py / run_finish.py
 
 ```text
 scripts/run_pipeline.py
-scripts/route_model_resolution.py
-scripts/build_model_resolution_tasks.py
+scripts/signal_mapping/route_model_resolution.py
+scripts/signal_mapping/build_model_resolution_tasks.py
 prompts/semantic_mapping_resolver.md
-scripts/render_template_sheets.py
+scripts/signal_mapping/render_template_sheets.py
 ```

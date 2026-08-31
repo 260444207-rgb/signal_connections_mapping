@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
-from common import ensure_dir, write_json, write_jsonl
+from .common import ensure_dir, write_json, write_jsonl
 
 
 def read_json(path: str | Path, default: Any = None) -> Any:

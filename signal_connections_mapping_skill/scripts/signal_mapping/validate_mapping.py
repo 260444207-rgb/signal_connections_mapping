@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import argparse
-from common import iter_jsonl,write_json,VALID_CONFIDENCE,load_pin_catalog,pins_for_part
+from .common import iter_jsonl,write_json,VALID_CONFIDENCE,load_pin_catalog,pins_for_part
 def selected_pins(decision):
     pins=decision.get('selected_pins')
     if isinstance(pins,list) and pins: return [str(p).strip() for p in pins if str(p).strip()]

@@ -19,6 +19,8 @@ connections.xlsx
 pin_info.json
 ```
 
+确认当前 Python 解释器已安装根目录 `requirements.txt` 中声明的运行依赖。入口缺少依赖时会在处理输入前给出与当前解释器绑定的安装命令。
+
 可选规则按以下方式提供：
 
 ```text

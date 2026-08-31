@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 import argparse
 from pathlib import Path
-from common import iter_jsonl,write_jsonl
+from .common import iter_jsonl,write_jsonl
 def merge_decisions(output,inputs):
     merged={}
     for path in inputs:

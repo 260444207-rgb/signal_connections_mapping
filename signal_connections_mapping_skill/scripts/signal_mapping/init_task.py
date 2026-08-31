@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 import argparse
 from pathlib import Path
-from common import ensure_dir,write_json
+from .common import ensure_dir,write_json
 def init_task(task_dir):
     task=Path(task_dir)
     ensure_dir(task/'intermediate')

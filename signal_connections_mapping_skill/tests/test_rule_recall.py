@@ -12,15 +12,15 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from build_model_resolution_tasks import extract_rule_blocks, match_rule_sections
-from check_subagent_outputs import check_subagent_outputs
-from common import FINAL_HEADERS, extract_component_uuid, load_pin_catalog, normalize_component_reference, pins_for_part, write_jsonl
-from render_template_sheets import render_template_sheets, rows_for_decision
-from normalize_connections import normalize_connections
-from validate_mapping import validate_mapping
-from infer_signal_shapes import iter_rule_sections, matching_rule_hint
-from route_model_resolution import route_model_resolution
-from build_model_resolution_tasks import (
+from signal_mapping.build_model_resolution_tasks import extract_rule_blocks, match_rule_sections
+from signal_mapping.check_subagent_outputs import check_subagent_outputs
+from signal_mapping.common import FINAL_HEADERS, extract_component_uuid, load_pin_catalog, normalize_component_reference, pins_for_part, write_jsonl
+from signal_mapping.render_template_sheets import render_template_sheets, rows_for_decision
+from signal_mapping.normalize_connections import normalize_connections
+from signal_mapping.validate_mapping import validate_mapping
+from signal_mapping.infer_signal_shapes import iter_rule_sections, matching_rule_hint
+from signal_mapping.route_model_resolution import route_model_resolution
+from signal_mapping.build_model_resolution_tasks import (
     PIN_GROUP_THRESHOLD,
     build_diagram_link_context,
     build_pin_allocation_context,

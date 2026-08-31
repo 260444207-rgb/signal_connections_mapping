@@ -1,18 +1,23 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+"""
+调试用平铺输出脚本。
+正式信号接口列表请使用 render_template_sheets.py，
+它会严格按照输入框图 Excel 的原 sheet 结构写入。
+"""
 
 from __future__ import annotations
 
 import argparse
+import csv
 from pathlib import Path
 from typing import Dict, Any, List
 
-from common import iter_jsonl, ensure_dir, FINAL_HEADERS
+from .common import iter_jsonl, write_jsonl, ensure_dir, FINAL_HEADERS
 
-SKIP_SHEETS = {"BLOCK_INFO", "LINK_INFO", "链路信息", "说明", "README", "INDEX", "目录"}
 MULTI_RESULT_CONNECTION_ID_SEPARATOR = "#"
 
-def decision_selected_pins(decision: Dict[str, Any]) -> List[str]:
+def decision_selected_pins(decision):
     pins = decision.get("selected_pins")
     if isinstance(pins, list) and pins:
         return [str(pin).strip() for pin in pins if str(pin).strip()]
@@ -81,19 +86,12 @@ def group_child_decisions(decisions: Dict[str, Dict[str, Any]], normalized_ids: 
     return grouped
 
 def rows_for_decision(normalized: Dict[str, Any], decision: Dict[str, Any], connection_id: str | None = None) -> List[Dict[str, Any]]:
-    connection_name = normalized.get("connection_name", "") or ""
     selected_pins, decision_index_offset = normalize_selected_pins_for_row(normalized, decision_selected_pins(decision) or [""])
     should_expand = len(selected_pins) > 1
     base_connection_id = normalized.get("base_connection_id") or normalized.get("connection_id", "")
     rows: List[Dict[str, Any]] = []
     for idx, selected_pin in enumerate(selected_pins):
         decision_index = decision_index_offset + idx
-        rendered_connection_id = connection_id or expanded_connection_id(
-            base_connection_id,
-            normalized.get("connection_id", ""),
-            should_expand,
-            idx,
-        )
         rows.append({
             "源Block标识": normalized.get("source_block_id", ""),
             "源Block名称": normalized.get("source_block_name", ""),
@@ -101,8 +99,8 @@ def rows_for_decision(normalized: Dict[str, Any], decision: Dict[str, Any], conn
             "目的Block标识": normalized.get("target_block_id", ""),
             "目的Block名称": normalized.get("target_block_name", ""),
             "目的Port": normalized.get("target_port", ""),
-            "连线ID": rendered_connection_id,
-            "连线名称": connection_name,
+            "连线ID": connection_id or expanded_connection_id(base_connection_id, normalized.get("connection_id", ""), should_expand, idx),
+            "连线名称": normalized.get("connection_name", ""),
             "连线方向": normalized.get("direction", ""),
             "连线属性": normalized.get("connection_attribute", ""),
             "原理图Pin脚": selected_pin,
@@ -112,112 +110,50 @@ def rows_for_decision(normalized: Dict[str, Any], decision: Dict[str, Any], conn
         })
     return rows
 
-def build_final_rows_by_template_sheet(normalized_path: str | Path, decisions_path: str | Path) -> Dict[str, List[Dict[str, Any]]]:
-    """
-    按 normalized_connection.output_sheet_name 分组。
-    注意：output_sheet_name 来自输入框图 Excel 的原 sheet 名，不允许按 block_id/group 自行分组。
-    """
+def build_final_rows(normalized_path: str | Path, decisions_path: str | Path) -> List[Dict[str, Any]]:
     decisions = {d["line_id"]: d for d in iter_jsonl(decisions_path)}
     normalized_rows = list(iter_jsonl(normalized_path))
     normalized_ids = {row["line_id"] for row in normalized_rows}
     child_decisions = group_child_decisions(decisions, normalized_ids)
-    grouped: Dict[str, List[Dict[str, Any]]] = {}
-
+    rows = []
     for n in normalized_rows:
-        sheet_name = n.get("output_sheet_name") or n.get("source_sheet_name")
-        if not sheet_name:
-            raise ValueError(f"normalized row missing output_sheet_name/source_sheet_name: {n.get('line_id')}")
         children = child_decisions.get(n["line_id"], [])
         if children:
             for child in children:
-                grouped.setdefault(sheet_name, []).extend(rows_for_decision(n, child, display_connection_id_for_decision(n, child)))
+                rows.extend(rows_for_decision(n, child, display_connection_id_for_decision(n, child)))
             continue
-        grouped.setdefault(sheet_name, []).extend(rows_for_decision(n, decisions.get(n["line_id"], {})))
+        rows.extend(rows_for_decision(n, decisions.get(n["line_id"], {})))
+    return rows
 
-    return grouped
-
-def clear_sheet_values(ws):
-    # 保留 sheet 本身，删除旧内容后从第一行重建标准结果表。
-    if ws.max_row:
-        ws.delete_rows(1, ws.max_row)
-
-def write_rows(ws, rows: List[Dict[str, Any]]):
-    clear_sheet_values(ws)
-    ws.append(FINAL_HEADERS)
-    for row in rows:
-        ws.append([row.get(h, "") for h in FINAL_HEADERS])
-
-    # 简单格式，避免强依赖复杂样式
-    try:
-        from openpyxl.styles import Font, Alignment
-        for cell in ws[1]:
-            cell.font = Font(bold=True)
-            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        for col in ws.columns:
-            max_len = max(len(str(cell.value or "")) for cell in col)
-            ws.column_dimensions[col[0].column_letter].width = min(40, max(10, max_len + 2))
-    except Exception:
-        pass
-
-def render_template_sheets(template_excel: str | Path, normalized_path: str | Path, decisions_path: str | Path, output_excel: str | Path) -> Dict[str, Any]:
-    """
-    正式信号接口列表输出：
-    1. 复制输入框图 Excel 的 sheet 结构。
-    2. 只向输入 Excel 已存在的器件 sheet 写入分析结果。
-    3. 不根据 block_id/group/source_sheet 自行创建新 sheet。
-    4. 不把所有结果合并到一个总 sheet。
-    """
-    from openpyxl import load_workbook
-
-    template_excel = Path(template_excel)
-    output_excel = Path(output_excel)
-    ensure_dir(output_excel.parent)
-
-    wb = load_workbook(template_excel)
-    grouped = build_final_rows_by_template_sheet(normalized_path, decisions_path)
-
-    input_sheets = set(wb.sheetnames)
-    missing_in_template = sorted([s for s in grouped.keys() if s not in input_sheets])
-
-    # 严格模式：不能创建新 sheet，避免“自己分组输出”
-    if missing_in_template:
-        raise ValueError(
-            "以下输出 sheet 不存在于输入框图表格中，禁止自动创建新 sheet："
-            + ", ".join(missing_in_template)
-        )
-
-    written_sheets = []
-    for sheet_name in wb.sheetnames:
-        if sheet_name.upper() in SKIP_SHEETS:
-            written_sheets.append({"sheet_name": sheet_name, "row_count": "preserved"})
-            continue
-        rows = grouped.get(sheet_name, [])
-        # 输入有这个器件 sheet，就保留该 sheet；有分析结果则写入，无结果则写入空表头。
-        ws = wb[sheet_name]
-        write_rows(ws, rows)
-        written_sheets.append({"sheet_name": sheet_name, "row_count": len(rows)})
-
-    wb.save(output_excel)
-    wb.close()
-
-    return {
-        "output_excel": str(output_excel),
-        "written_sheets": written_sheets,
-        "missing_in_template": missing_in_template,
-    }
+def render_outputs(normalized_path: str | Path, decisions_path: str | Path, output_dir: str | Path) -> None:
+    out = Path(output_dir)
+    ensure_dir(out)
+    rows = build_final_rows(normalized_path, decisions_path)
+    write_jsonl(out / "final_mapping_rows.jsonl", rows)
+    with (out / "mapping_result_flat.csv").open("w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=FINAL_HEADERS)
+        writer.writeheader()
+        writer.writerows(rows)
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--template-excel", required=True, help="输入框图 Excel，输出必须严格沿用它的 sheet 分页")
+    parser = argparse.ArgumentParser(description="仅用于调试的平铺 CSV 输出；不能生成正式信号接口列表")
     parser.add_argument("--normalized", required=True)
     parser.add_argument("--decisions", required=True)
-    parser.add_argument("--output-excel", required=True)
+    parser.add_argument("--output-dir", required=True)
+    parser.add_argument(
+        "--debug-only-confirm",
+        action="store_true",
+        help="确认该输出仅用于调试；正式输出必须执行 finish_command.txt",
+    )
     args = parser.parse_args()
-
-    result = render_template_sheets(args.template_excel, args.normalized, args.decisions, args.output_excel)
-    print(f"[OK] rendered template sheets -> {result['output_excel']}")
-    for item in result["written_sheets"]:
-        print(f"  - {item['sheet_name']}: {item['row_count']} rows")
+    if not args.debug_only_confirm:
+        parser.error(
+            "render_outputs.py cannot produce the formal workbook. "
+            "Execute intermediate/finish_command.txt instead. "
+            "For an intentional debug CSV only, add --debug-only-confirm."
+        )
+    render_outputs(args.normalized, args.decisions, args.output_dir)
+    print(f"[OK] rendered flat debug outputs -> {args.output_dir}")
 
 if __name__ == "__main__":
     main()

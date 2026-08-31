@@ -9,8 +9,8 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List
 
-from build_analysis_context_groups import analysis_strategy_for_group, infer_link_family, infer_mapping_family
-from common import ensure_dir, iter_jsonl, load_pin_catalog, pins_for_part, read_json, resolve_catalog_key, write_json
+from .build_analysis_context_groups import analysis_strategy_for_group, infer_link_family, infer_mapping_family
+from .common import ensure_dir, iter_jsonl, load_pin_catalog, pins_for_part, read_json, resolve_catalog_key, write_json
 
 DEFAULT_MAX_LINES_PER_MODEL_TASK = 50
 PIN_GROUP_THRESHOLD = 100

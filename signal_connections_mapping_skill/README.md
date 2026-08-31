@@ -14,6 +14,8 @@ STRUCTURE.md
 RUNBOOK.md
 ```
 
+Python 运行依赖统一声明在根目录 `requirements.txt`。`scripts/run_pipeline.py` 会在实际执行阶段提前检查依赖，避免处理 Excel 到中途才因缺少 `openpyxl` 失败。
+
 关键提醒：
 
 ```text

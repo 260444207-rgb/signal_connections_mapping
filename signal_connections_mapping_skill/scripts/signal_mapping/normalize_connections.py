@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 from typing import Dict, List, Any, Iterable
 
-from common import write_jsonl, normalize_text, normalize_direction, normalize_component_reference, read_table
+from .common import write_jsonl, normalize_text, normalize_direction, normalize_component_reference, read_table
 
 FIELD_ALIASES = {
     "source_block_id": ["source_block_id", "源Block标识", "起止Block标识", "起始Block标识", "source_id", "block_id", "框图标识"],

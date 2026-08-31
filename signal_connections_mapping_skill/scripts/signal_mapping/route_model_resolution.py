@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import argparse
 
-from common import (
+from .common import (
     iter_jsonl,
     load_pin_catalog,
     pins_for_part,

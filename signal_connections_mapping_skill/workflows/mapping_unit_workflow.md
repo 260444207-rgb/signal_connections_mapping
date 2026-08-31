@@ -1,6 +1,6 @@
 # 单条连接语义分析流程
 
-本文件说明 subagent 在一个 `context_group` 内如何分析单条连接。它不是独立脚本入口；真实执行入口是 `scripts/build_model_resolution_tasks.py` 导出的 `TASK_器件类型_器件编码_链路范围_hash.json` 任务包。
+本文件说明 subagent 在一个 `context_group` 内如何分析单条连接。它不是独立脚本入口；任务包由 `scripts/signal_mapping/build_model_resolution_tasks.py` 生成，真实执行入口始终是 `scripts/run_pipeline.py`。
 
 ## 输入范围
 
