@@ -18,16 +18,23 @@ from signal_mapping.common import FINAL_HEADERS, extract_component_uuid, load_pi
 from signal_mapping.render_template_sheets import render_template_sheets, rows_for_decision
 from signal_mapping.normalize_connections import normalize_connections
 from signal_mapping.validate_mapping import validate_mapping
-from signal_mapping.infer_signal_shapes import iter_rule_sections, matching_rule_hint
+from signal_mapping.infer_signal_shapes import (
+    expanded_rows_for_signal_shape,
+    infer_signal_shape_for_row,
+    iter_rule_sections,
+    matching_rule_hint,
+)
 from signal_mapping.route_model_resolution import route_model_resolution
 from signal_mapping.build_model_resolution_tasks import (
     PIN_GROUP_THRESHOLD,
     build_diagram_link_context,
+    build_link_family_profiles,
     build_pin_allocation_context,
     build_pin_group_catalog,
     compact_normalized_connection,
     pins_for_groups,
     render_shared_prompt,
+    session_link_family_profile,
 )
 from run_pipeline import (
     PIPELINE_CONFIG_FILENAME,
@@ -92,6 +99,140 @@ class LayeredRuleRecallTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
+
+    def test_rule_bus_with_explicit_width_expands_before_mapping(self) -> None:
+        row = {
+            "line_id": "L_BUS",
+            "source_port": "SPI_DATA",
+            "target_port": "DATA",
+            "connection_name": "SPI_DATA",
+            "connection_id": "C_BUS",
+            "base_connection_id": "C_BUS",
+            "expansion_count": 1,
+        }
+        rule = """### RULE: TEST_SPI_DATA
+适用条件：SPI_DATA
+SPI_DATA 是 4-bit 总线，需要拆分。
+"""
+
+        info = infer_signal_shape_for_row(row, ["D0", "D1", "D2", "D3"], rule)
+        expanded = expanded_rows_for_signal_shape(row, info)
+
+        self.assertEqual("bus", info["shape"])
+        self.assertEqual(4, info["expected_physical_pin_count"])
+        self.assertFalse(info["requires_model_expansion"])
+        self.assertEqual(
+            ["L_BUS#1", "L_BUS#2", "L_BUS#3", "L_BUS#4"],
+            [member["line_id"] for member in expanded],
+        )
+        self.assertTrue(all(member["signal_shape_info"]["is_expanded_member"] for member in expanded))
+
+    def test_rule_bus_without_width_requires_model_children(self) -> None:
+        row = {
+            "line_id": "L_SPI",
+            "source_port": "SPI_DATA",
+            "target_port": "SPI",
+            "connection_name": "SPI_DATA",
+            "expansion_count": 1,
+        }
+        rule = """### RULE: TEST_SPI_DATA
+适用条件：SPI_DATA
+SPI_DATA 是总线，需要根据 CLK、CS、DI、DIO 功能拆分。
+"""
+
+        info = infer_signal_shape_for_row(row, ["CLK", "CS", "DI", "DIO"], rule)
+        compact = compact_normalized_connection({**row, "signal_shape": "bus", "signal_shape_info": info})
+
+        self.assertEqual("bus", info["shape"])
+        self.assertEqual("SPI_DATA", info["bus_name"])
+        self.assertTrue(info["requires_model_expansion"])
+        self.assertFalse(info["expected_physical_pin_count_known"])
+        self.assertTrue(info["needs_model_shape_review"])
+        self.assertEqual("model_must_emit_parent_line_id_children", info["line_id_expansion_policy"])
+        self.assertEqual("SPI_DATA", compact["signal_shape_info"]["bus_name"])
+        self.assertTrue(compact["signal_shape_info"]["requires_model_expansion"])
+
+    def test_preexpanded_bus_member_keeps_bus_metadata_without_double_expansion(self) -> None:
+        row = {
+            "line_id": "L_PRE#2",
+            "base_line_id": "L_PRE",
+            "source_port": "DATA[3:0]",
+            "target_port": "DATA",
+            "connection_id": "C_PRE#2",
+            "base_connection_id": "C_PRE",
+            "expansion_index": 2,
+            "expansion_count": 4,
+        }
+
+        info = infer_signal_shape_for_row(row, ["D0", "D1", "D2", "D3"], "")
+        expanded = expanded_rows_for_signal_shape(row, info)
+        compact = compact_normalized_connection({**row, "signal_shape": "bus", "signal_shape_info": info})
+
+        self.assertEqual("bus", info["shape"])
+        self.assertTrue(info["is_expanded_member"])
+        self.assertEqual("L_PRE", info["parent_line_id"])
+        self.assertEqual(2, info["member_index"])
+        self.assertEqual(4, info["member_count"])
+        self.assertEqual(1, info["expected_physical_pin_count"])
+        self.assertEqual(["L_PRE#2"], [member["line_id"] for member in expanded])
+        self.assertTrue(compact["signal_shape_info"]["is_expanded_member"])
+        self.assertEqual(4, compact["signal_shape_info"]["parent_expected_physical_pin_count"])
+
+    def test_session_line_examples_require_explicit_family_and_same_device(self) -> None:
+        groups = [
+            {
+                "context_group_id": "CTX_A",
+                "source_device_signature": "DEVICE_INFO:PART_A",
+                "link_family_ids": ["SPI_CTRL"],
+                "link_family_sources": ["explicit_link_info", "fallback_mapping_family"],
+                "line_ids": ["A_EXPLICIT", "A_INFERRED", "A_AMBIGUOUS"],
+            },
+            {
+                "context_group_id": "CTX_B",
+                "source_device_signature": "DEVICE_INFO:PART_B",
+                "link_family_ids": ["SPI_CTRL"],
+                "link_family_sources": ["explicit_link_info"],
+                "line_ids": ["B_EXPLICIT"],
+            },
+        ]
+        rows = {
+            "A_EXPLICIT": {
+                "source_port": "SPI_CLK",
+                "target_port": "CLK",
+                "link_family_id": "SPI_CTRL",
+            },
+            "A_INFERRED": {
+                "source_port": "SPI_CLK",
+                "target_port": "CLK",
+            },
+            "A_AMBIGUOUS": {
+                "source_port": "SPI_CLK",
+                "target_port": "CLK",
+                "link_contexts": [{"link_family_id": "SPI_CTRL"}],
+            },
+            "B_EXPLICIT": {
+                "source_port": "SPI_CLK",
+                "target_port": "CLK",
+                "link_family_id": "SPI_CTRL",
+            },
+        }
+
+        profile = build_link_family_profiles(groups, rows)["SPI_CTRL"]
+        self.assertEqual(
+            ["A_EXPLICIT", "B_EXPLICIT"],
+            [example["line_id"] for example in profile["line_examples"]],
+        )
+        self.assertEqual(
+            ["A_AMBIGUOUS"],
+            [example["line_id"] for example in profile["ambiguous_sheet_member_line_examples"]],
+        )
+
+        scoped = session_link_family_profile(profile, "DEVICE_INFO:PART_A")
+        self.assertEqual(
+            ["A_EXPLICIT"],
+            [example["line_id"] for example in scoped["line_examples"]],
+        )
+        self.assertEqual([], scoped["ambiguous_sheet_member_line_examples"])
 
     def test_collects_all_layered_rule_files_with_metadata(self) -> None:
         self.assertEqual(18, len(self.blocks))

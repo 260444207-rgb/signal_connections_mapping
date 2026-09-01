@@ -162,7 +162,9 @@ custom/user > link > device > signal > global > lexical fallback
 ## 差分、总线和 pin 复用
 
 - 前置 `signal_shape_info` 是默认形态判断；只有标记复核或明显冲突时才修正。
+- TASK 会在 `signal_shape_info.bus_name` 中显式提供总线名称；subagent 必须结合总线名、命中规则正文和完整 pin 列表识别成员及其角色，不能只依赖数字位宽。
 - 已展开成员只输出一个 `selected_pin`。
+- `requires_model_expansion=true` 表示已识别为总线但位宽未知；能从规则和 pin 功能确定成员时必须输出 `原line_id#数字` 子 decision，不能退化成 scalar。
 - 未展开的多 pin 连接优先输出 `原line_id#数字` 多行，并设置 `parent_line_id`。
 - 普通 scalar pin 在同一物理实例内默认不能被不同语义 line 重复使用。
 - 只有同一源端口扇出、同一连线名称、同一 base connection、多端口别名、session 共享组或明确规则允许时才可复用。

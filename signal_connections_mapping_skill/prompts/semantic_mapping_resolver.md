@@ -49,7 +49,7 @@ rule_library
 1. 读取 `task_scope.session_context_file`；同一 session 只需完整读取一次。
 2. 每个 TASK 开始前读取 `pin_allocation_state_file` 最新状态。不同物理实例分别记录 pin 占用。
 3. 阅读 `context_group` 和 `diagram_link_context`，理解链路族、上下游角色、实例编号和用户说明。
-4. 阅读 session context 中当前 `link_family_profiles`。只能借鉴链路拓扑、方向、索引和分析方法，不能复制其他 line_id 或其他器件的 pin 结论。
+4. 阅读 session context 中当前 `link_family_profiles`。其中 `line_examples` 已限定为 link_info 显式标识的当前 link_family 且与本 session 相同的源端器件；只能借鉴链路拓扑、方向、索引和分析方法，不能复制其他 line_id 的 pin 结论。空 `line_examples` 表示没有满足条件的参考连接，不得改用推断链路、模糊 sheet 成员或其他器件样例补充。
 5. 按 TASK 的 `matched_rule_refs.rule_key` 到 `rule_library` 取规则正文。规则优先级：
 
 ```text
@@ -75,7 +75,10 @@ custom/user > link > device > signal > global > lexical fallback
 
 ## 差分、总线和展开
 
+- 模型必须具备总线识别与成员拆分能力。先读取 `signal_shape_info.bus_name`，再联合当前连接的端口/连线名称、`matched_rule_refs` 对应规则正文以及当前源端器件的完整 pin 列表，判断总线包含哪些逻辑成员以及各成员角色；不能只按数字位宽机械拆分。
+- 即使前置默认值是 `shape=scalar`，当总线名、明确规则和 pin 功能形成一致证据时，也应修正为总线并按子 decision 展开；不得仅因脚本未提取到数字位宽就维持 scalar。
 - 已有 `signal_shape_info.is_expanded_member=true`：当前行只输出一个 `selected_pin`，不得再次使用 `selected_pins` 展开。
+- `signal_shape_info.requires_model_expansion=true`：前置规则已确认这是总线，但脚本没有可确定的位宽。必须以 `bus_name` 为检索锚点，结合规则正文和完整 pin 列表确定成员；能够确定时按 `原line_id#数字 + parent_line_id` 输出多行 decision，每个子 decision 对应一个明确成员和一个 `selected_pin`，不得退化成一个 scalar pin。仍无法确定成员数量或功能时，保留父行 unresolved 并明确说明缺少的位宽/成员信息，不得猜测。
 - 未展开连接需要多个物理 pin：优先输出多行 decision：
 
 ```text

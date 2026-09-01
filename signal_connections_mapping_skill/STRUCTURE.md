@@ -350,10 +350,11 @@ member_sheets
 user_link_infos
 device_role_infos
 line_examples
+line_examples_scope
 shared_semantic_hints
 ```
 
-它解决“链路逻辑如何给其他链路/其他器件 subagent 借鉴”的问题：同一 link_family 下的 subagent 可以共享链路拓扑、方向、实例索引、差分/总线展开规律和用户说明。它不是规则裁决结果，不能直接复制其他 line_id 或其他源端器件的 selected_pin。
+`line_examples` 只下发由 `link_info` 显式标识为当前 link_family、且 `source_device_signature` 与当前 session 相同的连接。推断得到的链路族、只按 sheet 模糊归属的连接，以及其他源端器件的连接都不作为参考样例。profile 的其他链路级字段仍可帮助理解拓扑、方向、实例索引和用户说明，但不是规则裁决结果，不能直接复制其他 line_id 的 selected_pin。
 
 规则正文按 session 去重保存在 `rule_library`；TASK 的 `matched_rule_refs` 只保存 rule_key、match_type 和 matched_terms。脚本先做确定性召回，再用关键词补充；召回不做 pin 裁决，也不提供 pin 排名。
 
@@ -454,7 +455,7 @@ selected_pins: ["PIN_P", "PIN_N"]
 intermediate/signal_shape_inference.jsonl
 ```
 
-同时把 `signal_shape`、`expected_physical_pin_count`、`signal_shape_info` 写回 normalized connection。若判断一条原始连接对应多个物理 pin，会在该阶段展开为多个 normalized row，`line_id` / `connection_id` 使用 `原ID#数字`。该阶段不选择具体 pin。
+同时把 `signal_shape`、`expected_physical_pin_count`、`signal_shape_info` 写回 normalized connection；总线名称保存在 `signal_shape_info.bus_name`，构建 TASK 时不会被压缩掉。显式语法已由 normalize 拆开的成员保持 `shape=bus` 和 `is_expanded_member=true`，不会二次展开；带明确规则位宽的 bus 自动展开；只有总线语义而没有确定位宽时写入 `requires_model_expansion=true`，由 subagent 结合总线名、命中规则和完整 pin 列表识别成员，并输出 `parent_line_id#数字` 子 decision，不能降级为 scalar。该阶段不选择具体 pin。
 
 ### intermediate/combined_mapping_rules.md
 

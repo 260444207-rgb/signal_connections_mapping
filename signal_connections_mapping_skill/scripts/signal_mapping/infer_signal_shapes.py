@@ -67,6 +67,17 @@ def bus_width_from_text(text: str) -> int:
     return max(widths) if widths else 1
 
 
+def bus_width_from_rule_text(text: str) -> int:
+    """Extract an explicit numeric bus width from a matched rule subsection."""
+    widths = [bus_width_from_text(text)]
+    normalized = normalize_text(text)
+    for match in re.finditer(r"\b(\d+)\s*[-_ ]?BITS?\b", normalized, re.I):
+        widths.append(int(match.group(1)))
+    for match in re.finditer(r"(\d+)\s*位(?:宽|总线)?", normalized):
+        widths.append(int(match.group(1)))
+    return max(widths)
+
+
 def explicit_bus_reason(row: Dict[str, Any]) -> tuple[int, List[str]]:
     if int(row.get("expansion_count", 1) or 1) > 1:
         # normalize_connections has already materialized these members.
@@ -81,6 +92,29 @@ def explicit_bus_reason(row: Dict[str, Any]) -> tuple[int, List[str]]:
     if bus_width_from_text(blob) > 1:
         reasons.append("bus width notation in connection text")
     return width, reasons
+
+
+def bus_name_for_row(row: Dict[str, Any]) -> str:
+    """Return the most useful original name for model-side bus recognition."""
+    candidates = [
+        row.get("raw_source_port", ""),
+        row.get("source_port", ""),
+        row.get("connection_name", ""),
+        row.get("target_port", ""),
+    ]
+    for candidate in candidates:
+        value = normalize_text(candidate)
+        if value and not re.fullmatch(r"LINE(?:[_\- ]?\d+)?", value, re.I):
+            return value
+    return ""
+
+
+def inferred_parent_line_id(line_id: str) -> str:
+    text = str(line_id or "")
+    if "#" not in text:
+        return ""
+    parent, suffix = text.rsplit("#", 1)
+    return parent if parent and suffix.isdigit() else ""
 
 
 def normalize_pin_base(pin: str) -> str:
@@ -226,6 +260,7 @@ def matching_rule_hint(row: Dict[str, Any], rule_text: str) -> Dict[str, Any]:
     matched_terms: List[str] = []
     hints: List[str] = []
     matched_rule_titles: List[str] = []
+    suggested_bus_widths: List[int] = []
     strong_hint = False
     for section in sections:
         title = section.splitlines()[0].strip() if section.splitlines() else ""
@@ -239,6 +274,9 @@ def matching_rule_hint(row: Dict[str, Any], rule_text: str) -> Dict[str, Any]:
                 section_hints.append("differential")
             if re.search(r"总线|BUS|拆分|位宽|BIT|BITS", upper_chunk):
                 section_hints.append("bus")
+                rule_bus_width = bus_width_from_rule_text(chunk)
+                if rule_bus_width > 1:
+                    suggested_bus_widths.append(rule_bus_width)
             if not section_hints:
                 continue
             specific_terms = [
@@ -259,6 +297,7 @@ def matching_rule_hint(row: Dict[str, Any], rule_text: str) -> Dict[str, Any]:
         "matched_rule_titles": matched_rule_titles[:5],
         "shape_hints": sorted(set(hints)),
         "strong_shape_hint": strong_hint,
+        "suggested_bus_width": max(suggested_bus_widths) if suggested_bus_widths else 0,
         "basis": "matched_natural_language_rule_block_contains_shape_hint",
     }
 
@@ -271,6 +310,8 @@ def infer_signal_shape_for_row(
     bus_width, bus_reasons = explicit_bus_reason(row)
     diff_pair = best_matching_diff_pair(row, source_pins)
     rule_hint = matching_rule_hint(row, rule_text)
+    normalized_expansion_count = int(row.get("expansion_count", 1) or 1)
+    is_preexpanded_bus_member = normalized_expansion_count > 1
 
     reasons: List[str] = []
     evidence: Dict[str, Any] = {}
@@ -279,7 +320,11 @@ def infer_signal_shape_for_row(
     confidence = "auto_high"
     needs_model_shape_review = False
 
-    if bus_width > 1:
+    if is_preexpanded_bus_member:
+        shape = "bus"
+        expected_count = 1
+        reasons.append("normalize_connections already materialized this bus member")
+    elif bus_width > 1:
         shape = "bus"
         expected_count = bus_width
         reasons.extend(bus_reasons)
@@ -298,6 +343,18 @@ def infer_signal_shape_for_row(
         confidence = "rule_hint"
         reasons.append("natural language rule suggests differential and source pin list has matching P/N pair")
         evidence["matched_differential_pin_pair"] = diff_pair
+    elif rule_hint.get("strong_shape_hint") and "bus" in rule_hint.get("shape_hints", []):
+        shape = "bus"
+        hinted_width = int(rule_hint.get("suggested_bus_width", 0) or 0)
+        if hinted_width > 1:
+            expected_count = hinted_width
+            confidence = "rule_hint"
+            reasons.append("natural language rule explicitly provides bus width")
+        else:
+            expected_count = 1
+            confidence = "model_hint"
+            needs_model_shape_review = True
+            reasons.append("natural language rule identifies a bus but does not provide deterministic width")
 
     if rule_hint:
         evidence["matched_rule_shape_hint"] = rule_hint
@@ -314,21 +371,47 @@ def infer_signal_shape_for_row(
         needs_model_shape_review = True
         reasons.append("natural language rule has shape hint but automatic evidence is insufficient")
 
+    requires_model_expansion = (
+        shape == "bus"
+        and not is_preexpanded_bus_member
+        and expected_count <= 1
+        and needs_model_shape_review
+    )
+    member_count = normalized_expansion_count if is_preexpanded_bus_member else expected_count
+    parent_line_id = (
+        row.get("base_line_id") or inferred_parent_line_id(row.get("line_id", "")) or row.get("line_id", "")
+        if is_preexpanded_bus_member
+        else row.get("line_id", "")
+    )
+    member_index = int(row.get("expansion_index", 1) or 1) if is_preexpanded_bus_member else 1
     expected_connection_ids = []
     base_connection_id = row.get("base_connection_id") or row.get("connection_id", "")
-    if expected_count and expected_count > 1:
-        expected_connection_ids = [f"{base_connection_id}#{idx}" for idx in range(1, expected_count + 1)]
+    output_member_count = member_count if member_count > 1 else expected_count
+    if output_member_count and output_member_count > 1:
+        expected_connection_ids = [f"{base_connection_id}#{idx}" for idx in range(1, output_member_count + 1)]
 
     return {
         "shape": shape,
+        "bus_name": bus_name_for_row(row) if shape == "bus" else "",
         "expected_physical_pin_count": expected_count,
-        "is_expanded_member": False,
-        "parent_line_id": row.get("line_id", ""),
-        "member_index": 1,
-        "member_count": expected_count,
+        "expected_physical_pin_count_known": not requires_model_expansion,
+        "requires_model_expansion": requires_model_expansion,
+        "is_expanded_member": is_preexpanded_bus_member,
+        "parent_line_id": parent_line_id,
+        "parent_expected_physical_pin_count": member_count if is_preexpanded_bus_member else expected_count,
+        "member_index": member_index,
+        "member_count": member_count,
         "member_role": "",
-        "line_id_expansion_policy": "selected_pins_array_then_render_connection_id_suffix" if expected_count > 1 else "single_output_row",
-        "connection_id_suffix_separator": "#" if expected_count > 1 else "",
+        "line_id_expansion_policy": (
+            "already_expanded_before_mapping"
+            if is_preexpanded_bus_member
+            else "model_must_emit_parent_line_id_children"
+            if requires_model_expansion
+            else "selected_pins_array_then_render_connection_id_suffix"
+            if expected_count > 1
+            else "single_output_row"
+        ),
+        "connection_id_suffix_separator": "#" if output_member_count > 1 or requires_model_expansion else "",
         "expected_output_connection_ids": expected_connection_ids,
         "confidence": confidence,
         "needs_model_shape_review": needs_model_shape_review,

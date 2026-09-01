@@ -383,8 +383,12 @@ def compact_signal_shape_info(row: Dict[str, Any]) -> Dict[str, Any]:
         "expected_physical_pin_count": int(info.get("expected_physical_pin_count", 1) or 1),
     }
     optional_values = {
+        "bus_name": info.get("bus_name", ""),
+        "expected_physical_pin_count_known": info.get("expected_physical_pin_count_known", True),
+        "requires_model_expansion": info.get("requires_model_expansion", False),
         "is_expanded_member": info.get("is_expanded_member", False),
         "parent_line_id": info.get("parent_line_id", ""),
+        "parent_expected_physical_pin_count": info.get("parent_expected_physical_pin_count", 1),
         "member_index": info.get("member_index", 1),
         "member_count": info.get("member_count", 1),
         "member_role": info.get("member_role", ""),
@@ -396,8 +400,12 @@ def compact_signal_shape_info(row: Dict[str, Any]) -> Dict[str, Any]:
         "reasons": info.get("reasons", []),
     }
     defaults = {
+        "bus_name": "",
+        "expected_physical_pin_count_known": True,
+        "requires_model_expansion": False,
         "is_expanded_member": False,
         "parent_line_id": line_id,
+        "parent_expected_physical_pin_count": 1,
         "member_index": 1,
         "member_count": 1,
         "member_role": "",
@@ -485,6 +493,9 @@ def connection_defaults() -> Dict[str, Any]:
         "expansion_index": 1,
         "expansion_count": 1,
         "signal_shape_info": {
+            "bus_name": "",
+            "expected_physical_pin_count_known": True,
+            "requires_model_expansion": False,
             "is_expanded_member": False,
             "parent_line_id": "same_as_line_id",
             "member_index": 1,
@@ -616,6 +627,7 @@ def build_link_family_profiles(
                     "line_id": line_id,
                     "context_group_id": group.get("context_group_id", ""),
                     "source_device_signature": group.get("source_device_signature", ""),
+                    "link_family_source": "explicit_link_info" if explicit_row_family else "inferred_or_ambiguous",
                     "source_sheet_name": row.get("source_sheet_name", ""),
                     "source_block_name": row.get("source_block_name", ""),
                     "source_port": row.get("source_port", ""),
@@ -632,7 +644,7 @@ def build_link_family_profiles(
                         entry["ambiguous_sheet_member_line_examples"].append(example)
                 else:
                     entry["line_count"] += 1
-                    if len(entry["line_examples"]) < max_examples_per_family:
+                    if explicit_row_family and len(entry["line_examples"]) < max_examples_per_family:
                         entry["line_examples"].append(example)
 
     for entry in profiles.values():
@@ -649,6 +661,26 @@ def build_link_family_profiles(
         ]:
             entry[key] = sorted(x for x in entry[key] if x)
     return profiles
+
+
+def session_link_family_profile(
+    profile: Dict[str, Any],
+    source_device_signature: str,
+) -> Dict[str, Any]:
+    """Return only explicit link-family examples for the current source device."""
+    scoped = dict(profile or {})
+    scoped["line_examples"] = [
+        example
+        for example in profile.get("line_examples", [])
+        if example.get("link_family_source") == "explicit_link_info"
+        and example.get("source_device_signature") == source_device_signature
+    ]
+    scoped["ambiguous_sheet_member_line_examples"] = []
+    scoped["line_examples_scope"] = (
+        "仅包含由 link_info 显式标识为当前 link_family、且 source_device_signature "
+        "与本 session 相同的连接；推断链路、模糊 sheet 成员和其他器件不作为参考样例。"
+    )
+    return scoped
 
 
 def describe_subagent_task(task: Dict[str, Any], group: Dict[str, Any]) -> str:
@@ -1545,7 +1577,10 @@ def build_model_resolution_tasks(
             "sheet_device_context": build_sheet_device_context(full_group_nc),
             "pin_allocation_context": build_pin_allocation_context(full_group_nc),
             "link_family_profiles": {
-                family_id: link_family_profiles.get(family_id, {})
+                family_id: session_link_family_profile(
+                    link_family_profiles.get(family_id, {}),
+                    group.get("source_device_signature", ""),
+                )
                 for family_id in session_family_ids
             },
             "rule_library": {},
