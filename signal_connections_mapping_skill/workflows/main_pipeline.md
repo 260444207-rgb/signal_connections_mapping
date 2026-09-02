@@ -50,7 +50,7 @@ render_template_sheets
 2. 保留前 10 列连接事实（第 10 列为“连线属性”；旧输入缺失时补空）
 3. 读取 block_info 中的框图标识 -> 器件信息，并建立 block_id/block_name 别名
 4. 读取可选 link_info / 链路信息 sheet，注入 link_family_id、link_instance_id、user_link_info；没有该 sheet 时保持字段为空，后续按器件上下文兜底
-5. 只展开显式总线格式，如 XXX[7:0] 或 XXX*4
+5. 识别显式总线格式，如 XXX[7:0] 或 XXX*4，但只记录 `declared_bus_width`，不在规则与 pin_info 校验前展开
 ```
 
 不得根据器件语义修改端口名，不得把端口改成 default，不得用模型推断覆盖前 10 列。
@@ -59,7 +59,7 @@ render_template_sheets
 
 读取 `normalized_connections.jsonl`、`pin_info.json` 和合并后的自然语言规则，生成 `signal_shape_inference.jsonl`，并把 `signal_shape`、`expected_physical_pin_count`、`signal_shape_info` 写回 `normalized_connections.jsonl`。若一条原始连接对应多个物理 pin，会在进入 subagent 前展开为多个 normalized row，`line_id` / `connection_id` 使用 `原ID#数字`。
 
-该阶段只判断 scalar / bus / differential 和预计物理 pin 数，不选择具体 pin。总线名称会写入 `signal_shape_info.bus_name` 并随 TASK 显式传给 subagent。`normalize_connections` 已展开的显式总线成员会保留 `shape=bus`、`is_expanded_member=true`、成员索引和父行信息，不会二次展开。规则确认是总线且给出明确位宽时自动展开；规则只确认总线但位宽未知时设置 `requires_model_expansion=true`，后续 subagent 必须以 `bus_name` 为锚点，结合命中规则正文、当前源端器件完整 pin 列表和语义上下文识别成员角色并输出 `parent_line_id#数字` 多行 decision，无法确定时应明确 unresolved，不能伪装成 scalar。
+该阶段只判断 scalar / bus / differential 和预计物理 pin 数，不选择具体 pin。总线名称会写入 `signal_shape_info.bus_name` 并随 TASK 显式传给 subagent。器件规则必须先由 `### RULE` 标题中的器件 code/名称严格命中当前源端或目标器件；正文中的端口词只用于在已命中的规则内定位小节。连接或规则声明的数字位宽写入 `declared_bus_width`，不能直接决定展开数；只有规则明确列出的成员 pin 与当前源端器件 `pin_info` 相交得到至少两个实际 pin 时，交集数量才写入 `pin_info_bus_width` 并自动展开。证据不足时设置 `requires_model_expansion=true`，后续 subagent 必须继续按同一严格规则和完整 pin 列表核对，无法确定时输出 unresolved。
 
 ### build_analysis_context_groups
 

@@ -103,6 +103,8 @@ class LayeredRuleRecallTests(unittest.TestCase):
     def test_rule_bus_with_explicit_width_expands_before_mapping(self) -> None:
         row = {
             "line_id": "L_BUS",
+            "source_part_id": "DEV_A",
+            "source_block_name": "DEV_A",
             "source_port": "SPI_DATA",
             "target_port": "DATA",
             "connection_name": "SPI_DATA",
@@ -110,19 +112,21 @@ class LayeredRuleRecallTests(unittest.TestCase):
             "base_connection_id": "C_BUS",
             "expansion_count": 1,
         }
-        rule = """### RULE: TEST_SPI_DATA
-适用条件：SPI_DATA
-SPI_DATA 是 4-bit 总线，需要拆分。
+        rule = """### RULE: DEV_A SPI_DATA 总线规则
+适用条件：DEV_A / SPI_DATA
+SPI_DATA 声明为 4-bit 总线，实际成员为 D0、D1、D2。
 """
 
-        info = infer_signal_shape_for_row(row, ["D0", "D1", "D2", "D3"], rule)
+        info = infer_signal_shape_for_row(row, ["D0", "D1", "D2"], rule)
         expanded = expanded_rows_for_signal_shape(row, info)
 
         self.assertEqual("bus", info["shape"])
-        self.assertEqual(4, info["expected_physical_pin_count"])
+        self.assertEqual(3, info["expected_physical_pin_count"])
+        self.assertEqual(4, info["evidence"]["matched_rule_shape_hint"]["declared_rule_bus_width"])
+        self.assertEqual(["D0", "D1", "D2"], info["evidence"]["matched_rule_shape_hint"]["matched_bus_pins"])
         self.assertFalse(info["requires_model_expansion"])
         self.assertEqual(
-            ["L_BUS#1", "L_BUS#2", "L_BUS#3", "L_BUS#4"],
+            ["L_BUS#1", "L_BUS#2", "L_BUS#3"],
             [member["line_id"] for member in expanded],
         )
         self.assertTrue(all(member["signal_shape_info"]["is_expanded_member"] for member in expanded))
@@ -130,17 +134,19 @@ SPI_DATA 是 4-bit 总线，需要拆分。
     def test_rule_bus_without_width_requires_model_children(self) -> None:
         row = {
             "line_id": "L_SPI",
+            "source_part_id": "DEV_A",
+            "source_block_name": "DEV_A",
             "source_port": "SPI_DATA",
             "target_port": "SPI",
             "connection_name": "SPI_DATA",
             "expansion_count": 1,
         }
-        rule = """### RULE: TEST_SPI_DATA
-适用条件：SPI_DATA
-SPI_DATA 是总线，需要根据 CLK、CS、DI、DIO 功能拆分。
+        rule = """### RULE: DEV_A SPI_DATA 总线规则
+适用条件：DEV_A / SPI_DATA
+SPI_DATA 是总线，但没有列出实际 pin 名称。
 """
 
-        info = infer_signal_shape_for_row(row, ["CLK", "CS", "DI", "DIO"], rule)
+        info = infer_signal_shape_for_row(row, ["PIN_A", "PIN_B", "PIN_C", "PIN_D"], rule)
         compact = compact_normalized_connection({**row, "signal_shape": "bus", "signal_shape_info": info})
 
         self.assertEqual("bus", info["shape"])
@@ -151,6 +157,26 @@ SPI_DATA 是总线，需要根据 CLK、CS、DI、DIO 功能拆分。
         self.assertEqual("model_must_emit_parent_line_id_children", info["line_id_expansion_policy"])
         self.assertEqual("SPI_DATA", compact["signal_shape_info"]["bus_name"])
         self.assertTrue(compact["signal_shape_info"]["requires_model_expansion"])
+
+    def test_bus_rule_body_is_ignored_when_rule_title_names_another_device(self) -> None:
+        row = {
+            "line_id": "L_WRONG_DEVICE",
+            "source_part_id": "DEV_A",
+            "source_block_name": "DEV_A",
+            "source_port": "SPI_DATA",
+            "target_port": "SPI",
+            "connection_name": "SPI_DATA",
+            "expansion_count": 1,
+        }
+        rule = """### RULE: DEV_B SPI_DATA 总线规则
+适用条件：DEV_A / SPI_DATA
+SPI_DATA 是 4-bit 总线，成员为 D0、D1、D2、D3。
+"""
+
+        info = infer_signal_shape_for_row(row, ["D0", "D1", "D2", "D3"], rule)
+
+        self.assertEqual("scalar", info["shape"])
+        self.assertNotIn("matched_rule_shape_hint", info["evidence"])
 
     def test_preexpanded_bus_member_keeps_bus_metadata_without_double_expansion(self) -> None:
         row = {
@@ -177,6 +203,21 @@ SPI_DATA 是总线，需要根据 CLK、CS、DI、DIO 功能拆分。
         self.assertEqual(["L_PRE#2"], [member["line_id"] for member in expanded])
         self.assertTrue(compact["signal_shape_info"]["is_expanded_member"])
         self.assertEqual(4, compact["signal_shape_info"]["parent_expected_physical_pin_count"])
+
+    def test_normalize_keeps_explicit_bus_as_one_row_until_rule_and_pin_validation(self) -> None:
+        connections = self.task_dir / "connections.csv"
+        normalized = self.task_dir / "normalized.jsonl"
+        connections.write_text(
+            "source_port,target_port,connection_id\nDATA[3:0],DATA,C_DATA\n",
+            encoding="utf-8",
+        )
+
+        rows = normalize_connections(connections, normalized)
+
+        self.assertEqual(1, len(rows))
+        self.assertEqual(1, rows[0]["expansion_count"])
+        self.assertEqual(4, rows[0]["declared_bus_width"])
+        self.assertEqual("C_DATA", rows[0]["connection_id"])
 
     def test_session_line_examples_require_explicit_family_and_same_device(self) -> None:
         groups = [
@@ -288,6 +329,21 @@ SPI_DATA 是总线，需要根据 CLK、CS、DI、DIO 功能拆分。
         self.assertEqual("exact_source_part", sroc["match_type"])
         self.assertNotIn("AMC7964", [match["rule_id"] for match in matches])
         self.assertNotIn("TXCAL_RXCAL", [match["rule_id"] for match in matches])
+
+    def test_device_rule_recall_rejects_body_only_device_match(self) -> None:
+        text = """<!-- SOURCE: rules/device_rules/wrong.md -->
+### RULE: DEV_B 错误器件规则
+适用条件：
+源端器件：DEV_A
+DEV_A 的 SPI_DATA 是总线。
+"""
+        blocks = extract_rule_blocks(text)
+        group = make_group("DEV_A", "SPI_CTRL", "SPI_CTRL", "DEV_A", "TARGET")
+        row = make_row("DEV_A", "SPI_DATA", "TARGET", "SPI", "SPI_CTRL", "DEV_A")
+
+        matches = match_rule_sections(blocks, group, [row])
+
+        self.assertEqual([], matches)
 
     def test_extracts_component_uuid_from_block_info_metadata(self) -> None:
         component_uuid = "6c33dd64-9afd-4e31-87c4-5023b323be7f"

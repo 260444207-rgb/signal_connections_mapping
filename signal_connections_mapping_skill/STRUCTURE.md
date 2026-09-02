@@ -186,7 +186,7 @@ task_root/
 4. 建立 block_id/block_name/sheet_name 到器件信息的别名。
 5. 读取可选 link_info / 链路信息 sheet。
 6. 保留输入前 10 列连接事实。
-7. 只展开显式总线格式，例如 XXX[7:0] 或 XXX*4。
+7. 识别显式总线格式，例如 XXX[7:0] 或 XXX*4，只记录声明宽度，不提前展开。
 8. 生成 source_part_id、target_part_id、link_contexts 等模型上下文字段。
 ```
 
@@ -455,7 +455,7 @@ selected_pins: ["PIN_P", "PIN_N"]
 intermediate/signal_shape_inference.jsonl
 ```
 
-同时把 `signal_shape`、`expected_physical_pin_count`、`signal_shape_info` 写回 normalized connection；总线名称保存在 `signal_shape_info.bus_name`，构建 TASK 时不会被压缩掉。显式语法已由 normalize 拆开的成员保持 `shape=bus` 和 `is_expanded_member=true`，不会二次展开；带明确规则位宽的 bus 自动展开；只有总线语义而没有确定位宽时写入 `requires_model_expansion=true`，由 subagent 结合总线名、命中规则和完整 pin 列表识别成员，并输出 `parent_line_id#数字` 子 decision，不能降级为 scalar。该阶段不选择具体 pin。
+同时把 `signal_shape`、`expected_physical_pin_count`、`signal_shape_info` 写回 normalized connection；总线名称保存在 `signal_shape_info.bus_name`，构建 TASK 时不会被压缩掉。器件规则必须由 `### RULE` 标题中的器件 code/名称严格命中，不能靠正文词汇误召回。显式语法和规则中的数字只形成 `declared_bus_width`；自动展开数来自严格命中规则所列成员与当前源端器件 `pin_info` 的实际交集，并记录为 `pin_info_bus_width`。不能验证实际成员时由 subagent 复核或 unresolved，不能降级为 scalar。该阶段不选择具体 pin。
 
 ### intermediate/combined_mapping_rules.md
 

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from .build_analysis_context_groups import analysis_strategy_for_group, infer_link_family, infer_mapping_family
-from .common import ensure_dir, iter_jsonl, load_pin_catalog, pins_for_part, read_json, resolve_catalog_key, write_json
+from .common import ensure_dir, iter_jsonl, load_pin_catalog, pins_for_part, read_json, resolve_catalog_key, rule_title_device_matches, write_json
 
 DEFAULT_MAX_LINES_PER_MODEL_TASK = 50
 PIN_GROUP_THRESHOLD = 100
@@ -384,6 +384,8 @@ def compact_signal_shape_info(row: Dict[str, Any]) -> Dict[str, Any]:
     }
     optional_values = {
         "bus_name": info.get("bus_name", ""),
+        "declared_bus_width": info.get("declared_bus_width", 0),
+        "pin_info_bus_width": info.get("pin_info_bus_width", 0),
         "expected_physical_pin_count_known": info.get("expected_physical_pin_count_known", True),
         "requires_model_expansion": info.get("requires_model_expansion", False),
         "is_expanded_member": info.get("is_expanded_member", False),
@@ -401,6 +403,8 @@ def compact_signal_shape_info(row: Dict[str, Any]) -> Dict[str, Any]:
     }
     defaults = {
         "bus_name": "",
+        "declared_bus_width": 0,
+        "pin_info_bus_width": 0,
         "expected_physical_pin_count_known": True,
         "requires_model_expansion": False,
         "is_expanded_member": False,
@@ -494,6 +498,8 @@ def connection_defaults() -> Dict[str, Any]:
         "expansion_count": 1,
         "signal_shape_info": {
             "bus_name": "",
+            "declared_bus_width": 0,
+            "pin_info_bus_width": 0,
             "expected_physical_pin_count_known": True,
             "requires_model_expansion": False,
             "is_expanded_member": False,
@@ -1261,6 +1267,12 @@ def deterministic_rule_match(
         ]
 
     if layer == "device":
+        header_match = rule_title_device_matches(
+            block.get("title", ""),
+            source_devices + target_devices,
+        )
+        if not header_match:
+            return None
         exact_part = any(
             canonical_part_id(rid) == canonical_part_id(part)
             for part in source_parts
@@ -1293,6 +1305,12 @@ def deterministic_rule_match(
         return "always_include_global", RULE_LAYER_BASE_SCORE["global"], ["global_mapping_policy"]
 
     if layer == "custom":
+        device_conditions = metadata.get("source_devices") or metadata.get("target_devices")
+        if device_conditions and not rule_title_device_matches(
+            block.get("title", ""),
+            source_devices + target_devices,
+        ):
+            return None
         source_ok = not metadata.get("source_devices") or values_match(metadata["source_devices"], source_devices)
         target_ok = not metadata.get("target_devices") or values_match(metadata["target_devices"], target_devices)
         link_ok = not metadata.get("link_families") or values_match(metadata["link_families"], link_families)
@@ -1356,7 +1374,8 @@ def match_rule_sections(rule_blocks: List[Dict[str, Any]], group: Dict[str, Any]
             continue
         layer = block.get("layer", "unknown")
         metadata = block.get("metadata", {})
-        if layer == "device" and metadata.get("source_devices"):
+        if layer == "device":
+            # Device rules never fall back to body-word overlap; their ### RULE title is the gate.
             continue
         if layer == "link" and metadata.get("link_families"):
             continue

@@ -157,12 +157,12 @@ rule_library
 custom/user > link > device > signal > global > lexical fallback
 ```
 
-规则召回不选择 pin；subagent 根据 `matched_rule_refs` 读取规则正文后逐行判断。
+规则召回不选择 pin；器件规则必须先由 `### RULE` 标题中的器件 code/名称严格命中当前源端或目标器件，禁止仅凭规则正文中的相关描述召回。subagent 根据通过门控的 `matched_rule_refs` 读取规则正文后逐行判断。
 
 ## 差分、总线和 pin 复用
 
 - 前置 `signal_shape_info` 是默认形态判断；只有标记复核或明显冲突时才修正。
-- TASK 会在 `signal_shape_info.bus_name` 中显式提供总线名称；subagent 必须结合总线名、命中规则正文和完整 pin 列表识别成员及其角色，不能只依赖数字位宽。
+- TASK 会在 `signal_shape_info.bus_name` 中显式提供总线名称；`declared_bus_width` 只记录连接/规则声明，真正用于拆分的 `pin_info_bus_width` 必须来自严格命中规则中列出的成员与当前器件 `pin_info` 的交集。subagent 必须结合这些证据识别成员及其角色。
 - 已展开成员只输出一个 `selected_pin`。
 - `requires_model_expansion=true` 表示已识别为总线但位宽未知；能从规则和 pin 功能确定成员时必须输出 `原line_id#数字` 子 decision，不能退化成 scalar。
 - 未展开的多 pin 连接优先输出 `原line_id#数字` 多行，并设置 `parent_line_id`。

@@ -58,6 +58,8 @@ custom/user > link > device > signal > global > lexical fallback
 
 `match_type` 和 `matched_terms` 只解释召回原因，不代表 pin 排名。若某条规则实际影响裁决，在 `analysis` 中简短记录：
 
+器件规则只有在其 `### RULE` 标题中的器件 code/名称与当前连接的源端或目标器件严格匹配时才可使用；禁止因为正文偶然出现端口名、器件名或总线描述而套用。标题不匹配时，即使规则出现在上下文中也必须忽略。
+
 ```text
 规则依据：<layer>/<rule_id>/<match_type>
 ```
@@ -75,10 +77,10 @@ custom/user > link > device > signal > global > lexical fallback
 
 ## 差分、总线和展开
 
-- 模型必须具备总线识别与成员拆分能力。先读取 `signal_shape_info.bus_name`，再联合当前连接的端口/连线名称、`matched_rule_refs` 对应规则正文以及当前源端器件的完整 pin 列表，判断总线包含哪些逻辑成员以及各成员角色；不能只按数字位宽机械拆分。
+- 模型必须具备总线识别与成员拆分能力。先读取 `signal_shape_info.bus_name`，再联合严格标题匹配的规则正文以及当前源端器件的完整 pin 列表，判断总线成员。`declared_bus_width` 只是声明；实际拆分数必须等于规则成员与 `pin_info` 核对后得到的 `pin_info_bus_width`，不能只按数字位宽机械拆分。
 - 即使前置默认值是 `shape=scalar`，当总线名、明确规则和 pin 功能形成一致证据时，也应修正为总线并按子 decision 展开；不得仅因脚本未提取到数字位宽就维持 scalar。
 - 已有 `signal_shape_info.is_expanded_member=true`：当前行只输出一个 `selected_pin`，不得再次使用 `selected_pins` 展开。
-- `signal_shape_info.requires_model_expansion=true`：前置规则已确认这是总线，但脚本没有可确定的位宽。必须以 `bus_name` 为检索锚点，结合规则正文和完整 pin 列表确定成员；能够确定时按 `原line_id#数字 + parent_line_id` 输出多行 decision，每个子 decision 对应一个明确成员和一个 `selected_pin`，不得退化成一个 scalar pin。仍无法确定成员数量或功能时，保留父行 unresolved 并明确说明缺少的位宽/成员信息，不得猜测。
+- `signal_shape_info.requires_model_expansion=true`：脚本没有得到“严格标题匹配规则 + pin_info 实际成员”的完整证据。必须以 `bus_name` 为锚点继续核对；只有两类证据都满足时才能按 `原line_id#数字 + parent_line_id` 输出多行 decision。规则标题不匹配、规则未列出成员或实际 pin 数无法确认时，保留父行 unresolved 并明确说明缺失证据，不得猜测。
 - 未展开连接需要多个物理 pin：优先输出多行 decision：
 
 ```text

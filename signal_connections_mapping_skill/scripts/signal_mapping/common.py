@@ -32,6 +32,30 @@ def write_jsonl(path,rows):
 def stable_hash(obj): return hashlib.md5(json.dumps(obj,ensure_ascii=False,sort_keys=True).encode()).hexdigest()[:12]
 def normalize_text(v): return '' if v is None else str(v).strip()
 
+def device_identity_tokens(value):
+    """Return strict code/name tokens used to match a ### RULE title."""
+    text=normalize_text(value).upper()
+    if not text: return set()
+    tokens=set()
+    generic={'DEV','DEVICE','PART','SOURCE','TARGET','SRC','DST','BLOCK','RULE'}
+    compact=re.sub(r'[^A-Z0-9\u4e00-\u9fff]+','',text)
+    if len(compact)>=3 and compact not in generic: tokens.add(compact)
+    for segment in re.split(r'[\s/,，;；、]+',text):
+        segment_compact=re.sub(r'[^A-Z0-9\u4e00-\u9fff]+','',segment)
+        if len(segment_compact)>=3 and segment_compact not in generic:
+            tokens.add(segment_compact)
+    for token in re.findall(r'[A-Z0-9]+(?:-[A-Z0-9]+)*|[\u4e00-\u9fff]{2,}',text):
+        if len(token)>=3 and token not in generic:
+            tokens.add(token)
+            if token.isdigit(): tokens.add(token.lstrip('0') or '0')
+    return tokens
+
+def rule_title_device_matches(title, device_values):
+    """Require a device-scoped rule title to name an actual endpoint device."""
+    title_tokens=device_identity_tokens(title)
+    if not title_tokens: return False
+    return any(title_tokens.intersection(device_identity_tokens(value)) for value in device_values)
+
 COMPONENT_UUID_KEYS={"componentuuid","component_uuid","component-uuid"}
 PIN_COLLECTION_KEYS=("pins","pin_info","pinInfo","pin_list","pinList","pinNames","pin_names")
 PIN_NAME_KEYS=("pin","pin_name","pinName","Pin","name")

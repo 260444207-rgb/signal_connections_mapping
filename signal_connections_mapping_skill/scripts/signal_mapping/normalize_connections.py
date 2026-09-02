@@ -362,7 +362,9 @@ def normalize_connections(input_path: str | Path, output_path: str | Path) -> Li
             target_block_name = pick(row, "target_block_name")
             source_part_id = lookup_block_part(block_part_aliases, source_block_id, source_block_name, sheet_name)
             target_part_id = lookup_block_part(block_part_aliases, target_block_id, target_block_name)
-            count = expansion_count(source_port)
+            # 显式范围只声明候选宽度；最终成员数由严格器件规则与 pin_info 共同确认。
+            declared_bus_width = expansion_count(source_port)
+            count = 1
 
             for bit_idx in range(1, count + 1):
                 connection_id_raw = pick(row, "connection_id") or f"{sheet_name}_{idx}"
@@ -374,6 +376,7 @@ def normalize_connections(input_path: str | Path, output_path: str | Path) -> Li
                     "base_line_id": f"{sheet_name}:{idx}:{connection_id_raw}",
                     "expansion_index": bit_idx,
                     "expansion_count": count,
+                    "declared_bus_width": declared_bus_width if declared_bus_width > 1 else 0,
                     "analysis_unit": "device",
                     "source_sheet_name": sheet_name,
                     "output_sheet_name": sheet_name,

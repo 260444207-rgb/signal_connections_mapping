@@ -13,6 +13,7 @@ from .common import (
     load_pin_catalog,
     normalize_text,
     pins_for_part,
+    rule_title_device_matches,
     write_jsonl,
 )
 
@@ -87,11 +88,40 @@ def explicit_bus_reason(row: Dict[str, Any]) -> tuple[int, List[str]]:
         normalize_text(row.get("target_port", "")),
         normalize_text(row.get("connection_name", "")),
     ])
-    width = bus_width_from_text(blob)
+    width = max(int(row.get("declared_bus_width", 0) or 0), bus_width_from_text(blob))
     reasons: List[str] = []
     if bus_width_from_text(blob) > 1:
         reasons.append("bus width notation in connection text")
     return width, reasons
+
+
+def row_device_identities(row: Dict[str, Any]) -> List[str]:
+    return [
+        normalize_text(row.get(key, ""))
+        for key in (
+            "source_part_id",
+            "source_block_id",
+            "source_block_name",
+            "target_part_id",
+            "target_block_id",
+            "target_block_name",
+        )
+        if normalize_text(row.get(key, ""))
+    ]
+
+
+def pins_explicitly_named_in_rule(source_pins: List[str], text: str) -> List[str]:
+    """Intersect rule member names with the authoritative current-device pin_info."""
+    upper = normalize_text(text).upper()
+    matched: List[str] = []
+    for pin in source_pins:
+        name = normalize_text(pin)
+        if not name:
+            continue
+        if re.search(rf"(?<![A-Z0-9_]){re.escape(name.upper())}(?![A-Z0-9_])", upper):
+            if name not in matched:
+                matched.append(name)
+    return matched
 
 
 def bus_name_for_row(row: Dict[str, Any]) -> str:
@@ -229,10 +259,14 @@ def rule_hint_chunks(section: str) -> List[str]:
     return chunks
 
 
-def matching_rule_hint(row: Dict[str, Any], rule_text: str) -> Dict[str, Any]:
+def matching_rule_hint(
+    row: Dict[str, Any],
+    rule_text: str,
+    source_pins: List[str] | None = None,
+) -> Dict[str, Any]:
     """
     自然语言规则只用于前置形态提示，不在脚本里做 pin 裁决。
-    如果规则文本中同时出现当前连接关键词和“差分/总线”等描述，则返回提示。
+    RULE 标题必须先严格命中当前连接的源/目标器件 code 或名称；正文只在通过门控后提供形态与成员证据。
     """
     if not rule_text:
         return {}
@@ -261,9 +295,14 @@ def matching_rule_hint(row: Dict[str, Any], rule_text: str) -> Dict[str, Any]:
     hints: List[str] = []
     matched_rule_titles: List[str] = []
     suggested_bus_widths: List[int] = []
+    declared_bus_widths: List[int] = []
+    matched_bus_pins: List[str] = []
     strong_hint = False
     for section in sections:
-        title = section.splitlines()[0].strip() if section.splitlines() else ""
+        title_line = section.splitlines()[0].strip() if section.splitlines() else ""
+        title = re.sub(r"^### RULE:\s*", "", title_line, flags=re.I)
+        if not rule_title_device_matches(title, row_device_identities(row)):
+            continue
         for chunk in rule_hint_chunks(section):
             upper_chunk = chunk.upper()
             section_terms = [(kind, term) for kind, term in row_terms if term and term in upper_chunk]
@@ -276,7 +315,13 @@ def matching_rule_hint(row: Dict[str, Any], rule_text: str) -> Dict[str, Any]:
                 section_hints.append("bus")
                 rule_bus_width = bus_width_from_rule_text(chunk)
                 if rule_bus_width > 1:
-                    suggested_bus_widths.append(rule_bus_width)
+                    declared_bus_widths.append(rule_bus_width)
+                current_pins = pins_explicitly_named_in_rule(source_pins or [], chunk)
+                if len(current_pins) > 1:
+                    suggested_bus_widths.append(len(current_pins))
+                    for pin in current_pins:
+                        if pin not in matched_bus_pins:
+                            matched_bus_pins.append(pin)
             if not section_hints:
                 continue
             specific_terms = [
@@ -298,7 +343,9 @@ def matching_rule_hint(row: Dict[str, Any], rule_text: str) -> Dict[str, Any]:
         "shape_hints": sorted(set(hints)),
         "strong_shape_hint": strong_hint,
         "suggested_bus_width": max(suggested_bus_widths) if suggested_bus_widths else 0,
-        "basis": "matched_natural_language_rule_block_contains_shape_hint",
+        "declared_rule_bus_width": max(declared_bus_widths) if declared_bus_widths else 0,
+        "matched_bus_pins": matched_bus_pins,
+        "basis": "strict_rule_title_device_match_then_pin_info_intersection",
     }
 
 
@@ -309,7 +356,7 @@ def infer_signal_shape_for_row(
 ) -> Dict[str, Any]:
     bus_width, bus_reasons = explicit_bus_reason(row)
     diff_pair = best_matching_diff_pair(row, source_pins)
-    rule_hint = matching_rule_hint(row, rule_text)
+    rule_hint = matching_rule_hint(row, rule_text, source_pins)
     normalized_expansion_count = int(row.get("expansion_count", 1) or 1)
     is_preexpanded_bus_member = normalized_expansion_count > 1
 
@@ -326,8 +373,18 @@ def infer_signal_shape_for_row(
         reasons.append("normalize_connections already materialized this bus member")
     elif bus_width > 1:
         shape = "bus"
-        expected_count = bus_width
-        reasons.extend(bus_reasons)
+        actual_pin_width = int(rule_hint.get("suggested_bus_width", 0) or 0)
+        if rule_hint.get("strong_shape_hint") and "bus" in rule_hint.get("shape_hints", []) and actual_pin_width > 1:
+            expected_count = actual_pin_width
+            confidence = "rule_pin_info_verified"
+            reasons.extend(bus_reasons)
+            reasons.append("strict device rule matched and bus member count was verified against pin_info")
+        else:
+            expected_count = 1
+            confidence = "model_hint"
+            needs_model_shape_review = True
+            reasons.extend(bus_reasons)
+            reasons.append("declared bus width is not sufficient without a strict device-rule and pin_info member match")
     elif has_explicit_differential_marker(row):
         shape = "differential"
         expected_count = 2
@@ -348,8 +405,8 @@ def infer_signal_shape_for_row(
         hinted_width = int(rule_hint.get("suggested_bus_width", 0) or 0)
         if hinted_width > 1:
             expected_count = hinted_width
-            confidence = "rule_hint"
-            reasons.append("natural language rule explicitly provides bus width")
+            confidence = "rule_pin_info_verified"
+            reasons.append("strict device rule identifies the bus and pin_info determines its member count")
         else:
             expected_count = 1
             confidence = "model_hint"
@@ -393,6 +450,8 @@ def infer_signal_shape_for_row(
     return {
         "shape": shape,
         "bus_name": bus_name_for_row(row) if shape == "bus" else "",
+        "declared_bus_width": bus_width if shape == "bus" and bus_width > 1 else 0,
+        "pin_info_bus_width": int(rule_hint.get("suggested_bus_width", 0) or 0) if shape == "bus" else 0,
         "expected_physical_pin_count": expected_count,
         "expected_physical_pin_count_known": not requires_model_expansion,
         "requires_model_expansion": requires_model_expansion,
