@@ -1,0 +1,31 @@
+[router]
+host = "127.0.0.1"
+port = 8000
+max_body_bytes = 1048576
+requests_per_minute = 120
+
+[auth]
+# Implement this factory to call your existing identity/session service.
+provider_factory = "schematic_mcp.auth_provider:create_provider"
+# Client must send both X-Cookie and X-User-Account.
+timeout_seconds = 5.0
+
+[supervisor]
+grace_seconds = 10
+max_restarts = 5
+restart_window_seconds = 60
+
+[domains.search]
+port = 8101
+scope = "mcp:search"
+module = "schematic_mcp.domains.search"
+
+[domains.files]
+port = 8102
+scope = "mcp:files"
+module = "schematic_mcp.domains.files"
+
+[domains.github]
+port = 8103
+scope = "mcp:github"
+module = "schematic_mcp.domains.github"

@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "schematic-mcp"
+version = "0.1.0"
+description = "Stateless multi-process domain MCP backend"
+requires-python = ">=3.11"
+dependencies = ["fastmcp>=3.4.7,<4", "starlette>=1.0.1,<2", "httpx>=0.28,<1", "uvicorn>=0.35,<1"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10", "pytest-asyncio>=1,<2"]
+
+[project.scripts]
+schematic-mcp = "schematic_mcp.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
