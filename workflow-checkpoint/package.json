@@ -1,0 +1,12 @@
+{
+  "name": "openclaw-workflow-checkpoint",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24.15.0 <25" },
+  "openclaw": { "extensions": ["./index.ts"] },
+  "scripts": { "test": "node --test tests/*.test.ts", "typecheck": "tsc --noEmit" },
+  "devDependencies": { "@types/node": "^24.0.0", "typescript": "^5.9.0" },
+  "peerDependencies": { "openclaw": "2026.9.2" },
+  "peerDependenciesMeta": { "openclaw": { "optional": true } }
+}
