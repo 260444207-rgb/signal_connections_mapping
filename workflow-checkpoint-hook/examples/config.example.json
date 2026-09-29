@@ -1,0 +1,15 @@
+{
+  "openclawPackageRoot": "C:/tools/openclaw",
+  "stateDir": "C:/Users/your-name/.openclaw/workflow-checkpoint-hook",
+  "workflows": {
+    "research-report": [
+      "research",
+      "draft",
+      "review"
+    ]
+  },
+  "workflowSkills": {
+    "research-report": "C:/work/checkpoint-demo-skill/SKILL.md"
+  },
+  "waitTimeoutMs": 900000
+}

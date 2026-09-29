@@ -1,0 +1,38 @@
+{
+  "example_only": true,
+  "reviewed_file": "report.md",
+  "all_required_checks_passed": true,
+  "checks": [
+    {
+      "criterion": "清楚列出目标和约束",
+      "result": "pass",
+      "evidence": "首段说明 6 人小组、第一周试运行及访问条件；步骤 3 保留不新增订阅约束。"
+    },
+    {
+      "criterion": "结论有本地需求依据",
+      "result": "pass",
+      "evidence": "推荐理由对应输入的共享目录可编辑、外部表单访问不稳定两条事实。"
+    },
+    {
+      "criterion": "比较两方案且不编造外部事实",
+      "result": "pass",
+      "evidence": "候选表包含共享 Markdown 与在线表单；无虚构价格或统计。"
+    },
+    {
+      "criterion": "推荐方案及第一周步骤明确",
+      "result": "pass",
+      "evidence": "推荐共享 Markdown，列出确认维护人、建立模板、填写与复盘步骤。"
+    },
+    {
+      "criterion": "保留尚未确认的问题",
+      "result": "pass",
+      "evidence": "步骤 1 明确维护人尚未确定。"
+    }
+  ],
+  "unresolved": [
+    "共享目录维护人需要小组确认"
+  ],
+  "limitations": [
+    "这是文档样本，不能充当真实 Hook 或 Gateway 演练证据。"
+  ]
+}

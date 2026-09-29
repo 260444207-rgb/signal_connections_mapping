@@ -1,0 +1,13 @@
+{
+  "openclawPackageRoot": "",
+  "stateDir": "",
+  "workflowSkills": {},
+  "workflows": {
+    "research-report": [
+      "research",
+      "draft",
+      "review"
+    ]
+  },
+  "waitTimeoutMs": 900000
+}

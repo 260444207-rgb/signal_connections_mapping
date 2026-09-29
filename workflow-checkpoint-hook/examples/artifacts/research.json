@@ -1,0 +1,33 @@
+{
+  "example_only": true,
+  "objective": "为 6 人小组选择一种周报交接方式，输出一页决策说明。",
+  "source_path": "../input/requirements.md",
+  "constraints": [
+    "不新增付费订阅",
+    "外部表单服务访问不稳定",
+    "包含本周完成、未完成原因、下周计划三项",
+    "先试运行一周"
+  ],
+  "candidates": [
+    "共享 Markdown 文件",
+    "在线表单"
+  ],
+  "facts": [
+    {
+      "claim": "所有成员能编辑共享目录中的 Markdown 文件",
+      "evidence": "需求文件／已确认条件"
+    },
+    {
+      "claim": "当前工作网络不能稳定访问外部表单服务",
+      "evidence": "需求文件／已确认条件"
+    },
+    {
+      "claim": "共有 6 名成员，每周提交一次",
+      "evidence": "需求文件／用户目标和已确认条件"
+    }
+  ],
+  "open_questions": [
+    "共享目录的维护人尚未确定"
+  ],
+  "proposed_next_step": "基于已知访问条件比较方案，撰写第一周试运行草稿。"
+}
