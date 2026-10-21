@@ -4,13 +4,35 @@
 from __future__ import annotations
 
 import argparse
+from copy import copy
 from pathlib import Path
 from typing import Dict, Any, List
 
-from .common import iter_jsonl, ensure_dir, FINAL_HEADERS
+from .common import (
+    ensure_dir,
+    find_header_alias,
+    find_worksheet_header,
+    iter_jsonl,
+    iter_worksheet_records_with_row_numbers,
+    worksheet_header_map,
+)
 
 SKIP_SHEETS = {"BLOCK_INFO", "LINK_INFO", "链路信息", "说明", "README", "INDEX", "目录"}
 MULTI_RESULT_CONNECTION_ID_SEPARATOR = "#"
+RESULT_HEADERS = ["原理图Pin脚", "分析说明", "映射置信度", "网络命名"]
+RESULT_HEADER_ALIASES = {
+    "原理图Pin脚": ["原理图Pin脚", "原理图pin脚", "原理图PIN脚"],
+    "分析说明": ["分析说明"],
+    "映射置信度": ["映射置信度"],
+    "网络命名": ["网络命名"],
+}
+SOURCE_PORT_HEADERS = {"source_port", "源Port", "源端Port", "port"}
+CONNECTION_ID_HEADERS = ["connection_id", "连线ID", "连线标识", "line_id", "edge_id"]
+CONNECTION_HEADER_HINTS = SOURCE_PORT_HEADERS | {
+    "source_block_id", "源Block标识", "source_block_name", "源Block名称",
+    "target_block_id", "目的Block标识", "目标Block标识", "target_port", "目的Port", "目标Port",
+    *CONNECTION_ID_HEADERS,
+}
 
 def decision_selected_pins(decision: Dict[str, Any]) -> List[str]:
     pins = decision.get("selected_pins")
@@ -108,7 +130,12 @@ def rows_for_decision(normalized: Dict[str, Any], decision: Dict[str, Any], conn
             "原理图Pin脚": selected_pin,
             "分析说明": decision_list_value(decision, "analyses", decision_index, decision.get("analysis", "")),
             "映射置信度": decision_list_value(decision, "confidences", decision_index, decision.get("confidence", "")),
-            "网络命名": "",
+            "网络命名": decision_list_value(
+                decision,
+                "net_names",
+                decision_index,
+                decision.get("net_name", normalized.get("existing_net_name", "")),
+            ),
         })
     return rows
 
@@ -122,6 +149,23 @@ def build_final_rows_by_template_sheet(normalized_path: str | Path, decisions_pa
     normalized_ids = {row["line_id"] for row in normalized_rows}
     child_decisions = group_child_decisions(decisions, normalized_ids)
     grouped: Dict[str, List[Dict[str, Any]]] = {}
+    entry_by_source: Dict[tuple[str, int, str], Dict[str, Any]] = {}
+
+    def append_result_rows(sheet_name: str, normalized: Dict[str, Any], result_rows: List[Dict[str, Any]]) -> None:
+        source_row_number = int(normalized.get("source_row_number") or 0)
+        source_line_key = str(
+            normalized.get("parent_line_id")
+            or normalized.get("base_line_id")
+            or normalized.get("line_id")
+            or ""
+        )
+        key = (sheet_name, source_row_number, source_line_key)
+        entry = entry_by_source.get(key)
+        if entry is None:
+            entry = {"source_row_number": source_row_number, "result_rows": []}
+            entry_by_source[key] = entry
+            grouped.setdefault(sheet_name, []).append(entry)
+        entry["result_rows"].extend(result_rows)
 
     for n in normalized_rows:
         sheet_name = n.get("output_sheet_name") or n.get("source_sheet_name")
@@ -129,41 +173,106 @@ def build_final_rows_by_template_sheet(normalized_path: str | Path, decisions_pa
             raise ValueError(f"normalized row missing output_sheet_name/source_sheet_name: {n.get('line_id')}")
         children = child_decisions.get(n["line_id"], [])
         if children:
+            result_rows = []
             for child in children:
-                grouped.setdefault(sheet_name, []).extend(rows_for_decision(n, child, display_connection_id_for_decision(n, child)))
+                result_rows.extend(rows_for_decision(n, child, display_connection_id_for_decision(n, child)))
+            append_result_rows(sheet_name, n, result_rows)
             continue
-        grouped.setdefault(sheet_name, []).extend(rows_for_decision(n, decisions.get(n["line_id"], {})))
+        append_result_rows(sheet_name, n, rows_for_decision(n, decisions.get(n["line_id"], {})))
 
     return grouped
 
-def clear_sheet_values(ws):
-    # 保留 sheet 本身，删除旧内容后从第一行重建标准结果表。
-    if ws.max_row:
-        ws.delete_rows(1, ws.max_row)
+def looks_like_connection_header(headers: List[str]) -> bool:
+    names = set(headers)
+    return bool(names & SOURCE_PORT_HEADERS) and len(names & CONNECTION_HEADER_HINTS) >= 2
 
-def write_rows(ws, rows: List[Dict[str, Any]]):
-    clear_sheet_values(ws)
-    ws.append(FINAL_HEADERS)
-    for row in rows:
-        ws.append([row.get(h, "") for h in FINAL_HEADERS])
+def ensure_result_headers(ws, header_row: int, header_map: Dict[str, int]) -> Dict[str, int]:
+    next_column = max(header_map.values(), default=0) + 1
+    style_source_column = max(header_map.values(), default=0)
+    result_columns: Dict[str, int] = {}
+    for header in RESULT_HEADERS:
+        existing_header = find_header_alias(header_map, RESULT_HEADER_ALIASES[header])
+        if existing_header:
+            result_columns[header] = header_map[existing_header]
+            continue
+        cell = ws.cell(row=header_row, column=next_column, value=header)
+        if style_source_column:
+            source = ws.cell(row=header_row, column=style_source_column)
+            if source.has_style:
+                cell._style = copy(source._style)
+            cell.font = copy(source.font)
+            cell.fill = copy(source.fill)
+            cell.border = copy(source.border)
+            cell.alignment = copy(source.alignment)
+            cell.number_format = source.number_format
+            cell.protection = copy(source.protection)
+        header_map[header] = next_column
+        result_columns[header] = next_column
+        next_column += 1
+    return result_columns
 
-    # 简单格式，避免强依赖复杂样式
-    try:
-        from openpyxl.styles import Font, Alignment
-        for cell in ws[1]:
-            cell.font = Font(bold=True)
-            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-        for col in ws.columns:
-            max_len = max(len(str(cell.value or "")) for cell in col)
-            ws.column_dimensions[col[0].column_letter].width = min(40, max(10, max_len + 2))
-    except Exception:
-        pass
+def copy_input_row(ws, source_row: int, target_row: int) -> None:
+    for column_number in range(1, ws.max_column + 1):
+        source = ws.cell(row=source_row, column=column_number)
+        target = ws.cell(row=target_row, column=column_number, value=source.value)
+        if source.has_style:
+            target._style = copy(source._style)
+        target.font = copy(source.font)
+        target.fill = copy(source.fill)
+        target.border = copy(source.border)
+        target.alignment = copy(source.alignment)
+        target.number_format = source.number_format
+        target.protection = copy(source.protection)
+    if source_row in ws.row_dimensions:
+        ws.row_dimensions[target_row].height = ws.row_dimensions[source_row].height
+
+def write_rows(ws, entries: List[Dict[str, Any]]) -> int:
+    header_row, header_map = find_worksheet_header(ws, looks_like_connection_header, max_scan_rows=30)
+    if header_row is None:
+        if entries:
+            raise ValueError(f"sheet {ws.title} 未找到连接表头，无法按输入格式写入分析结果")
+        return 0
+    result_columns = ensure_result_headers(ws, header_row, header_map)
+    fallback_rows = [
+        row_number
+        for row_number, record in iter_worksheet_records_with_row_numbers(ws, header_row, header_map)
+        if any(str(record.get(header) or "").strip() for header in SOURCE_PORT_HEADERS)
+    ]
+    connection_id_header = find_header_alias(header_map, CONNECTION_ID_HEADERS)
+    inserted_count = 0
+
+    for entry_index, entry in enumerate(entries):
+        source_row_number = int(entry.get("source_row_number") or 0)
+        if not source_row_number:
+            if entry_index >= len(fallback_rows):
+                raise ValueError(f"sheet {ws.title} 无法定位第 {entry_index + 1} 条输入连接")
+            source_row_number = fallback_rows[entry_index]
+        target_row = source_row_number + inserted_count
+        result_rows = entry.get("result_rows") or []
+        if len(result_rows) > 1:
+            ws.insert_rows(target_row + 1, amount=len(result_rows) - 1)
+            for offset in range(1, len(result_rows)):
+                copy_input_row(ws, target_row, target_row + offset)
+
+        for offset, result_row in enumerate(result_rows):
+            output_row = target_row + offset
+            if len(result_rows) > 1 and connection_id_header:
+                ws.cell(
+                    row=output_row,
+                    column=header_map[connection_id_header],
+                    value=result_row.get("连线ID", ""),
+                )
+            for header in RESULT_HEADERS:
+                ws.cell(row=output_row, column=result_columns[header], value=result_row.get(header, ""))
+        inserted_count += max(0, len(result_rows) - 1)
+
+    return inserted_count
 
 def render_template_sheets(template_excel: str | Path, normalized_path: str | Path, decisions_path: str | Path, output_excel: str | Path) -> Dict[str, Any]:
     """
     正式信号接口列表输出：
     1. 复制输入框图 Excel 的 sheet 结构。
-    2. 只向输入 Excel 已存在的器件 sheet 写入分析结果。
+    2. 保留输入表头、列顺序、说明行和原始字段，只追加或更新 4 个分析结果列。
     3. 不根据 block_id/group/source_sheet 自行创建新 sheet。
     4. 不把所有结果合并到一个总 sheet。
     """
@@ -191,11 +300,14 @@ def render_template_sheets(template_excel: str | Path, normalized_path: str | Pa
         if sheet_name.upper() in SKIP_SHEETS:
             written_sheets.append({"sheet_name": sheet_name, "row_count": "preserved"})
             continue
-        rows = grouped.get(sheet_name, [])
-        # 输入有这个器件 sheet，就保留该 sheet；有分析结果则写入，无结果则写入空表头。
+        entries = grouped.get(sheet_name, [])
         ws = wb[sheet_name]
-        write_rows(ws, rows)
-        written_sheets.append({"sheet_name": sheet_name, "row_count": len(rows)})
+        inserted_count = write_rows(ws, entries)
+        written_sheets.append({
+            "sheet_name": sheet_name,
+            "row_count": sum(len(entry.get("result_rows") or []) for entry in entries),
+            "inserted_row_count": inserted_count,
+        })
 
     wb.save(output_excel)
     wb.close()

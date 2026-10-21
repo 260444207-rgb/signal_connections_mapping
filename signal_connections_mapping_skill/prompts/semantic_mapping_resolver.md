@@ -32,7 +32,7 @@ link_family_profiles
 rule_library
 ```
 
-`connection_defaults` 是逐行省略字段的确定默认值；不是推测。逐行连接事实只读取 `normalized_connections`，不要从其他汇总结构复制或改写。`connection_attribute` 对应聚合表格第 10 列“连线属性”：有值时可辅助理解连接语义，但它不是 pin 候选、不得被模型改写，也不得写入 decision；空值可能为压缩上下文而省略。
+`connection_defaults` 是逐行省略字段的确定默认值；不是推测。逐行连接事实只读取 `normalized_connections`，不要从其他汇总结构复制或改写。`connection_attribute` 对应聚合表格中表头为“连线属性”的字段：有值时可辅助理解连接语义，但它不是 pin 候选、不得被模型改写，也不得写入 decision；空值可能为压缩上下文而省略。
 
 ## 硬门禁
 
@@ -48,6 +48,7 @@ rule_library
 
 1. 读取 `task_scope.session_context_file`；同一 session 只需完整读取一次。
 2. 每个 TASK 开始前读取 `pin_allocation_state_file` 最新状态。不同物理实例分别记录 pin 占用。
+   输入表中已有“原理图Pin脚”的非 delete 行已写入 `pin_allocation_context.existing_pin_assignments` 和 state 的初始 `used_pins`；它们是只读既有连接关系。分析空 pin 行时必须考虑其 pin 占用、扇出、同网复用和冲突，禁止重新裁决已有行。
 3. 阅读 `context_group` 和 `diagram_link_context`，理解链路族、上下游角色、实例编号和用户说明。
 4. 阅读 session context 中当前 `link_family_profiles`。其中 `line_examples` 已限定为 link_info 显式标识的当前 link_family 且与本 session 相同的源端器件；只能借鉴链路拓扑、方向、索引和分析方法，不能复制其他 line_id 的 pin 结论。空 `line_examples` 表示没有满足条件的参考连接，不得改用推断链路、模糊 sheet 成员或其他器件样例补充。
 5. 按 TASK 的 `matched_rule_refs.rule_key` 到 `rule_library` 取规则正文。规则优先级：

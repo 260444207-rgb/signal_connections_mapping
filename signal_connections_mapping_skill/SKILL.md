@@ -1,6 +1,6 @@
 ---
 name: diagram-logical-connection-mapping
-description: 基于框图 Excel、pin_info 和自然语言硬件规则分析器件实际 pin，并生成标准 14 列框图逻辑映射表。用于从框图逻辑连接推导源端原理图 pin、处理差分/总线展开及校验 pin 结论；不负责网络命名。
+description: 基于框图 Excel、pin_info 和自然语言硬件规则分析器件实际 pin，并在输入工作簿中追加映射结果。用于从框图逻辑连接推导源端原理图 pin、处理差分/总线展开及校验 pin 结论；不负责网络命名。
 ---
 
 # diagram-logical-connection-mapping
@@ -43,6 +43,16 @@ python -m pip install -r '<skill_root>\requirements.txt'
 pin_info.json
 ```
 
+所有 Excel/CSV 表格字段必须通过表头名称及其受支持别名读取和写入。禁止用固定列号、元组下标或“第 N 列”定位业务数据；输入列可以重排，表头行也可以位于前置说明行之后。正式输出必须沿用输入表格格式，每个值通过“表头名称 -> 实际列号”映射写入。
+
+增量输入规则：
+
+- Sheet 存在“修改类型”表头时，值为 `delete`（忽略大小写、忽略首尾空白）的行不进入规范化、形态推断、TASK 或 pin 校验；输出中保留该输入行且不写入新分析结果。没有“修改类型”表头时不做此过滤。
+- “原理图Pin脚”表头按大小写不敏感方式识别，兼容“原理图pin脚”等写法。
+- 非 delete 行中，“原理图Pin脚”为空的行才进入新增分析；已有 pin 的行不得重新映射。
+- 已有 pin 行仍作为只读连接上下文传入同一源端器件 session，并写入 `pin_allocation_context.existing_pin_assignments` 和初始 `pin_allocation_state.used_pins`。分析新增行时必须考虑这些已有连接、pin 占用和允许复用关系。
+- 已有行的“原理图Pin脚、分析说明、映射置信度、网络命名”原值必须保留。
+
 可选输入：
 
 ```text
@@ -62,10 +72,11 @@ output/signal_interface_YYYYMMDD_HHMMSS.xlsx
 必须保持输入 workbook 的 sheet 结构：
 
 - `block_info`、`link_info` / `链路信息` 原样保留。
-- 其他连接 sheet 重建为标准 14 列。
+- 连接 sheet 保留原表头、列顺序、说明行、原始字段和已有格式，不得清空重建。
 - 不得按模型结果新建、删除或合并 sheet。
-- 前 10 列是原始连接事实，模型不得修改；第 10 列固定为“连线属性”。旧输入缺少该列时按空值兼容。
-- 4 个结果列始终追加在原始连接事实之后，顺序为“原理图Pin脚、分析说明、映射置信度、网络命名”。其中前三列来自本 skill 的分析结果，“网络命名”保持为空。
+- 输入中的全部字段都是原始事实，模型不得修改；“连线属性”存在时按表头名称读取，缺少时按空值兼容。
+- 每个连接 sheet 都必须包含“原理图Pin脚、分析说明、映射置信度、网络命名”4 个结果列。已有结果列原位更新，缺失结果列按该顺序追加到现有表头之后。其中前三列来自本 skill 的分析结果，“网络命名”保持为空。
+- 多物理 pin 展开时复制完整输入行，仅允许将“连线ID”改为“原ID#数字”并分别写入 4 个结果列；其他输入字段保持不变。
 
 ## 核心门禁
 
@@ -112,8 +123,9 @@ Markdown 计划、task plan 和 global plan 仅用于人工检查或 finish 校�
 5. 同一 session 的 TASK 由同一个 subagent 顺序处理。
 6. session 开始时读取一次 `session_context_file`，其中包含共享链路 profile、规则正文和跨 TASK pin 共享关系。
 7. 每个 TASK 开始前读取最新 `pin_allocation_state_file`。
-8. 只处理 `output_contract.expected_line_ids`。
-9. 写入 `output_contract.output_file` 后更新 state，再处理下一 TASK。
+8. 分析当前 TASK 前先读取 session context 中的 `pin_allocation_context.existing_pin_assignments`，不得忽略已有连接占用的 pin。
+9. 只处理 `output_contract.expected_line_ids`。
+10. 写入 `output_contract.output_file` 后更新 state，再处理下一 TASK。
 
 主控必须维护 `subagent_session_status.json`。每个 session 只有同时满足 `spawned=true`、`completed=true`、`failed=false`、`timed_out=false`、`rerun_required=false`，且 `completed_task_ids` 覆盖该 session 全部 TASK，才允许进入 `finish`。失败或超时后必须按 `failed_subagent_rerun_plan.md` 用 `sessions_spawn` 重跑/等待完成，并更新状态文件；不得只因为 output_file 存在就 finish。
 
@@ -138,7 +150,7 @@ output_contract
 schema_file
 ```
 
-`normalized_connections` 是唯一逐行事实。`connection_attribute` 对应输入第 10 列“连线属性”，有值时可作为语义判断依据，但不得修改或作为模型输出；空值在 TASK 紧凑视图中可省略。其他结构不得重复逐行 block、port、shape 或 line 信息。
+`normalized_connections` 是唯一逐行事实。`connection_attribute` 对应输入表头“连线属性”，有值时可作为语义判断依据，但不得修改或作为模型输出；空值在 TASK 紧凑视图中可省略。其他结构不得重复逐行 block、port、shape 或 line 信息。
 
 `connection_defaults` 表示省略字段的确定默认值；异常字段仍保留在对应 connection 中。
 
@@ -171,7 +183,7 @@ custom/user > link > device > signal > global > lexical fallback
 
 ## 网络命名边界
 
-本 skill 不负责网络命名，pin decision 中不包含网络命名字段。正式 Excel 为保持标准 14 列，仍保留空的“网络命名”列；“分析说明”只描述 pin 映射。需要网络名时，将正式 Excel 输出交给独立的 `signal-interface-net-naming` skill。
+本 skill 不负责网络命名，pin decision 中不包含网络命名字段。正式 Excel 必须包含“网络命名”结果列并保持为空；“分析说明”只描述 pin 映射。需要网络名时，将正式 Excel 输出交给独立的 `signal-interface-net-naming` skill。
 
 ## 阶段命令
 

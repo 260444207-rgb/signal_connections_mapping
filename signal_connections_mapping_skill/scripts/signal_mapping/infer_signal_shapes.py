@@ -539,8 +539,23 @@ def infer_signal_shapes(
     for row in rows:
         part_id = row.get("source_part_id", "")
         source_pins = pins_for_part(catalog, part_id)
-        signal_shape_info = infer_signal_shape_for_row(row, source_pins, rule_text)
-        expanded_rows = expanded_rows_for_signal_shape(row, signal_shape_info)
+        if row.get("analysis_required") is False:
+            signal_shape_info = {
+                "shape": "existing_mapping",
+                "expected_physical_pin_count": 1,
+                "is_expanded_member": False,
+                "needs_model_shape_review": False,
+                "confidence": "existing_input",
+                "reasons": ["existing_selected_pin_present"],
+            }
+            updated = dict(row)
+            updated["signal_shape"] = "existing_mapping"
+            updated["expected_physical_pin_count"] = 1
+            updated["signal_shape_info"] = signal_shape_info
+            expanded_rows = [updated]
+        else:
+            signal_shape_info = infer_signal_shape_for_row(row, source_pins, rule_text)
+            expanded_rows = expanded_rows_for_signal_shape(row, signal_shape_info)
         enriched.extend(expanded_rows)
         reports.append({
             "line_id": row.get("line_id", ""),

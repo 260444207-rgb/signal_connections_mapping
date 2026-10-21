@@ -2,13 +2,13 @@
 
 ## 1. 核心目标
 
-根据输入框图 Excel 的连接事实、`pin_info.json` 的源端器件 pin 列表、自然语言项目规则，生成标准 14 列信号接口列表。
+根据输入框图 Excel 的连接事实、`pin_info.json` 的源端器件 pin 列表、自然语言项目规则，在输入工作簿中追加信号映射结果。
 
 最终输出严格沿用输入 Excel 的 sheet 结构：
 
 ```text
-block_info 原样保留
-其他连接 sheet 重建为标准 14 列
+block_info、link_info / 链路信息原样保留
+连接 sheet 保持输入格式并追加或更新 4 个结果列
 ```
 
 ## 2. 主流程
@@ -47,13 +47,15 @@ render_template_sheets
 
 ```text
 1. 保留 source_sheet_name / output_sheet_name
-2. 保留前 10 列连接事实（第 10 列为“连线属性”；旧输入缺失时补空）
+2. 按表头名称读取连接事实并保留原始 Excel 行号；“连线属性”缺失时按空值兼容
 3. 读取 block_info 中的框图标识 -> 器件信息，并建立 block_id/block_name 别名
 4. 读取可选 link_info / 链路信息 sheet，注入 link_family_id、link_instance_id、user_link_info；没有该 sheet 时保持字段为空，后续按器件上下文兜底
 5. 识别显式总线格式，如 XXX[7:0] 或 XXX*4，但只记录 `declared_bus_width`，不在规则与 pin_info 校验前展开
+6. 如果存在“修改类型”表头，过滤 `delete` 行；如果不存在则不做修改类型过滤
+7. 已有“原理图Pin脚”的行标记为 `analysis_required=false`，保留既有结果并作为同一器件 session 的连接和 pin 占用上下文；只有 pin 为空的非 delete 行进入 TASK
 ```
 
-不得根据器件语义修改端口名，不得把端口改成 default，不得用模型推断覆盖前 10 列。
+不得根据器件语义修改端口名，不得把端口改成 default，不得用模型推断覆盖任何输入字段。
 
 ### infer_signal_shapes
 
@@ -165,28 +167,18 @@ output/signal_interface_YYYYMMDD_HHMMSS.xlsx
 
 ## 4. 正式输出约束
 
-标准 14 列：
+必须写入或追加的结果列：
 
 ```text
-源Block标识
-源Block名称
-源Port
-目的Block标识
-目的Block名称
-目的Port
-连线ID
-连线名称
-连线方向
-连线属性
 原理图Pin脚
 分析说明
 映射置信度
 网络命名
 ```
 
-前 10 列是连接事实字段，模型不得修改。
+输入表中的全部字段都是连接事实，模型不得修改。
 
-如果模型阶段判断一条逻辑连接对应多个物理 pin，应输出多行 decision：`line_id=原line_id#数字`、`parent_line_id=原line_id`、每行一个 `selected_pin`。渲染阶段会复制 parent 原始连接事实并把连线ID改为 `主连线ID#数字`，除连线ID和后 4 列外，前置字段不得变化。
+如果模型阶段判断一条逻辑连接对应多个物理 pin，应输出多行 decision：`line_id=原line_id#数字`、`parent_line_id=原line_id`、每行一个 `selected_pin`。渲染阶段会复制完整的 parent 输入行并把连线ID改为 `主连线ID#数字`，除连线ID和 4 个结果列外，所有输入字段不得变化。
 
 `原理图Pin脚` 只能逐字使用入参 `pin_info.json` 中当前源端器件编码对应的 pin 字符串。模型不得补全、改写、翻译、调整大小写或使用其他器件的 pin。
 

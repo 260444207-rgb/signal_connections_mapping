@@ -22,6 +22,18 @@ def route_model_resolution(normalized_path, pins_path, decisions_out, needs_mode
 
     for row in iter_jsonl(normalized_path):
         line_id = row["line_id"]
+        existing_selected_pin = str(row.get("existing_selected_pin", "") or "").strip()
+        if existing_selected_pin or row.get("analysis_required") is False:
+            decisions.append({
+                "line_id": line_id,
+                "selected_pin": existing_selected_pin,
+                "selected_pins": [],
+                "decision_type": "existing_mapping",
+                "confidence": str(row.get("existing_confidence", "") or ""),
+                "analysis": str(row.get("existing_analysis", "") or ""),
+                "needs_human_review": False,
+            })
+            continue
         source_part_id = row.get("source_part_id", "")
         resolved_part_id = resolve_catalog_key(pin_catalog, source_part_id)
         source_pins = pins_for_part(pin_catalog, source_part_id)

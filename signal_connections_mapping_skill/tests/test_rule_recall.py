@@ -14,8 +14,17 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from signal_mapping.build_model_resolution_tasks import extract_rule_blocks, match_rule_sections
 from signal_mapping.check_subagent_outputs import check_subagent_outputs
-from signal_mapping.common import FINAL_HEADERS, extract_component_uuid, load_pin_catalog, normalize_component_reference, pins_for_part, write_jsonl
-from signal_mapping.render_template_sheets import render_template_sheets, rows_for_decision
+from signal_mapping.common import (
+    FINAL_HEADERS,
+    extract_component_uuid,
+    iter_jsonl,
+    load_pin_catalog,
+    normalize_component_reference,
+    pins_for_part,
+    worksheet_header_map,
+    write_jsonl,
+)
+from signal_mapping.render_template_sheets import build_final_rows_by_template_sheet, render_template_sheets, rows_for_decision
 from signal_mapping.normalize_connections import normalize_connections
 from signal_mapping.validate_mapping import validate_mapping
 from signal_mapping.infer_signal_shapes import (
@@ -215,6 +224,7 @@ SPI_DATA 是 4-bit 总线，成员为 D0、D1、D2、D3。
         rows = normalize_connections(connections, normalized)
 
         self.assertEqual(1, len(rows))
+        self.assertEqual(0, rows[0]["source_row_number"])
         self.assertEqual(1, rows[0]["expansion_count"])
         self.assertEqual(4, rows[0]["declared_bus_width"])
         self.assertEqual("C_DATA", rows[0]["connection_id"])
@@ -872,7 +882,7 @@ DEV_A 的 SPI_DATA 是总线。
         self.assertEqual("pin mapping basis", rows[0]["分析说明"])
         self.assertEqual("控制信号", rows[0]["连线属性"])
 
-    def test_final_headers_are_ten_input_facts_followed_by_four_result_columns(self) -> None:
+    def test_internal_flat_headers_keep_canonical_fields_for_debug_outputs(self) -> None:
         self.assertEqual(14, len(FINAL_HEADERS))
         self.assertEqual(
             [
@@ -906,7 +916,132 @@ DEV_A 的 SPI_DATA 是总线。
         self.assertEqual("低有效", rows[0]["connection_attribute"])
         self.assertEqual("", rows[1]["connection_attribute"])
 
-    def test_formal_excel_renderer_writes_fourteen_columns_in_order(self) -> None:
+    def test_excel_reads_business_fields_by_header_name_when_columns_are_reordered(self) -> None:
+        from openpyxl import Workbook
+
+        source = self.task_dir / "reordered_connections.xlsx"
+        output = self.task_dir / "normalized.jsonl"
+        workbook = Workbook()
+        block_info = workbook.active
+        block_info.title = "block_info"
+        block_info.append(["说明"])
+        block_info.append(["器件信息", "无关列", "框图标识"])
+        block_info.append(["PART_SRC", "ignored", "SRC_SHEET"])
+
+        connections = workbook.create_sheet("SRC_SHEET")
+        reordered_headers = [
+            "连线属性", "目的Port", "源Block名称", "连线ID", "源Port",
+            "目的Block名称", "连线方向", "源Block标识", "连线名称", "目的Block标识",
+        ]
+        connections.append(["本页说明"])
+        connections.append(reordered_headers)
+        values_by_header = {
+            "源Block标识": "SRC", "源Block名称": "SOURCE", "源Port": "GPIO0",
+            "目的Block标识": "DST", "目的Block名称": "TARGET", "目的Port": "EN",
+            "连线ID": "C1", "连线名称": "ENABLE", "连线方向": "OUTPUT", "连线属性": "低有效",
+        }
+        connections.append([values_by_header[header] for header in reordered_headers])
+
+        link_info = workbook.create_sheet("link_info")
+        link_info.append(["本页说明"])
+        link_headers = ["器件角色说明", "相关连线ID", "链路编号", "器件Sheet", "链路类型"]
+        link_info.append(link_headers)
+        link_values = {
+            "链路类型": "CONTROL", "链路编号": "LINK_1", "器件Sheet": "SRC_SHEET",
+            "相关连线ID": "C1", "器件角色说明": "source controller",
+        }
+        link_info.append([link_values[header] for header in link_headers])
+        workbook.save(source)
+
+        rows = normalize_connections(source, output)
+
+        self.assertEqual(1, len(rows))
+        self.assertEqual(3, rows[0]["source_row_number"])
+        self.assertEqual("PART_SRC", rows[0]["source_part_id"])
+        self.assertEqual("GPIO0", rows[0]["source_port"])
+        self.assertEqual("EN", rows[0]["target_port"])
+        self.assertEqual("低有效", rows[0]["connection_attribute"])
+        self.assertEqual("CONTROL", rows[0]["link_family_id"])
+        self.assertEqual("LINK_1", rows[0]["link_instance_id"])
+
+        pins_source = self.task_dir / "reordered_pins.xlsx"
+        pins_workbook = Workbook()
+        pins_sheet = pins_workbook.active
+        pins_sheet.title = "pins"
+        pins_sheet.append(["说明"])
+        pins_sheet.append(["pin_name", "componentUuid"])
+        pins_sheet.append(["GPIO0", "PART_SRC"])
+        pins_workbook.save(pins_source)
+        self.assertEqual(["GPIO0"], load_pin_catalog(pins_source)["PART_SRC"])
+
+    def test_incremental_excel_filters_delete_and_uses_existing_pin_as_context(self) -> None:
+        from openpyxl import Workbook, load_workbook
+
+        source = self.task_dir / "incremental.xlsx"
+        normalized = self.task_dir / "incremental_normalized.jsonl"
+        pre_decisions = self.task_dir / "incremental_pre_decisions.jsonl"
+        needs_model = self.task_dir / "incremental_needs_model.jsonl"
+        pins = self.task_dir / "incremental_pins.json"
+        output = self.task_dir / "incremental_output.xlsx"
+        final_decisions = self.task_dir / "incremental_final_decisions.jsonl"
+
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "DEV0"
+        headers = [
+            "源Port", "目的Port", "连线ID", "原理图pin脚", "分析说明",
+            "映射置信度", "网络命名", "修改类型", "自定义字段",
+        ]
+        sheet.append(headers)
+        sheet.append(["OLD_LOGICAL", "OLD_TARGET", "C_OLD", "PIN_USED", "已有结论", "High", "OLD_NET", "modify", "KEEP_OLD"])
+        sheet.append(["NEW_LOGICAL", "NEW_TARGET", "C_NEW", "", "", "", "", "add", "KEEP_NEW"])
+        sheet.append(["DELETED", "NO_TARGET", "C_DELETE", "", "", "", "", "delete", "KEEP_DELETE"])
+        block_info = workbook.create_sheet("block_info")
+        block_info.append(["框图标识", "器件信息"])
+        block_info.append(["DEV0", "PART_A"])
+        workbook.save(source)
+        pins.write_text(json.dumps({"PART_A": ["PIN_USED", "PIN_NEW"]}), encoding="utf-8")
+
+        rows = normalize_connections(source, normalized)
+        route_model_resolution(normalized, pins, pre_decisions, needs_model)
+
+        self.assertEqual(["C_OLD", "C_NEW"], [row["connection_id"] for row in rows])
+        self.assertFalse(rows[0]["analysis_required"])
+        self.assertEqual("PIN_USED", rows[0]["existing_selected_pin"])
+        self.assertTrue(rows[1]["analysis_required"])
+        routed = list(iter_jsonl(needs_model))
+        self.assertEqual([rows[1]["line_id"]], [row["line_id"] for row in routed])
+        decisions_by_id = {row["line_id"]: row for row in iter_jsonl(pre_decisions)}
+        self.assertEqual("existing_mapping", decisions_by_id[rows[0]["line_id"]]["decision_type"])
+
+        allocation = build_pin_allocation_context(rows)
+        self.assertEqual("PIN_USED", allocation["existing_pin_assignments"][0]["selected_pin"])
+
+        write_jsonl(final_decisions, [
+            decisions_by_id[rows[0]["line_id"]],
+            {
+                "line_id": rows[1]["line_id"], "selected_pin": "PIN_NEW",
+                "analysis": "增量分析", "confidence": "High",
+            },
+        ])
+        render_template_sheets(source, normalized, final_decisions, output)
+
+        rendered = load_workbook(output, data_only=True)
+        try:
+            rendered_sheet = rendered["DEV0"]
+            header_map = worksheet_header_map(rendered_sheet, 1)
+            pin_headers = [header for header in header_map if header.casefold() == "原理图pin脚".casefold()]
+            self.assertEqual(["原理图pin脚"], pin_headers)
+            pin_column = header_map[pin_headers[0]]
+            self.assertEqual("PIN_USED", rendered_sheet.cell(row=2, column=pin_column).value)
+            self.assertEqual("PIN_NEW", rendered_sheet.cell(row=3, column=pin_column).value)
+            self.assertIsNone(rendered_sheet.cell(row=4, column=pin_column).value)
+            self.assertEqual("KEEP_DELETE", rendered_sheet.cell(row=4, column=header_map["自定义字段"]).value)
+            self.assertEqual("OLD_NET", rendered_sheet.cell(row=2, column=header_map["网络命名"]).value)
+        finally:
+            rendered.close()
+
+    def test_formal_excel_renderer_preserves_input_columns_and_appends_results(self) -> None:
         from openpyxl import Workbook, load_workbook
 
         template = self.task_dir / "template.xlsx"
@@ -916,10 +1051,18 @@ DEV_A 的 SPI_DATA 是总线。
         workbook = Workbook()
         sheet = workbook.active
         sheet.title = "S1"
-        sheet.append(FINAL_HEADERS[:10])
+        input_headers = ["自定义字段", "连线ID", "分析说明", "源Port", "目的Port", "连线属性", "备注"]
+        sheet.append(["输入说明"])
+        sheet.append(input_headers)
+        input_values = {
+            "自定义字段": "KEEP_ME", "连线ID": "C1", "分析说明": "旧结果", "源Port": "GPIO0",
+            "目的Port": "EN", "连线属性": "低有效", "备注": "原始备注",
+        }
+        sheet.append([input_values[header] for header in input_headers])
         workbook.save(template)
         write_jsonl(normalized, [{
             "line_id": "S1:2:C1", "source_sheet_name": "S1", "output_sheet_name": "S1",
+            "source_row_number": 3,
             "source_block_id": "B1", "source_block_name": "SRC", "source_port": "GPIO0",
             "target_block_id": "B2", "target_block_name": "DST", "target_port": "EN",
             "connection_id": "C1", "connection_name": "ENABLE", "direction": "OUTPUT",
@@ -934,15 +1077,80 @@ DEV_A 的 SPI_DATA 是总线。
 
         rendered = load_workbook(result, data_only=True)
         try:
-            values = list(rendered["S1"].iter_rows(values_only=True))
-            self.assertEqual(tuple(FINAL_HEADERS), values[0])
-            self.assertEqual("低有效", values[1][9])
-            self.assertEqual("GPIO0", values[1][10])
-            self.assertEqual("逐字命中", values[1][11])
-            self.assertEqual("High", values[1][12])
-            self.assertIsNone(values[1][13])
+            sheet = rendered["S1"]
+            header_map = worksheet_header_map(sheet, 2)
+            self.assertEqual(input_headers, list(header_map)[:len(input_headers)])
+            self.assertEqual(["原理图Pin脚", "映射置信度", "网络命名"], list(header_map)[len(input_headers):])
+            self.assertEqual("输入说明", sheet.cell(row=1, column=1).value)
+            self.assertEqual("KEEP_ME", sheet.cell(row=3, column=header_map["自定义字段"]).value)
+            self.assertEqual("原始备注", sheet.cell(row=3, column=header_map["备注"]).value)
+            self.assertEqual("低有效", sheet.cell(row=3, column=header_map["连线属性"]).value)
+            self.assertEqual("GPIO0", sheet.cell(row=3, column=header_map["原理图Pin脚"]).value)
+            self.assertEqual("逐字命中", sheet.cell(row=3, column=header_map["分析说明"]).value)
+            self.assertEqual("High", sheet.cell(row=3, column=header_map["映射置信度"]).value)
+            self.assertIsNone(sheet.cell(row=3, column=header_map["网络命名"]).value)
         finally:
             rendered.close()
+
+    def test_formal_excel_renderer_copies_complete_input_row_for_multi_pin_expansion(self) -> None:
+        from openpyxl import Workbook, load_workbook
+
+        template = self.task_dir / "expanded_template.xlsx"
+        normalized = self.task_dir / "expanded_normalized.jsonl"
+        decisions = self.task_dir / "expanded_decisions.jsonl"
+        result = self.task_dir / "expanded_result.xlsx"
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "S1"
+        sheet.append(["备注", "源Port", "连线ID", "目的Port"])
+        sheet.append(["must survive", "BUS", "C1", "TARGET"])
+        workbook.save(template)
+        write_jsonl(normalized, [{
+            "line_id": "S1:1:C1", "source_sheet_name": "S1", "output_sheet_name": "S1",
+            "source_row_number": 2, "source_port": "BUS", "target_port": "TARGET",
+            "connection_id": "C1", "base_connection_id": "C1",
+        }])
+        write_jsonl(decisions, [{
+            "line_id": "S1:1:C1", "selected_pins": ["PIN_A", "PIN_B"],
+            "analyses": ["first", "second"], "confidences": ["High", "Medium"],
+        }])
+
+        render_template_sheets(template, normalized, decisions, result)
+
+        rendered = load_workbook(result, data_only=True)
+        try:
+            sheet = rendered["S1"]
+            header_map = worksheet_header_map(sheet, 1)
+            self.assertEqual("must survive", sheet.cell(row=2, column=header_map["备注"]).value)
+            self.assertEqual("must survive", sheet.cell(row=3, column=header_map["备注"]).value)
+            self.assertEqual("C1#1", sheet.cell(row=2, column=header_map["连线ID"]).value)
+            self.assertEqual("C1#2", sheet.cell(row=3, column=header_map["连线ID"]).value)
+            self.assertEqual("PIN_A", sheet.cell(row=2, column=header_map["原理图Pin脚"]).value)
+            self.assertEqual("PIN_B", sheet.cell(row=3, column=header_map["原理图Pin脚"]).value)
+        finally:
+            rendered.close()
+
+    def test_renderer_groups_preexpanded_members_from_one_input_row(self) -> None:
+        normalized = self.task_dir / "preexpanded_normalized.jsonl"
+        decisions = self.task_dir / "preexpanded_decisions.jsonl"
+        base = {
+            "source_sheet_name": "S1", "output_sheet_name": "S1", "source_row_number": 2,
+            "parent_line_id": "S1:1:C1", "base_line_id": "S1:1:C1", "base_connection_id": "C1",
+            "source_port": "BUS", "target_port": "TARGET",
+        }
+        write_jsonl(normalized, [
+            {**base, "line_id": "S1:1:C1#1", "connection_id": "C1#1"},
+            {**base, "line_id": "S1:1:C1#2", "connection_id": "C1#2"},
+        ])
+        write_jsonl(decisions, [
+            {"line_id": "S1:1:C1#1", "selected_pin": "PIN_A", "analysis": "first", "confidence": "High"},
+            {"line_id": "S1:1:C1#2", "selected_pin": "PIN_B", "analysis": "second", "confidence": "High"},
+        ])
+
+        grouped = build_final_rows_by_template_sheet(normalized, decisions)
+
+        self.assertEqual(1, len(grouped["S1"]))
+        self.assertEqual(["PIN_A", "PIN_B"], [row["原理图Pin脚"] for row in grouped["S1"][0]["result_rows"]])
 
     def test_compact_task_connection_preserves_connection_attribute(self) -> None:
         compact = compact_normalized_connection({

@@ -96,7 +96,7 @@ subagent 只能输出当前任务包中的 line_id。
 ```text
 output_sheet_name
 source_sheet_name
-修改后的前 10 列连接事实
+任何修改后的输入连接事实字段
 ```
 
 信息不足时输出：

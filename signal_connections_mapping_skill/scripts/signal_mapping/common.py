@@ -3,7 +3,7 @@
 from __future__ import annotations
 import csv,json,re,hashlib
 from pathlib import Path
-from typing import Any,Dict,Iterable,List,Optional
+from typing import Any,Callable,Dict,Iterable,List,Optional
 
 FINAL_HEADERS=["源Block标识","源Block名称","源Port","目的Block标识","目的Block名称","目的Port","连线ID","连线名称","连线方向","连线属性","原理图Pin脚","分析说明","映射置信度","网络命名"]
 VALID_DIRECTIONS={"INPUT","OUTPUT",""}; VALID_CONFIDENCE={"High","Medium","Low",""}
@@ -31,6 +31,70 @@ def write_jsonl(path,rows):
 
 def stable_hash(obj): return hashlib.md5(json.dumps(obj,ensure_ascii=False,sort_keys=True).encode()).hexdigest()[:12]
 def normalize_text(v): return '' if v is None else str(v).strip()
+
+def normalize_header_name(value: Any) -> str:
+    return normalize_text(value).casefold()
+
+def find_header_alias(header_map: Dict[str, int], aliases: Iterable[str]) -> str:
+    """Return the actual worksheet header matching aliases case-insensitively."""
+    actual_by_normalized = {
+        normalize_header_name(header): header
+        for header in header_map
+    }
+    for alias in aliases:
+        actual = actual_by_normalized.get(normalize_header_name(alias))
+        if actual:
+            return actual
+    return ""
+
+def worksheet_header_map(ws, header_row: int) -> Dict[str, int]:
+    """Return non-empty worksheet headers mapped to their actual column numbers."""
+    header_map: Dict[str, int] = {}
+    for cell in ws[header_row]:
+        name = normalize_text(cell.value)
+        if name and name not in header_map:
+            header_map[name] = cell.column
+    return header_map
+
+def find_worksheet_header(
+    ws,
+    matcher: Callable[[List[str]], bool],
+    max_scan_rows: Optional[int] = None,
+) -> tuple[Optional[int], Dict[str, int]]:
+    """Find a header row by its names, never by a fixed row or column position."""
+    last_row = min(ws.max_row, max_scan_rows) if max_scan_rows else ws.max_row
+    for row_number in range(1, last_row + 1):
+        header_map = worksheet_header_map(ws, row_number)
+        if header_map and matcher(list(header_map)):
+            return row_number, header_map
+    return None, {}
+
+def iter_worksheet_records_with_row_numbers(ws, header_row: int, header_map: Dict[str, int]):
+    """Yield worksheet row numbers and records addressed only through header names."""
+    for row_number in range(header_row + 1, ws.max_row + 1):
+        record = {
+            header: ws.cell(row=row_number, column=column_number).value
+            for header, column_number in header_map.items()
+        }
+        if any(normalize_text(value) for value in record.values()):
+            yield row_number, record
+
+def iter_worksheet_records(ws, header_row: int, header_map: Dict[str, int]):
+    """Yield worksheet records whose values are addressed only through header names."""
+    for _, record in iter_worksheet_records_with_row_numbers(ws, header_row, header_map):
+        yield record
+
+def write_worksheet_records(ws, headers: List[str], rows: Iterable[Dict[str, Any]]) -> Dict[str, int]:
+    """Rebuild a worksheet and write every field via its header-to-column mapping."""
+    if ws.max_row:
+        ws.delete_rows(1, ws.max_row)
+    for column_number, header in enumerate(headers, start=1):
+        ws.cell(row=1, column=column_number, value=header)
+    header_map = worksheet_header_map(ws, 1)
+    for row_number, record in enumerate(rows, start=2):
+        for header in headers:
+            ws.cell(row=row_number, column=header_map[header], value=record.get(header, ""))
+    return header_map
 
 def device_identity_tokens(value):
     """Return strict code/name tokens used to match a ### RULE title."""
@@ -123,26 +187,26 @@ def _read_xlsx_rows(path: Path) -> List[Dict[str, Any]]:
     from openpyxl import load_workbook
     wb = load_workbook(path, data_only=True)
     rows: List[Dict[str, Any]] = []
+    supported_table_headers = {
+        "源Port", "source_port", "目的Port", "目标Port", "target_port",
+        "连线ID", "连线标识", "connection_id", "器件信息", "器件标识",
+        "device_part_id", "part_number", "device_id", "block_id", "source_block_id",
+        *COMPONENT_UUID_KEYS, *PIN_NAME_KEYS,
+    }
     for ws in wb.worksheets:
         if ws.title.strip().upper() in {x.upper() for x in EXCLUDED_INPUT_SHEETS}:
             continue
-        values = list(ws.iter_rows(values_only=True))
-        if not values:
+        header_row, header_map = find_worksheet_header(
+            ws,
+            lambda headers: any(
+                header in supported_table_headers or header.lower() in supported_table_headers
+                for header in headers
+            ),
+            max_scan_rows=20,
+        )
+        if header_row is None:
             continue
-        header_idx = None
-        headers = None
-        for i, row in enumerate(values[:20]):
-            cells=[normalize_text(c) for c in row]
-            if any(c in {"源Port","source_port","目的Port","目标Port","target_port","连线ID","连线标识","connection_id"} for c in cells):
-                header_idx=i; headers=cells; break
-        if header_idx is None or not headers:
-            continue
-        for raw in values[header_idx+1:]:
-            if raw is None:
-                continue
-            row_dict={headers[i]: raw[i] if i < len(raw) else '' for i in range(len(headers)) if headers[i]}
-            if not any(normalize_text(v) for v in row_dict.values()):
-                continue
+        for row_dict in iter_worksheet_records(ws, header_row, header_map):
             row_dict['__sheet_name']=ws.title
             row_dict.setdefault('source_sheet_name', ws.title)
             row_dict.setdefault('output_sheet_name', ws.title)

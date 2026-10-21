@@ -530,6 +530,19 @@ def pin_state_instances(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return list(instances.values())
 
 
+def existing_pin_usage(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return [
+        {
+            "physical_device_instance_id": physical_device_instance_id(row),
+            "pin": str(row.get("existing_selected_pin", "") or "").strip(),
+            "line_id": row.get("line_id", ""),
+            "source": "existing_input_mapping",
+        }
+        for row in rows
+        if str(row.get("existing_selected_pin", "") or "").strip()
+    ]
+
+
 def semantic_hints_for_link_family(family_id: str) -> List[str]:
     family = normalize_match_text(family_id)
     hints = [
@@ -757,6 +770,13 @@ def build_sheet_device_context(normalized_connections: List[Dict[str, Any]]) -> 
             "line_ids": [],
         })
         instance["line_ids"].append(row.get("line_id", ""))
+        existing_pin = str(row.get("existing_selected_pin", "") or "").strip()
+        if existing_pin:
+            instance["used_pins"].append({
+                "pin": existing_pin,
+                "line_id": row.get("line_id", ""),
+                "source": "existing_input_mapping",
+            })
 
     return {
         "source": "input_workbook_sheet_structure",
@@ -795,6 +815,7 @@ def build_pin_allocation_context(
     instances: Dict[str, Dict[str, Any]] = {}
     shared_groups: Dict[str, Dict[str, Any]] = {}
     endpoint_groups: Dict[str, Dict[str, Any]] = {}
+    existing_pin_assignments: List[Dict[str, Any]] = []
     for row in normalized_connections:
         line_id = row.get("line_id", "")
         sheet = row.get("source_sheet_name") or row.get("output_sheet_name") or "UNKNOWN_SHEET"
@@ -807,6 +828,18 @@ def build_pin_allocation_context(
             "line_ids": [],
         })
         instance["line_ids"].append(line_id)
+        existing_pin = str(row.get("existing_selected_pin", "") or "").strip()
+        if existing_pin:
+            existing_pin_assignments.append({
+                "physical_device_instance_id": instance_key,
+                "line_id": line_id,
+                "selected_pin": existing_pin,
+                "source_port": row.get("source_port", ""),
+                "target_block_name": row.get("target_block_name", ""),
+                "target_port": row.get("target_port", ""),
+                "connection_id": row.get("connection_id", ""),
+                "connection_name": row.get("connection_name", ""),
+            })
 
         key = shared_signal_key(row)
         if key:
@@ -844,6 +877,7 @@ def build_pin_allocation_context(
 
     return {
         "pin_reuse_policy": "default_unique_per_physical_instance_except_listed_shared_groups",
+        "existing_pin_assignments": existing_pin_assignments,
         "physical_device_pin_spaces": list(instances.values()),
         "potential_shared_pin_groups": [
             group for group in shared_groups.values()
@@ -1415,6 +1449,7 @@ def render_shared_prompt() -> str:
         "每个 TASK 的执行顺序：",
         "1. 读取 task_scope.session_context_file；其中保存本 session 共用的 link_family_profiles、rule_library 和跨 TASK pin 共享关系。",
         "2. 读取 task_scope.pin_allocation_state_file 的最新状态；不要使用生成 TASK 时的旧快照。",
+        "2a. 读取 session_context.pin_allocation_context.existing_pin_assignments；这些是输入表已有连接和 pin 占用，只能作为新增空 pin 行的上下文，不得重新裁决。",
         "3. 按 matched_rule_refs 在 session_context.rule_library 中读取本 TASK 的规则正文。",
         "4. 分析 normalized_connections；connection_defaults 说明省略字段的确定默认值。",
         "5. 单 pin source_port 若逐字存在于 source_device_pins，selected_pin 必须直接等于 source_port，任何规则不得再次映射；否则才做语义选择。大 pin 表找不到时读取 pin_catalog_context.group_file 的其他 groups 或 all_pins。",
@@ -1518,7 +1553,8 @@ def build_model_resolution_tasks(
     subagent_state_dir = ensure_dir(output_dir.parent / "subagent_state")
 
     for group in context_groups:
-        group_line_ids = [line_id for line_id in group.get("line_ids", []) if line_id in needed_ids]
+        all_group_line_ids = [line_id for line_id in group.get("line_ids", []) if line_id in normalized_by_id]
+        group_line_ids = [line_id for line_id in all_group_line_ids if line_id in needed_ids]
         if not group_line_ids:
             continue
         context_id = group.get("context_group_id") or f"CTX_{len(tasks)+1}"
@@ -1529,10 +1565,11 @@ def build_model_resolution_tasks(
 
         # 收集本组所有 normalized_connections 中的 source_part_id -> 真实 pin 列表。
         # pin_info 缺失时整个源端器件 session 跳过，不生成语义模型任务。
-        full_group_nc = [normalized_by_id[lid] for lid in group_line_ids if lid in normalized_by_id]
+        full_group_nc = [normalized_by_id[lid] for lid in all_group_line_ids]
+        analysis_group_nc = [normalized_by_id[lid] for lid in group_line_ids]
         source_pins_map: Dict[str, List[str]] = {}
         source_pin_aliases: Dict[str, str] = {}
-        for nc in full_group_nc:
+        for nc in analysis_group_nc:
             code = nc.get("source_part_id", "")
             if code and code not in source_pins_map:
                 source_pins_map[code] = pins_for_part(device_pins, code)
@@ -1546,7 +1583,7 @@ def build_model_resolution_tasks(
                 "line_ids": group_line_ids,
                 "line_count": len(group_line_ids),
                 "source_device_signature": group.get("source_device_signature", ""),
-                "source_part_ids": sorted({nc.get("source_part_id", "") for nc in full_group_nc if nc.get("source_part_id")}),
+                "source_part_ids": sorted({nc.get("source_part_id", "") for nc in analysis_group_nc if nc.get("source_part_id")}),
                 "reason": "pin_info_missing_for_source_device",
                 "message": "入参 pin_info.json 中没有对应源端器件编码的 pin 列表，按约束跳过该器件的语义模型分析；最终保留 pre_resolve 的 unresolved 结果。",
             })
@@ -1606,6 +1643,7 @@ def build_model_resolution_tasks(
         }
         session_rule_library: Dict[str, Dict[str, Any]] = {}
 
+        input_existing_used_pins = existing_pin_usage(full_group_nc)
         if not session_state_file.exists():
             write_json(session_state_file, {
                 "subagent_session_id": session_id,
@@ -1614,13 +1652,26 @@ def build_model_resolution_tasks(
                 "purpose": "同一源端器件 subagent 跨多个小 TASK 共享的 pin 分配状态；pin 占用必须按 physical_device_instance_id 分开记录；subagent 每完成一个 TASK 后更新。",
                 "pin_usage_scope": "per_physical_device_instance_id",
                 "physical_device_instances": pin_state_instances(full_group_nc),
-                "used_pins": [],
+                "used_pins": input_existing_used_pins,
+                "input_existing_used_pins": input_existing_used_pins,
                 "allowed_shared_pin_groups": [],
                 "unresolved_conflicts": [],
                 "completed_task_ids": [],
             })
+        else:
+            state = read_json(session_state_file, {})
+            if not isinstance(state, dict):
+                state = {}
+            prior_used_pins = state.get("used_pins", [])
+            retained_model_usage = [
+                usage for usage in prior_used_pins
+                if not isinstance(usage, dict) or usage.get("source") != "existing_input_mapping"
+            ]
+            state["used_pins"] = retained_model_usage + input_existing_used_pins
+            state["input_existing_used_pins"] = input_existing_used_pins
+            write_json(session_state_file, state)
 
-        task_chunks = split_balanced_line_tasks(group, full_group_nc, DEFAULT_MAX_LINES_PER_MODEL_TASK)
+        task_chunks = split_balanced_line_tasks(group, analysis_group_nc, DEFAULT_MAX_LINES_PER_MODEL_TASK)
         previous_task_outputs: List[str] = []
         for chunk_index, line_ids in enumerate(task_chunks, start=1):
             group_nc = [normalized_by_id[lid] for lid in line_ids if lid in normalized_by_id]

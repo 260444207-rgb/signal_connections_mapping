@@ -8,7 +8,17 @@ import re
 from pathlib import Path
 from typing import Dict, List, Any, Iterable
 
-from .common import write_jsonl, normalize_text, normalize_direction, normalize_component_reference, read_table
+from .common import (
+    find_worksheet_header,
+    iter_worksheet_records,
+    iter_worksheet_records_with_row_numbers,
+    normalize_component_reference,
+    normalize_direction,
+    normalize_header_name,
+    normalize_text,
+    read_table,
+    write_jsonl,
+)
 
 FIELD_ALIASES = {
     "source_block_id": ["source_block_id", "源Block标识", "起止Block标识", "起始Block标识", "source_id", "block_id", "框图标识"],
@@ -21,6 +31,11 @@ FIELD_ALIASES = {
     "connection_name": ["connection_name", "连线名称"],
     "direction": ["direction", "连线方向"],
     "connection_attribute": ["connection_attribute", "连线属性", "连接属性", "line_attribute"],
+    "existing_selected_pin": ["existing_selected_pin", "原理图Pin脚", "原理图pin脚", "原理图PIN脚"],
+    "existing_analysis": ["existing_analysis", "分析说明"],
+    "existing_confidence": ["existing_confidence", "映射置信度"],
+    "existing_net_name": ["existing_net_name", "网络命名"],
+    "modification_type": ["modification_type", "change_type", "修改类型"],
 }
 
 SKIP_SHEETS = {"BLOCK_INFO", "LINK_INFO", "链路信息", "说明", "README", "INDEX", "目录"}
@@ -37,15 +52,17 @@ LINK_INFO_ALIASES = {
 }
 
 def pick(row: Dict[str, Any], canonical: str) -> str:
-    for k in FIELD_ALIASES[canonical]:
-        if k in row and row[k] is not None:
-            return normalize_text(row[k])
-    return ""
+    return pick_alias(row, FIELD_ALIASES[canonical])
 
 def pick_alias(row: Dict[str, Any], aliases: list[str]) -> str:
+    values_by_header = {
+        normalize_header_name(key): value
+        for key, value in row.items()
+    }
     for key in aliases:
-        if key in row and row[key] is not None:
-            return normalize_text(row[key])
+        value = values_by_header.get(normalize_header_name(key))
+        if value is not None:
+            return normalize_text(value)
     return ""
 
 def split_tokens(value: Any) -> list[str]:
@@ -82,19 +99,16 @@ def read_block_info(path: str | Path) -> Dict[str, str]:
                 break
         if ws is None:
             return {}
-        rows = list(ws.iter_rows(values_only=True))
-        if not rows:
-            return {}
-        headers = [normalize_text(v) for v in rows[0]]
-        try:
-            key_idx = headers.index("框图标识")
-            part_idx = headers.index("器件信息")
-        except ValueError:
+        header_row, header_map = find_worksheet_header(
+            ws,
+            lambda headers: {"框图标识", "器件信息"}.issubset(headers),
+        )
+        if header_row is None:
             return {}
         result = {}
-        for raw in rows[1:]:
-            key = normalize_text(raw[key_idx] if key_idx < len(raw) else "")
-            part = normalize_component_reference(raw[part_idx] if part_idx < len(raw) else "")
+        for row in iter_worksheet_records(ws, header_row, header_map):
+            key = normalize_text(row.get("框图标识"))
+            part = normalize_component_reference(row.get("器件信息"))
             if key and part:
                 result[key.lower()] = part
         return result
@@ -129,27 +143,19 @@ def read_link_info(input_path: str | Path) -> Dict[tuple[str, str], List[Dict[st
         if ws is None:
             return {}
 
-        rows = list(ws.iter_rows(values_only=True))
-        if not rows:
-            return {}
-
-        header_idx = None
-        headers = None
-        for i, raw in enumerate(rows):
-            values = [normalize_text(v) for v in raw]
-            if any(values):
-                header_idx = i
-                headers = values
-                break
-        if header_idx is None or not headers:
+        link_identity_headers = set(
+            LINK_INFO_ALIASES["link_family_id"] + LINK_INFO_ALIASES["link_instance_id"]
+        )
+        header_row, header_map = find_worksheet_header(
+            ws,
+            lambda headers: bool(link_identity_headers.intersection(headers)),
+        )
+        if header_row is None:
             return {}
 
         result: Dict[tuple[str, str], List[Dict[str, Any]]] = {}
-        for raw in rows[header_idx + 1:]:
-            values = [normalize_text(v) for v in raw]
-            if not any(values):
-                continue
-            row = {h: v for h, v in zip(headers, values) if h}
+        for raw_row in iter_worksheet_records(ws, header_row, header_map):
+            row = {header: normalize_text(value) for header, value in raw_row.items()}
 
             link_family_id = pick_alias(row, LINK_INFO_ALIASES["link_family_id"])
             link_instance_id = pick_alias(row, LINK_INFO_ALIASES["link_instance_id"])
@@ -261,9 +267,9 @@ def build_block_part_aliases(
 
 def header_field_hits(cells: list[str]) -> set[str]:
     hits: set[str] = set()
-    normalized_cells = {normalize_text(cell) for cell in cells if normalize_text(cell)}
+    normalized_cells = {normalize_header_name(cell) for cell in cells if normalize_text(cell)}
     for field, aliases in FIELD_ALIASES.items():
-        if any(alias in normalized_cells for alias in aliases):
+        if any(normalize_header_name(alias) in normalized_cells for alias in aliases):
             hits.add(field)
     return hits
 
@@ -291,38 +297,18 @@ def read_excel_sheets(path: str | Path) -> Iterable[tuple[str, list[dict[str, An
         if sheet_name.upper() in SKIP_SHEETS:
             continue
         ws = wb[sheet_name]
-        rows = list(ws.iter_rows(values_only=True))
-        if not rows:
-            continue
-
-        header_idx = None
-        headers: list[str] | None = None
-        first_non_empty_idx = None
-        first_non_empty_headers: list[str] | None = None
-        for i, r in enumerate(rows[:30]):
-            values = [normalize_text(v) for v in r]
-            if any(values) and first_non_empty_idx is None:
-                first_non_empty_idx = i
-                first_non_empty_headers = values
-            if looks_like_connection_header(values):
-                header_idx = i
-                headers = values
-                break
-        if header_idx is None:
-            header_idx = first_non_empty_idx
-            headers = first_non_empty_headers
-        if header_idx is None or not headers:
+        header_row, header_map = find_worksheet_header(
+            ws,
+            looks_like_connection_header,
+            max_scan_rows=30,
+        )
+        if header_row is None:
             continue
 
         data_rows = []
-        for r in rows[header_idx + 1:]:
-            values = [normalize_text(v) for v in r]
-            if not any(values):
-                continue
-            row = {}
-            for h, v in zip(headers, values):
-                if h:
-                    row[h] = v
+        for source_row_number, raw_row in iter_worksheet_records_with_row_numbers(ws, header_row, header_map):
+            row = {header: normalize_text(value) for header, value in raw_row.items()}
+            row["__source_row_number"] = source_row_number
             data_rows.append(row)
 
         yield sheet_name, data_rows
@@ -350,6 +336,9 @@ def normalize_connections(input_path: str | Path, output_path: str | Path) -> Li
 
     for sheet_name, rows in sheet_rows:
         for idx, row in enumerate(rows, start=1):
+            modification_type = pick(row, "modification_type")
+            if modification_type.casefold() == "delete":
+                continue
             source_port = pick(row, "source_port")
             if not source_port:
                 # 当前 sheet 中非连接行跳过，但不影响最终输出保留该 sheet。
@@ -365,6 +354,7 @@ def normalize_connections(input_path: str | Path, output_path: str | Path) -> Li
             # 显式范围只声明候选宽度；最终成员数由严格器件规则与 pin_info 共同确认。
             declared_bus_width = expansion_count(source_port)
             count = 1
+            existing_selected_pin = pick(row, "existing_selected_pin")
 
             for bit_idx in range(1, count + 1):
                 connection_id_raw = pick(row, "connection_id") or f"{sheet_name}_{idx}"
@@ -380,6 +370,7 @@ def normalize_connections(input_path: str | Path, output_path: str | Path) -> Li
                     "analysis_unit": "device",
                     "source_sheet_name": sheet_name,
                     "output_sheet_name": sheet_name,
+                    "source_row_number": int(row.get("__source_row_number") or 0),
                     "source_part_id": source_part_id,
                     "target_part_id": target_part_id,
                     "source_block_id": source_block_id,
@@ -393,6 +384,12 @@ def normalize_connections(input_path: str | Path, output_path: str | Path) -> Li
                     "connection_name": pick(row, "connection_name"),
                     "direction": normalize_direction(pick(row, "direction")),
                     "connection_attribute": pick(row, "connection_attribute"),
+                    "modification_type": modification_type,
+                    "analysis_required": not bool(existing_selected_pin),
+                    "existing_selected_pin": existing_selected_pin,
+                    "existing_analysis": pick(row, "existing_analysis"),
+                    "existing_confidence": pick(row, "existing_confidence"),
+                    "existing_net_name": pick(row, "existing_net_name"),
                     "link_family_id": link_meta.get("link_family_id", ""),
                     "link_instance_id": link_meta.get("link_instance_id", ""),
                     "link_member_sheets": link_meta.get("link_member_sheets", []),
