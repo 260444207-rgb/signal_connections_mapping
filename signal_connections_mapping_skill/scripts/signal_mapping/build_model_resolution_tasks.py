@@ -543,6 +543,55 @@ def existing_pin_usage(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     ]
 
 
+def normalize_pin_allocation_state(
+    existing_state: Any,
+    session_id: str,
+    source_device_signature: str,
+    source_part_id: str,
+    rows: List[Dict[str, Any]],
+    input_existing_used_pins: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Fill the complete mutable state schema while preserving valid prior progress."""
+    state = dict(existing_state) if isinstance(existing_state, dict) else {}
+    state.update({
+        "subagent_session_id": session_id,
+        "source_device_signature": source_device_signature,
+        "source_part_id": source_part_id,
+        "purpose": "同一源端器件 subagent 跨多个小 TASK 共享的 pin 分配状态；pin 占用必须按 physical_device_instance_id 分开记录；subagent 每完成一个 TASK 后更新。",
+        "pin_usage_scope": "per_physical_device_instance_id",
+    })
+
+    current_instances = {
+        str(item.get("physical_device_instance_id", "")): item
+        for item in state.get("physical_device_instances", [])
+        if isinstance(item, dict) and item.get("physical_device_instance_id")
+    } if isinstance(state.get("physical_device_instances"), list) else {}
+    normalized_instances: List[Dict[str, Any]] = []
+    for template in pin_state_instances(rows):
+        instance_id = str(template.get("physical_device_instance_id", ""))
+        instance = {**template, **current_instances.get(instance_id, {})}
+        instance["line_ids"] = list(template["line_ids"])
+        for key in ["used_pins", "allowed_shared_pin_groups", "unresolved_conflicts"]:
+            if not isinstance(instance.get(key), list):
+                instance[key] = []
+        normalized_instances.append(instance)
+    state["physical_device_instances"] = normalized_instances
+
+    prior_used_pins = state.get("used_pins", [])
+    if not isinstance(prior_used_pins, list):
+        prior_used_pins = []
+    retained_model_usage = [
+        usage for usage in prior_used_pins
+        if not isinstance(usage, dict) or usage.get("source") != "existing_input_mapping"
+    ]
+    state["used_pins"] = retained_model_usage + list(input_existing_used_pins)
+    state["input_existing_used_pins"] = list(input_existing_used_pins)
+    for key in ["allowed_shared_pin_groups", "unresolved_conflicts", "completed_task_ids"]:
+        if not isinstance(state.get(key), list):
+            state[key] = []
+    return state
+
+
 def semantic_hints_for_link_family(family_id: str) -> List[str]:
     family = normalize_match_text(family_id)
     hints = [
@@ -768,6 +817,7 @@ def build_sheet_device_context(normalized_connections: List[Dict[str, Any]]) -> 
             "source_sheet_name": sheet,
             "source_part_id": part_id,
             "line_ids": [],
+            "used_pins": [],
         })
         instance["line_ids"].append(row.get("line_id", ""))
         existing_pin = str(row.get("existing_selected_pin", "") or "").strip()
@@ -1644,32 +1694,15 @@ def build_model_resolution_tasks(
         session_rule_library: Dict[str, Dict[str, Any]] = {}
 
         input_existing_used_pins = existing_pin_usage(full_group_nc)
-        if not session_state_file.exists():
-            write_json(session_state_file, {
-                "subagent_session_id": session_id,
-                "source_device_signature": group.get("source_device_signature", ""),
-                "source_part_id": source_part_label(group),
-                "purpose": "同一源端器件 subagent 跨多个小 TASK 共享的 pin 分配状态；pin 占用必须按 physical_device_instance_id 分开记录；subagent 每完成一个 TASK 后更新。",
-                "pin_usage_scope": "per_physical_device_instance_id",
-                "physical_device_instances": pin_state_instances(full_group_nc),
-                "used_pins": input_existing_used_pins,
-                "input_existing_used_pins": input_existing_used_pins,
-                "allowed_shared_pin_groups": [],
-                "unresolved_conflicts": [],
-                "completed_task_ids": [],
-            })
-        else:
-            state = read_json(session_state_file, {})
-            if not isinstance(state, dict):
-                state = {}
-            prior_used_pins = state.get("used_pins", [])
-            retained_model_usage = [
-                usage for usage in prior_used_pins
-                if not isinstance(usage, dict) or usage.get("source") != "existing_input_mapping"
-            ]
-            state["used_pins"] = retained_model_usage + input_existing_used_pins
-            state["input_existing_used_pins"] = input_existing_used_pins
-            write_json(session_state_file, state)
+        state = normalize_pin_allocation_state(
+            read_json(session_state_file, {}) if session_state_file.exists() else {},
+            session_id,
+            group.get("source_device_signature", ""),
+            source_part_label(group),
+            full_group_nc,
+            input_existing_used_pins,
+        )
+        write_json(session_state_file, state)
 
         task_chunks = split_balanced_line_tasks(group, analysis_group_nc, DEFAULT_MAX_LINES_PER_MODEL_TASK)
         previous_task_outputs: List[str] = []

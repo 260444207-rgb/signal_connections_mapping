@@ -42,7 +42,9 @@ from signal_mapping.build_model_resolution_tasks import (
     build_link_family_profiles,
     build_pin_allocation_context,
     build_pin_group_catalog,
+    build_sheet_device_context,
     compact_normalized_connection,
+    normalize_pin_allocation_state,
     pins_for_groups,
     render_shared_prompt,
     session_link_family_profile,
@@ -806,6 +808,93 @@ DEV_A 的 SPI_DATA 是总线。
         self.assertNotIn("line_pin_domains", serialized)
         self.assertNotIn("candidate_mappings", render_shared_prompt())
         self.assertIn("分析说明不得添加网络命名依据", render_shared_prompt())
+
+    def test_sheet_device_context_records_existing_used_pins(self) -> None:
+        context = build_sheet_device_context([
+            {
+                "line_id": "L_EXISTING",
+                "source_sheet_name": "DEVICE_A",
+                "source_part_id": "PART_A",
+                "existing_selected_pin": "PIN_USED",
+            },
+            {
+                "line_id": "L_EMPTY",
+                "source_sheet_name": "DEVICE_A",
+                "source_part_id": "PART_A",
+                "existing_selected_pin": "",
+            },
+            {
+                "line_id": "L_OTHER",
+                "source_sheet_name": "DEVICE_B",
+                "source_part_id": "PART_B",
+            },
+        ])
+
+        instances = {
+            item["physical_device_instance_id"]: item
+            for item in context["physical_device_instances"]
+        }
+        self.assertEqual(
+            ["L_EXISTING", "L_EMPTY"],
+            instances["SHEET:DEVICE_A|PART:PART_A"]["line_ids"],
+        )
+        self.assertEqual(
+            [{
+                "pin": "PIN_USED",
+                "line_id": "L_EXISTING",
+                "source": "existing_input_mapping",
+            }],
+            instances["SHEET:DEVICE_A|PART:PART_A"]["used_pins"],
+        )
+        self.assertEqual([], instances["SHEET:DEVICE_B|PART:PART_B"]["used_pins"])
+
+    def test_pin_allocation_state_repairs_incomplete_mutable_schema(self) -> None:
+        rows = [{
+            "line_id": "L_EXISTING",
+            "source_sheet_name": "DEVICE_A",
+            "source_part_id": "PART_A",
+            "existing_selected_pin": "PIN_INPUT",
+        }]
+        existing_pin = {
+            "physical_device_instance_id": "SHEET:DEVICE_A|PART:PART_A",
+            "pin": "PIN_INPUT",
+            "line_id": "L_EXISTING",
+            "source": "existing_input_mapping",
+        }
+        state = normalize_pin_allocation_state(
+            {
+                "physical_device_instances": [{
+                    "physical_device_instance_id": "SHEET:DEVICE_A|PART:PART_A",
+                    "used_pins": None,
+                }],
+                "used_pins": [
+                    {"pin": "PIN_OLD", "source": "existing_input_mapping"},
+                    {"pin": "PIN_MODEL", "source": "model_resolution"},
+                ],
+                "allowed_shared_pin_groups": None,
+                "unresolved_conflicts": "invalid",
+            },
+            "SESSION_A",
+            "DEVICE_INFO:PART_A",
+            "PART_A",
+            rows,
+            [existing_pin],
+        )
+
+        self.assertEqual(
+            [
+                {"pin": "PIN_MODEL", "source": "model_resolution"},
+                existing_pin,
+            ],
+            state["used_pins"],
+        )
+        self.assertEqual([existing_pin], state["input_existing_used_pins"])
+        for key in ["allowed_shared_pin_groups", "unresolved_conflicts", "completed_task_ids"]:
+            self.assertEqual([], state[key])
+        instance = state["physical_device_instances"][0]
+        self.assertEqual(["L_EXISTING"], instance["line_ids"])
+        for key in ["used_pins", "allowed_shared_pin_groups", "unresolved_conflicts"]:
+            self.assertEqual([], instance[key])
 
     def test_shared_prompt_requires_model_subagent_with_30_minute_timeout(self) -> None:
         prompt = render_shared_prompt()
