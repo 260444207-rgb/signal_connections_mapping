@@ -78,6 +78,9 @@ custom/user > link > device > signal > global > lexical fallback
 
 ## 差分、总线和展开
 
+- `signal_shape_info.evidence.differential_member_guard` 表示当前端口已经是 P/N 单个成员。存在 `companion_wire` 时，互补极性已由另一条输入连接承载，两条连接必须各自保持单 pin，禁止再次展开。`low_active_signal=true` 或 `power_target=true` 时同样禁止按差分展开。
+- 极性成员被标记 `needs_model_shape_review=true` 时，只复核它应映射到哪个单 pin；除非 TASK 中另有明确的连线级整对证据，不得输出两个子 decision。仅有 RF/AFE/DAC/ADC 功能名、规则中的“差分”描述或 pin_info 存在 P/N 对，不足以证明一条输入连接承载整对。
+- 只有连接名称、连接属性或用户说明明确包含 `P/N`、`DIFF`、`差分` 等整对标记，且当前端口不是 `_P/_N` 单成员时，才可以把一条输入连接展开为 P/N 两个子 decision。
 - 模型必须具备总线识别与成员拆分能力。先读取 `signal_shape_info.bus_name`，再联合严格标题匹配的规则正文以及当前源端器件的完整 pin 列表，判断总线成员。`declared_bus_width` 只是声明；实际拆分数必须等于规则成员与 `pin_info` 核对后得到的 `pin_info_bus_width`，不能只按数字位宽机械拆分。
 - 即使前置默认值是 `shape=scalar`，当总线名、明确规则和 pin 功能形成一致证据时，也应修正为总线并按子 decision 展开；不得仅因脚本未提取到数字位宽就维持 scalar。
 - 已有 `signal_shape_info.is_expanded_member=true`：当前行只输出一个 `selected_pin`，不得再次使用 `selected_pins` 展开。

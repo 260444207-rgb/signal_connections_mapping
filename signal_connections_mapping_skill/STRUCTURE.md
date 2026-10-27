@@ -446,7 +446,7 @@ selected_pins: ["PIN_P", "PIN_N"]
 intermediate/signal_shape_inference.jsonl
 ```
 
-同时把 `signal_shape`、`expected_physical_pin_count`、`signal_shape_info` 写回 normalized connection；总线名称保存在 `signal_shape_info.bus_name`，构建 TASK 时不会被压缩掉。器件规则必须由 `### RULE` 标题中的器件 code/名称严格命中，不能靠正文词汇误召回。显式语法和规则中的数字只形成 `declared_bus_width`；自动展开数来自严格命中规则所列成员与当前源端器件 `pin_info` 的实际交集，并记录为 `pin_info_bus_width`。不能验证实际成员时由 subagent 复核或 unresolved，不能降级为 scalar。该阶段不选择具体 pin。
+同时把 `signal_shape`、`expected_physical_pin_count`、`signal_shape_info` 写回 normalized connection。差分判定先预扫描同 sheet、同无向 block 对的 `_P/_N` 伴生线：已有伴生线的成员、低有效信号和电源目标保持 scalar；孤立极性成员只进入模型复核；只有连线级整对标记确定性展开，功能名、规则提示或 pin_info P/N 对不能单独触发展开。总线名称保存在 `signal_shape_info.bus_name`，构建 TASK 时不会被压缩掉。器件规则必须由 `### RULE` 标题中的器件 code/名称严格命中，不能靠正文词汇误召回。显式语法和规则中的数字只形成 `declared_bus_width`；自动展开数来自严格命中规则所列成员与当前源端器件 `pin_info` 的实际交集，并记录为 `pin_info_bus_width`。不能验证实际成员时由 subagent 复核或 unresolved，不能降级为 scalar。该阶段不选择具体 pin。
 
 ### intermediate/combined_mapping_rules.md
 

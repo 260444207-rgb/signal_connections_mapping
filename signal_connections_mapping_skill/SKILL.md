@@ -174,6 +174,8 @@ custom/user > link > device > signal > global > lexical fallback
 ## 差分、总线和 pin 复用
 
 - 前置 `signal_shape_info` 是默认形态判断；只有标记复核或明显冲突时才修正。
+- `_P/_N` 等端口后缀首先表示“当前连线已是差分对的一个成员”，不得据此自动复制成 P/N 两行。同 sheet、同 block 对存在互补伴生线时，两条连接都保持 scalar；`POR_N/RST_N/RESET_N` 等低有效信号和目标为电源轨的连接也保持 scalar。
+- 端口有极性后缀但没有伴生线、低有效或电源证据时，只设置 `needs_model_shape_review=true`，不得自动展开。仅连线名称/属性/说明明确包含 `P/N`、`DIFF`、`差分` 等整对标记时，才可确定性展开为两行；仅有 RF/AFE/DAC/ADC 名称、规则提示或 pin_info 中存在 P/N 对只能作为模型提示。
 - TASK 会在 `signal_shape_info.bus_name` 中显式提供总线名称；`declared_bus_width` 只记录连接/规则声明，真正用于拆分的 `pin_info_bus_width` 必须来自严格命中规则中列出的成员与当前器件 `pin_info` 的交集。subagent 必须结合这些证据识别成员及其角色。
 - 已展开成员只输出一个 `selected_pin`。
 - `requires_model_expansion=true` 表示已识别为总线但位宽未知；能从规则和 pin 功能确定成员时必须输出 `原line_id#数字` 子 decision，不能退化成 scalar。

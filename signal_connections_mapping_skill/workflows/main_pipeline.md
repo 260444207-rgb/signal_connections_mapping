@@ -61,7 +61,7 @@ render_template_sheets
 
 读取 `normalized_connections.jsonl`、`pin_info.json` 和合并后的自然语言规则，生成 `signal_shape_inference.jsonl`，并把 `signal_shape`、`expected_physical_pin_count`、`signal_shape_info` 写回 `normalized_connections.jsonl`。若一条原始连接对应多个物理 pin，会在进入 subagent 前展开为多个 normalized row，`line_id` / `connection_id` 使用 `原ID#数字`。
 
-该阶段只判断 scalar / bus / differential 和预计物理 pin 数，不选择具体 pin。总线名称会写入 `signal_shape_info.bus_name` 并随 TASK 显式传给 subagent。器件规则必须先由 `### RULE` 标题中的器件 code/名称严格命中当前源端或目标器件；正文中的端口词只用于在已命中的规则内定位小节。连接或规则声明的数字位宽写入 `declared_bus_width`，不能直接决定展开数；只有规则明确列出的成员 pin 与当前源端器件 `pin_info` 相交得到至少两个实际 pin 时，交集数量才写入 `pin_info_bus_width` 并自动展开。证据不足时设置 `requires_model_expansion=true`，后续 subagent 必须继续按同一严格规则和完整 pin 列表核对，无法确定时输出 unresolved。
+该阶段只判断 scalar / bus / differential 和预计物理 pin 数，不选择具体 pin。差分使用方案 E 防重复展开：先按 sheet 与无向 block 对预扫描 `_P/_N` 互补伴生线；端口极性后缀有伴生线、属于低有效信号或连接到电源轨时保持 scalar，无上述证据时只进入模型复核。仅连线名称/属性/说明明确包含整对差分标记时自动展开；功能名、规则提示或 pin_info P/N 对不再单独触发展开。总线名称会写入 `signal_shape_info.bus_name` 并随 TASK 显式传给 subagent。器件规则必须先由 `### RULE` 标题中的器件 code/名称严格命中当前源端或目标器件；正文中的端口词只用于在已命中的规则内定位小节。连接或规则声明的数字位宽写入 `declared_bus_width`，不能直接决定展开数；只有规则明确列出的成员 pin 与当前源端器件 `pin_info` 相交得到至少两个实际 pin 时，交集数量才写入 `pin_info_bus_width` 并自动展开。证据不足时设置 `requires_model_expansion=true`，后续 subagent 必须继续按同一严格规则和完整 pin 列表核对，无法确定时输出 unresolved。
 
 ### build_analysis_context_groups
 

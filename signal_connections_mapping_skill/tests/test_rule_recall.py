@@ -28,7 +28,9 @@ from signal_mapping.render_template_sheets import build_final_rows_by_template_s
 from signal_mapping.normalize_connections import normalize_connections
 from signal_mapping.validate_mapping import validate_mapping
 from signal_mapping.infer_signal_shapes import (
+    build_companion_wire_index,
     expanded_rows_for_signal_shape,
+    infer_signal_shapes,
     infer_signal_shape_for_row,
     iter_rule_sections,
     matching_rule_hint,
@@ -228,6 +230,167 @@ SPI_DATA 是 4-bit 总线，成员为 D0、D1、D2、D3。
         self.assertEqual(1, rows[0]["expansion_count"])
         self.assertEqual(4, rows[0]["declared_bus_width"])
         self.assertEqual("C_DATA", rows[0]["connection_id"])
+
+    def test_scheme_e_companion_pair_rows_are_not_expanded_again(self) -> None:
+        normalized = self.task_dir / "normalized_diff.jsonl"
+        pins = self.task_dir / "pins_diff.json"
+        output = self.task_dir / "shaped_diff.jsonl"
+        report = self.task_dir / "shape_report.jsonl"
+        rows = [
+            {
+                "line_id": "L_N",
+                "source_sheet_name": "RF_SHEET",
+                "source_part_id": "PART_RF",
+                "source_block_id": "CHA",
+                "source_port": "CHA_RF_IN_N",
+                "target_block_id": "AFE",
+                "target_port": "AFE1_IOUTP_TXM3",
+                "connection_id": "100677",
+                "connection_name": "100677",
+            },
+            {
+                "line_id": "L_P",
+                "source_sheet_name": "RF_SHEET",
+                "source_part_id": "PART_RF",
+                "source_block_id": "CHA",
+                "source_port": "CHA_RF_IN_P",
+                "target_block_id": "AFE",
+                "target_port": "AFE1_IOUTN_TXM3",
+                "connection_id": "100679",
+                "connection_name": "100679",
+            },
+        ]
+        write_jsonl(normalized, rows)
+        pins.write_text(
+            json.dumps({"PART_RF": ["CHA_RF_IN_N", "CHA_RF_IN_P"]}),
+            encoding="utf-8",
+        )
+
+        shaped = infer_signal_shapes(normalized, pins, output, report)
+
+        self.assertEqual(2, len(shaped))
+        self.assertEqual(["L_N", "L_P"], [row["line_id"] for row in shaped])
+        self.assertTrue(all(row["signal_shape"] == "scalar" for row in shaped))
+        self.assertTrue(all(
+            row["signal_shape_info"]["evidence"]["differential_member_guard"]["companion_wire"]
+            for row in shaped
+        ))
+
+    def test_scheme_e_companion_detection_allows_reversed_block_direction(self) -> None:
+        rows = [
+            {
+                "line_id": "L_FORWARD",
+                "source_sheet_name": "SHEET_A",
+                "source_block_id": "BLOCK_A",
+                "source_port": "LINK_N",
+                "target_block_id": "BLOCK_B",
+                "target_port": "RX_N",
+            },
+            {
+                "line_id": "L_REVERSED",
+                "source_sheet_name": "SHEET_A",
+                "source_block_id": "BLOCK_B",
+                "source_port": "RX_P",
+                "target_block_id": "BLOCK_A",
+                "target_port": "LINK_P",
+            },
+        ]
+
+        companions = build_companion_wire_index(rows)
+
+        self.assertEqual("L_REVERSED", companions["L_FORWARD"]["companion_line_id"])
+        self.assertEqual("reversed", companions["L_FORWARD"]["direction_relation"])
+        self.assertEqual("L_FORWARD", companions["L_REVERSED"]["companion_line_id"])
+
+    def test_scheme_e_active_low_and_power_target_are_scalar(self) -> None:
+        active_low = {
+            "line_id": "L_POR",
+            "source_port": "POR_N",
+            "target_port": "RESET2",
+            "connection_name": "POR reset",
+        }
+        power = {
+            "line_id": "L_PWR",
+            "source_port": "LNASIP_RXD_OUT_N",
+            "target_port": "1V8",
+            "connection_name": "power connection",
+        }
+
+        active_info = infer_signal_shape_for_row(active_low, [], "")
+        power_info = infer_signal_shape_for_row(power, [], "")
+
+        self.assertEqual("scalar", active_info["shape"])
+        self.assertFalse(active_info["needs_model_shape_review"])
+        self.assertTrue(active_info["evidence"]["differential_member_guard"]["low_active_signal"])
+        self.assertEqual("scalar", power_info["shape"])
+        self.assertFalse(power_info["needs_model_shape_review"])
+        self.assertTrue(power_info["evidence"]["differential_member_guard"]["power_target"])
+
+    def test_scheme_e_unpaired_polarity_port_requires_review_without_expansion(self) -> None:
+        row = {
+            "line_id": "L_MEMBER",
+            "source_port": "RFIN_N",
+            "target_port": "AFE_INPUT",
+            "connection_name": "RF input",
+        }
+
+        info = infer_signal_shape_for_row(row, ["RFIN_P", "RFIN_N"], "")
+        expanded = expanded_rows_for_signal_shape(row, info)
+
+        self.assertEqual("scalar", info["shape"])
+        self.assertTrue(info["needs_model_shape_review"])
+        self.assertEqual(["L_MEMBER"], [item["line_id"] for item in expanded])
+
+    def test_scheme_e_connection_level_marker_still_expands_whole_pair(self) -> None:
+        row = {
+            "line_id": "L_DIFF",
+            "source_port": "DAC00",
+            "target_port": "RFIN0",
+            "connection_name": "TX differential pair",
+            "connection_id": "C_DIFF",
+        }
+
+        info = infer_signal_shape_for_row(row, ["TX_AFE0_00_P", "TX_AFE0_00_N"], "")
+        expanded = expanded_rows_for_signal_shape(row, info)
+
+        self.assertEqual("differential", info["shape"])
+        self.assertEqual(["L_DIFF#1", "L_DIFF#2"], [item["line_id"] for item in expanded])
+
+    def test_scheme_e_function_and_rule_hints_do_not_auto_expand(self) -> None:
+        function_row = {
+            "line_id": "L_CLKREF",
+            "source_port": "AFE_CLKREF",
+            "target_port": "CLKOUT1",
+            "connection_name": "clock reference",
+        }
+        rule_row = {
+            "line_id": "L_CPRI",
+            "source_part_id": "DEV_CPRI",
+            "source_block_name": "DEV_CPRI",
+            "source_port": "CPRI0_RX",
+            "target_port": "default1",
+            "connection_name": "CPRI receive",
+        }
+        rule = """### RULE: DEV_CPRI CPRI 接收规则
+适用条件：DEV_CPRI / CPRI0_RX
+CPRI0_RX 是差分接口，映射到 CPRI0_RX_P 和 CPRI0_RX_N。
+"""
+
+        function_info = infer_signal_shape_for_row(
+            function_row,
+            ["AFE_CLKREF_P", "AFE_CLKREF_N"],
+            "",
+        )
+        rule_info = infer_signal_shape_for_row(
+            rule_row,
+            ["CPRI0_RX_P", "CPRI0_RX_N"],
+            rule,
+        )
+
+        self.assertEqual("scalar", function_info["shape"])
+        self.assertTrue(function_info["needs_model_shape_review"])
+        self.assertEqual("scalar", rule_info["shape"])
+        self.assertTrue(rule_info["needs_model_shape_review"])
 
     def test_session_line_examples_require_explicit_family_and_same_device(self) -> None:
         groups = [

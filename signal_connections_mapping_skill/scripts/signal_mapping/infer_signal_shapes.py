@@ -163,6 +163,111 @@ def pin_polarity(pin: str) -> str:
     return ""
 
 
+def differential_member_ports(row: Dict[str, Any]) -> List[Dict[str, str]]:
+    """Return port fields that already identify one P/N member, not a whole pair."""
+    members: List[Dict[str, str]] = []
+    for field in ("source_port", "target_port"):
+        value = normalize_text(row.get(field, ""))
+        if not re.search(r"(?:^|[_\-])(?:P|N|POS|NEG|PLUS|MINUS)$", value, re.I):
+            continue
+        polarity = pin_polarity(value)
+        if polarity:
+            members.append({
+                "field": field,
+                "port": value,
+                "base": normalize_pin_base(value),
+                "polarity": polarity,
+            })
+    return members
+
+
+def is_complementary_polarity(port1: str, port2: str) -> bool:
+    polarity1 = pin_polarity(port1)
+    polarity2 = pin_polarity(port2)
+    return bool(
+        polarity1
+        and polarity2
+        and polarity1 != polarity2
+        and normalize_pin_base(port1) == normalize_pin_base(port2)
+    )
+
+
+def block_endpoint(row: Dict[str, Any], prefix: str) -> str:
+    return normalize_text(
+        row.get(f"{prefix}_block_id", "")
+        or row.get(f"{prefix}_block_name", "")
+    ).upper()
+
+
+def companion_pair_key(row: Dict[str, Any]) -> tuple[str, str, str] | None:
+    sheet = normalize_text(row.get("source_sheet_name", "") or row.get("output_sheet_name", "")).upper()
+    source = block_endpoint(row, "source")
+    target = block_endpoint(row, "target")
+    if not sheet or not source or not target:
+        return None
+    endpoint_a, endpoint_b = sorted((source, target))
+    return sheet, endpoint_a, endpoint_b
+
+
+def companion_match_evidence(current: Dict[str, Any], other: Dict[str, Any]) -> Dict[str, Any]:
+    current_source = block_endpoint(current, "source")
+    current_target = block_endpoint(current, "target")
+    other_source = block_endpoint(other, "source")
+    other_target = block_endpoint(other, "target")
+    same_direction = current_source == other_source and current_target == other_target
+    reversed_direction = current_source == other_target and current_target == other_source
+    if not (same_direction or reversed_direction):
+        return {}
+
+    field_pairs = (
+        (("source_port", "source_port"), ("target_port", "target_port"))
+        if same_direction
+        else (("source_port", "target_port"), ("target_port", "source_port"))
+    )
+    for current_field, other_field in field_pairs:
+        current_port = normalize_text(current.get(current_field, ""))
+        other_port = normalize_text(other.get(other_field, ""))
+        if is_complementary_polarity(current_port, other_port):
+            return {
+                "companion_line_id": normalize_text(other.get("line_id", "")),
+                "companion_connection_id": normalize_text(other.get("connection_id", "")),
+                "current_field": current_field,
+                "current_port": current_port,
+                "companion_field": other_field,
+                "companion_port": other_port,
+                "direction_relation": "same" if same_direction else "reversed",
+            }
+    return {}
+
+
+def build_companion_wire_index(rows: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """Pre-scan rows and index P/N companion wires within the same sheet and block pair."""
+    groups: Dict[tuple[str, str, str], List[Dict[str, Any]]] = {}
+    for row in rows:
+        key = companion_pair_key(row)
+        if key and differential_member_ports(row):
+            groups.setdefault(key, []).append(row)
+
+    companions: Dict[str, Dict[str, Any]] = {}
+    for group_rows in groups.values():
+        for current in group_rows:
+            current_line_id = normalize_text(current.get("line_id", ""))
+            if not current_line_id:
+                continue
+            for other in group_rows:
+                if other is current:
+                    continue
+                evidence = companion_match_evidence(current, other)
+                if evidence:
+                    companions[current_line_id] = evidence
+                    break
+    return companions
+
+
+def find_companion_wire(all_rows: List[Dict[str, Any]], current_row: Dict[str, Any]) -> Dict[str, Any]:
+    return build_companion_wire_index(all_rows).get(normalize_text(current_row.get("line_id", "")), {})
+
+
 def differential_pin_pairs(pins: List[str]) -> Dict[str, Dict[str, str]]:
     pairs: Dict[str, Dict[str, str]] = {}
     for pin in pins:
@@ -218,8 +323,47 @@ def best_matching_diff_pair(row: Dict[str, Any], pins: List[str]) -> Dict[str, A
 
 
 def has_explicit_differential_marker(row: Dict[str, Any]) -> bool:
-    blob = text_blob(row).upper()
-    return bool(re.search(r"(^|[_\-\s])(P|N)([_\-\s]|$)|\bDP\b|\bDN\b|DIFF|差分|P/N", blob))
+    """Only whole-pair markers may trigger deterministic differential expansion."""
+    descriptive_blob = " ".join([
+        normalize_text(row.get("connection_name", "")),
+        normalize_text(row.get("connection_attribute", "")),
+        normalize_text(row.get("user_link_info", "")),
+        normalize_text(row.get("device_role_info", "")),
+    ]).upper()
+    if re.search(r"\bDP\b|\bDN\b|DIFF|差分|P\s*/\s*N", descriptive_blob):
+        return True
+
+    # A port may explicitly describe the whole pair, but a trailing _P/_N is one member only.
+    for field in ("source_port", "target_port"):
+        port = normalize_text(row.get(field, "")).upper()
+        if re.search(r"DIFF|差分|P\s*/\s*N", port):
+            return True
+    return False
+
+
+def is_low_active_member(row: Dict[str, Any]) -> bool:
+    low_active_bases = {
+        "POR", "HRST", "RST", "RESET", "RESETB", "ENABLE", "EN", "CS", "SS",
+    }
+    for member in differential_member_ports(row):
+        if member["polarity"] != "N":
+            continue
+        base = re.sub(r"\d+$", "", member["base"].upper())
+        tokens = {token for token in re.split(r"[^A-Z0-9]+", base) if token}
+        if base in low_active_bases or tokens.intersection(low_active_bases):
+            return True
+    return False
+
+
+def is_power_target(row: Dict[str, Any]) -> bool:
+    target_blob = " ".join([
+        normalize_text(row.get("target_port", "")),
+        normalize_text(row.get("target_block_id", "")),
+        normalize_text(row.get("target_block_name", "")),
+    ]).upper()
+    if re.search(r"(?:^|[^A-Z0-9])(VDD|VCC|VSS|GND|VBAT|VIN|VOUT|POWER|PWR)(?:[^A-Z0-9]|$)", target_blob):
+        return True
+    return bool(re.search(r"(?:^|\s)\d+(?:V\d+|(?:\.\d+)?V)(?:\s|$)", target_blob))
 
 
 def looks_like_differential_function(row: Dict[str, Any]) -> bool:
@@ -353,10 +497,15 @@ def infer_signal_shape_for_row(
     row: Dict[str, Any],
     source_pins: List[str],
     rule_text: str,
+    companion_wire: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     bus_width, bus_reasons = explicit_bus_reason(row)
     diff_pair = best_matching_diff_pair(row, source_pins)
     rule_hint = matching_rule_hint(row, rule_text, source_pins)
+    member_ports = differential_member_ports(row)
+    companion_wire = dict(companion_wire or {})
+    low_active_member = bool(member_ports) and is_low_active_member(row)
+    power_target = bool(member_ports) and is_power_target(row)
     normalized_expansion_count = int(row.get("expansion_count", 1) or 1)
     is_preexpanded_bus_member = normalized_expansion_count > 1
 
@@ -385,21 +534,41 @@ def infer_signal_shape_for_row(
             needs_model_shape_review = True
             reasons.extend(bus_reasons)
             reasons.append("declared bus width is not sufficient without a strict device-rule and pin_info member match")
+    elif member_ports:
+        shape = "scalar"
+        expected_count = 1
+        evidence["differential_member_guard"] = {
+            "member_ports": member_ports,
+            "companion_wire": companion_wire,
+            "low_active_signal": low_active_member,
+            "power_target": power_target,
+        }
+        if companion_wire:
+            reasons.append("port is one P/N member and a complementary companion wire already exists")
+        elif low_active_member:
+            reasons.append("trailing _N denotes an active-low control signal, not a differential pair")
+        elif power_target:
+            reasons.append("polarity-suffixed port targets a power rail, not a differential pair")
+        else:
+            confidence = "model_hint"
+            needs_model_shape_review = True
+            reasons.append("port suffix identifies one P/N member; whole-pair expansion requires model review")
     elif has_explicit_differential_marker(row):
         shape = "differential"
         expected_count = 2
-        reasons.append("explicit differential marker in connection text")
+        reasons.append("explicit whole-pair differential marker in connection description")
     elif looks_like_differential_function(row) and diff_pair:
-        shape = "differential"
-        expected_count = 2
-        reasons.append("RF/DAC/ADC-like connection and source pin list has matching P/N pair")
-        evidence["matched_differential_pin_pair"] = diff_pair
+        shape = "scalar"
+        confidence = "model_hint"
+        needs_model_shape_review = True
+        reasons.append("RF/DAC/ADC-like function has a candidate P/N pin pair but no explicit whole-pair marker")
+        evidence["candidate_differential_pin_pair"] = diff_pair
     elif rule_hint.get("strong_shape_hint") and "differential" in rule_hint.get("shape_hints", []) and diff_pair:
-        shape = "differential"
-        expected_count = 2
-        confidence = "rule_hint"
-        reasons.append("natural language rule suggests differential and source pin list has matching P/N pair")
-        evidence["matched_differential_pin_pair"] = diff_pair
+        shape = "scalar"
+        confidence = "model_hint"
+        needs_model_shape_review = True
+        reasons.append("rule suggests differential and pin_info has a pair, but the connection lacks an explicit whole-pair marker")
+        evidence["candidate_differential_pin_pair"] = diff_pair
     elif rule_hint.get("strong_shape_hint") and "bus" in rule_hint.get("shape_hints", []):
         shape = "bus"
         hinted_width = int(rule_hint.get("suggested_bus_width", 0) or 0)
@@ -423,7 +592,11 @@ def infer_signal_shape_for_row(
     else:
         evidence["source_pins_available"] = True
 
-    if shape == "scalar" and rule_hint.get("strong_shape_hint"):
+    if (
+        shape == "scalar"
+        and rule_hint.get("strong_shape_hint")
+        and "differential_member_guard" not in evidence
+    ):
         confidence = "model_hint"
         needs_model_shape_review = True
         reasons.append("natural language rule has shape hint but automatic evidence is insufficient")
@@ -533,6 +706,7 @@ def infer_signal_shapes(
     catalog = load_pin_catalog(pins_path)
     rule_text = read_rule_text(rules_path)
     rows = list(iter_jsonl(normalized_path))
+    companion_wire_index = build_companion_wire_index(rows)
     enriched: List[Dict[str, Any]] = []
     reports: List[Dict[str, Any]] = []
 
@@ -554,7 +728,12 @@ def infer_signal_shapes(
             updated["signal_shape_info"] = signal_shape_info
             expanded_rows = [updated]
         else:
-            signal_shape_info = infer_signal_shape_for_row(row, source_pins, rule_text)
+            signal_shape_info = infer_signal_shape_for_row(
+                row,
+                source_pins,
+                rule_text,
+                companion_wire=companion_wire_index.get(normalize_text(row.get("line_id", "")), {}),
+            )
             expanded_rows = expanded_rows_for_signal_shape(row, signal_shape_info)
         enriched.extend(expanded_rows)
         reports.append({
